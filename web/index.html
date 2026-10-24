@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a43">
+  <title>FlowOps AI — Service Desk 2.0</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=4">
+  <link rel="stylesheet" href="/overrides.css?v=4">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">F</span><div><strong>FlowOps AI</strong><span>Service Desk 2.0</span></div></div>
+    <div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div>
+  </header>
+  <main class="shell">
+    <nav class="tabs" aria-label="Разделы приложения">
+       <button type="button" class="tab active" data-tab="employee">Окно сотрудника <span>Подача обращения</span></button>
+       <button type="button" class="tab" data-tab="operator">Пульт оператора и Аналитика <span>Служба поддержки</span></button>
+       <button type="button" class="tab" data-tab="knowledge">База знаний <span>Регламенты ИИ</span></button>
+       <button type="button" class="tab" data-tab="channels">Каналы и API <span>Бот / Почта / Сайт</span></button>
+       <button type="button" class="tab" data-tab="channels">Каналы и API <span>Бот / Почта / Сайт</span></button>
+    </nav>
+
+    <section id="employee" class="view active">
+      <div class="page-heading"><div><p class="eyebrow">КАБИНЕТ СОТРУДНИКА / 01</p><h1>Опишите проблему.<br><em>FlowOps разберется.</em></h1><p class="lede">Классификация ИИ, готовый регламент и передача специалисту в одном окне.</p></div><div class="heading-note"><span class="pulse"></span> Автоматический приём заявок</div></div>
+      <div class="employee-grid">
+        <div class="panel request-panel">
+           <div class="panel-title"><div><span class="step">01</span><h2>Новое обращение</h2></div><span class="live-label">● В СЕТИ</span></div>
+          <form id="ticket-form">
+            <label for="email">Email сотрудника</label>
+            <input id="email" type="email" value="ivanov@rtsim.ru" required>
+            <label for="problem">Опишите вашу проблему обычным языком</label>
+            <textarea id="problem" rows="7" placeholder="Например: после обновления не могу подключиться к VPN..." required></textarea>
+            <button class="primary-button" type="submit"><span>Отправить обращение</span><b>↗</b></button>
+          </form>
+          <div class="demo-block"><div class="demo-heading"><span>Быстрые демо-сценарии</span><small>для защиты</small></div><div class="demo-grid">
+             <button type="button" data-demo="Срочно! Не работает корпоративный VPN, выдает ошибку 809, через полчаса важный созвон с клиентом."><b>Типовой IT</b><span>VPN 809</span></button>
+             <button type="button" data-demo="Подскажите, как получить справку 2-НДФЛ за прошлый год для банка?"><b>Типовой HR</b><span>Справка 2-НДФЛ</span></button>
+             <button type="button" data-demo="В переговорке на 3 этаже закончился картридж в принтере и замяло бумагу."><b>Типовой АХО</b><span>Принтер</span></button>
+             <button type="button" data-demo="Срочно! После ночного релиза упал продакшен-кластер Kubernetes, не поднимаются поды платежного шлюза."><b>Сложный инцидент</b><span>Без ответа в базе → Оператор</span></button>
+          </div></div>
+        </div>
+        <div class="result-column"><div id="analysis-result" class="panel result-panel empty"><div class="empty-state"><div class="empty-icon">✦</div><h3>Результат разбора появится здесь</h3><p>Отправьте обращение, и AI выделит суть, приоритет и подходящий регламент.</p></div></div>
+           <div class="panel history-panel"><div class="panel-title"><div><span class="step">02</span><h2>Последние обращения</h2></div><button type="button" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><div id="history-list" class="history-list"><p class="muted">История пока пуста.</p></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="operator" class="view">
+      <div class="page-heading operator-heading"><div><p class="eyebrow">ПУЛЬТ УПРАВЛЕНИЯ</p><h1>Пульт оператора<br><em>и аналитика.</em></h1></div><div class="heading-note"><span class="pulse"></span> Живая очередь</div></div>
+      <div id="metrics" class="metrics"></div>
+      <div class="queue-toolbar"><div><h2>Очередь обращений</h2><p id="queue-count">Загрузка тикетов...</p></div><div class="filters"><select id="department-filter"><option value="">Все отделы</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option><option>Unassigned</option></select><select id="status-filter"><option value="">Все статусы</option><option value="new">Новый</option><option value="awaiting_confirmation">Ожидает подтверждения</option><option value="assigned_to_operator">У оператора</option><option value="auto_resolved">Решен ИИ</option><option value="closed">Закрыт</option></select><button id="refresh-queue" class="secondary-button">↻ Обновить</button><button id="reset-data" class="danger-button">Очистить базу</button></div></div>
+      <div id="ticket-list" class="ticket-list"></div>
+    </section>
+
+    <section id="knowledge" class="view">
+      <div class="page-heading"><div><p class="eyebrow">БАЗА ЗНАНИЙ / РЕГЛАМЕНТЫ</p><h1>Регламенты, которые<br><em>учатся вместе с командой.</em></h1><p class="lede">Добавляйте решения операторов в общую базу, чтобы повторяющиеся вопросы закрывались автоматически.</p></div><div class="heading-note"><span class="pulse"></span> Обучение на лету</div></div>
+      <div class="knowledge-layout"><div class="panel knowledge-form-panel"><div class="panel-title"><div><span class="step">01</span><h2>Добавить новый регламент</h2></div></div><form id="knowledge-form"><label for="knowledge-department">Отдел</label><select id="knowledge-department" required><option value="IT">IT</option><option value="HR">HR</option><option value="Accounting">Accounting</option><option value="Facilities">Facilities</option></select><label for="knowledge-title">Заголовок</label><input id="knowledge-title" required placeholder="Например: Локальная ИИ не запускается"><label for="knowledge-keywords">Ключевые слова через запятую</label><input id="knowledge-keywords" placeholder="локальная ии, нейросеть, модель"><label for="knowledge-content">Текст инструкции</label><textarea id="knowledge-content" rows="10" required placeholder="Опишите последовательность действий для сотрудника..."></textarea><button class="primary-button" type="submit"><span>Сохранить регламент</span><b>↗</b></button></form></div><div><div class="knowledge-list-heading"><h2>Действующие регламенты</h2><button id="refresh-knowledge" class="icon-button">↻</button></div><div id="knowledge-list" class="knowledge-list"></div></div></div>
+     </section>
+     <section id="channels" class="view">
+       <div class="page-heading"><div><p class="eyebrow">OMNICHANNEL INGEST API / DEMO</p><h1>Все каналы.<br><em>Один поток поддержки.</em></h1><p class="lede">Подключайте сайт, почту и ботов к единому API.</p></div></div>
+       <div class="employee-grid"><div class="panel request-panel"><div class="panel-title"><h2>Симулятор внешнего канала</h2></div><label>Канал</label><select id="ingest-channel"><option value="email">✉️ Входящая почта</option><option value="bot">🤖 Telegram / MAX бот</option><option value="web">🌐 Виджет сайта</option></select><label>Отправитель</label><input id="ingest-sender" value="client@company.ru"><label>Тема</label><input id="ingest-subject" value="Лежит сервер!"><label>Сообщение</label><textarea id="ingest-message" rows="7">Здравствуйте! У нас перестал отвечать VPS-сервер в кластере NL-1, сайты выдают 502.</textarea><div class="demo-grid"><button type="button" data-ingest-demo="hoster">🔥 Авария хостера</button><button type="button" data-ingest-demo="bot">🤖 Тот же вопрос из бота</button><button type="button" data-ingest-demo="billing">💳 Денежный вопрос</button></div><button id="ingest-submit" class="primary-button" type="button"><span>Отправить через Ingest API</span><b>↗</b></button></div><div class="panel result-panel"><h2>Ответ интеграции</h2><pre id="ingest-result">Выберите сценарий.</pre></div></div>
+       <div class="panel api-docs"><h2>Документация API</h2><p><code>POST /api/v1/ingest</code> принимает email, Telegram/MAX, сайт и API.</p><pre><code>curl -X POST http://localhost:8080/api/v1/ingest -H "Content-Type: application/json" -d '{"channel":"bot","sender":"@alex_dev","message":"Сервер недоступен"}'</code></pre></div>
+     </section>
+   </main>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js?v=4"></script>
+</body>
+</html>

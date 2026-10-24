@@ -1,0 +1,32 @@
+# Environment and secrets
+.env
+!.env.example
+
+# Compiled binaries and test output
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.err
+*.pid
+*.log
+coverage.*
+
+# Operating system and IDE files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary and generated directories
+tmp/
+dist/
+
+# Generated knowledge-base documents; keep only the four starter documents
+knowledge_base/*.md
+!knowledge_base/it_vpn.md
+!knowledge_base/hr_certificates.md
+!knowledge_base/accounting_payments.md
+!knowledge_base/office_equipment.md
