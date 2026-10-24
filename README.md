@@ -80,5 +80,3 @@ go test ./...
 - `AI_BASE_URL` - OpenAI-compatible endpoint AI-провайдера;
 - `AI_API_KEY` / `GEMINI_API_KEY` - секретный API-ключ;
 - `AI_MODEL` - используемая модель.
-
-Файл `.env` намеренно исключен из Git. Не публикуйте API-ключи и другие секреты в репозитории.
