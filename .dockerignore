@@ -1,0 +1,11 @@
+.git
+.env
+*.exe
+*.out
+*.err
+*.pid
+*.log
+.vscode
+.idea
+*.ps1
+README.md
