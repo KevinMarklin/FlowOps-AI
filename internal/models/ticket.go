@@ -13,7 +13,7 @@ type Ticket struct {
 	Priority         string    `json:"priority"`
 	ExtractedSummary *string   `json:"extracted_summary,omitempty"`
 	RAGAnswer        *string   `json:"rag_answer,omitempty"`
-	OperatorReply    *string   `json:"operator_reply,omitempty"`
+	OperatorReply    *string   `json:"operator_reply"`
 	Status           string    `json:"status"`
 	CreatedAt        time.Time `json:"created_at"`
 }

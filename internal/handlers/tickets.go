@@ -205,6 +205,33 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
+func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
+	id, ok := ticketID(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+	var request struct {
+		Reply string `json:"operator_reply"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil || strings.TrimSpace(request.Reply) == "" {
+		writeError(w, http.StatusBadRequest, "operator_reply is required")
+		return
+	}
+	const query = `UPDATE tickets SET operator_reply = $1, status = 'closed' WHERE id = $2
+RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, status, created_at`
+	var ticket models.Ticket
+	err := h.db.QueryRow(r.Context(), query, strings.TrimSpace(request.Reply), id).Scan(
+		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.Status, &ticket.CreatedAt,
+	)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "ticket not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, ticket)
+}
+
 func (h *TicketsHandler) sendWebhook(callbackURL string, ticketID int, reply string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -306,7 +333,7 @@ func ticketID(r *http.Request) (int, bool) {
 	return id, err == nil && id > 0
 }
 func validStatus(value string) bool {
-	return hasValue(value, "new", "awaiting_confirmation", "assigned_to_operator", "auto_resolved", "closed")
+	return hasValue(value, "new", "awaiting_confirmation", "assigned_to_operator", "auto_resolved", "resolved", "closed")
 }
 func validDepartment(value string) bool {
 	return hasValue(knowledge.NormalizeDepartment(value), "IT", "Billing", "HR", "Accounting", "Facilities", "General")
@@ -357,6 +384,27 @@ ORDER BY created_at DESC, id DESC`
 	}
 
 	writeJSON(w, http.StatusOK, tickets)
+}
+
+func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	id, ok := ticketID(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
+       rag_answer, operator_reply, status, created_at
+FROM tickets WHERE id = $1`
+	var ticket models.Ticket
+	err := h.db.QueryRow(r.Context(), query, id).Scan(
+		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.Status, &ticket.CreatedAt,
+	)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "ticket not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, ticket)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
