@@ -19,6 +19,7 @@
   function priorityTag(value) { return `<span class="tag priority-${escapeHTML(value)}">${escapeHTML(priorities[value] || value)}</span>`; }
   function departmentTag(value) { return `<span class="tag department">${escapeHTML(departments[value] || value || 'Общее')}</span>`; }
   function statusLabel(value) { return ({ new: 'Новый', awaiting_confirmation: 'Ожидает подтверждения', assigned_to_operator: 'У оператора', auto_resolved: 'Решен ИИ', resolved: 'Решено специалистом', closed: 'Решено специалистом' })[value] || value; }
+  function statusClass(value) { return ['auto_resolved', 'closed', 'resolved'].includes(value) ? 'status-success' : value === 'assigned_to_operator' ? 'status-pending' : ''; }
   function toast(message) { const element = $('#toast'); if (!element) return; element.textContent = message; element.classList.add('show'); setTimeout(() => element.classList.remove('show'), 3500); }
   function setAPIStatus(ok) { const dot = $('#api-dot'); const label = $('#api-status'); if (dot) dot.className = `status-dot ${ok ? 'ok' : 'bad'}`; if (label) label.textContent = ok ? 'API подключен (Online)' : 'Ошибка соединения с API'; }
   async function checkAPI() { try { const stats = await api('/api/stats'); const label = $('#api-status'); if (label) label.textContent = stats.ai_mode === 'llm' ? `API подключен · ИИ: Нейросеть (${stats.ai_model})` : 'API подключен · ИИ: Локальный анализатор'; setAPIStatus(true); } catch { setAPIStatus(false); } }
@@ -48,9 +49,29 @@
   function renderAnalysis(ticket) {
     const result = $('#analysis-result'); if (!result) return;
     const operatorReply = String(ticket.operator_reply || '').trim();
-    const answer = operatorReply ? `<section class="operator-solution"><div class="analysis-label">РЕШЕНИЕ СПЕЦИАЛИСТА</div><h3>Решение специалиста поддержки</h3><p>${escapeHTML(operatorReply)}</p><strong>Заявка решена оператором</strong></section>` : ticket.rag_answer ? `<div class="rag-box">${escapeHTML(ticket.rag_answer)}</div><div class="result-actions"><button type="button" class="resolve" data-feedback="true">✅ Помогло, закрыть вопрос</button><button type="button" class="escalate" data-feedback="false">❌ Не помогло, позвать специалиста</button></div>` : `<div class="notice">В базе знаний нет готового регламента по этой проблеме. Заявка направлена в отдел <b>${escapeHTML(ticket.department)}</b> с приоритетом <b>${escapeHTML(ticket.priority)}</b>.</div>`;
-    result.classList.remove('empty'); result.innerHTML = `<div class="analysis-label">ИИ-РАЗБОР ЗАЯВКИ #${ticket.id}</div><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || 'Суть не выделена')}</div><div class="enrichment"><div><span>Отдел</span>${departmentTag(ticket.department)}</div><div><span>Приоритет</span>${priorityTag(ticket.priority)}</div><div><span>Статус</span>${escapeHTML(statusLabel(ticket.status))}</div></div>${ticket.rag_answer && !operatorReply ? '<div class="analysis-label">РЕГЛАМЕНТ / ОТВЕТ ИЗ БАЗЫ ЗНАНИЙ</div>' : ''}${answer}`;
-    $$('[data-feedback]', result).forEach(button => on(button, 'click', async () => { try { const resolved = button.dataset.feedback === 'true'; await api(`/api/tickets/${ticket.id}/feedback`, { method: 'POST', body: JSON.stringify({ resolved }) }); const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = resolved ? 'Заявка решена автоматически без участия оператора!' : 'Передано профильному специалисту со всеми собранными данными.'; result.append(notice); $$('.result-actions', result).forEach(actions => actions.remove()); await loadHistory(); } catch (error) { toast(error.message); } }));
+    const feedbackGiven = ['auto_resolved', 'assigned_to_operator', 'closed', 'resolved'].includes(ticket.status);
+    const statusNotice = ticket.status === 'auto_resolved' ? '<div class="feedback-notice feedback-success">✅ Вопрос решён автоматически. Спасибо за обратную связь! Обращение закрыто.</div>' : ticket.status === 'assigned_to_operator' ? '<div class="feedback-notice feedback-pending">⏳ Заявка передана специалисту поддержки. Как только оператор ответит, решение появится здесь.</div>' : ['closed', 'resolved'].includes(ticket.status) ? '<div class="feedback-notice feedback-success">✅ Обращение закрыто специалистом поддержки.</div>' : '';
+    const answer = operatorReply ? `<section class="operator-solution"><div class="analysis-label">РЕШЕНИЕ СПЕЦИАЛИСТА</div><h3>Решение специалиста поддержки</h3><p>${escapeHTML(operatorReply)}</p><strong>Заявка решена оператором</strong></section>` : ticket.rag_answer && !feedbackGiven ? `<div class="rag-box">${escapeHTML(ticket.rag_answer)}</div><div class="result-actions"><button type="button" class="resolve" data-feedback="true">✅ Помогло, закрыть вопрос</button><button type="button" class="escalate" data-feedback="false">❌ Не помогло, позвать специалиста</button></div>` : statusNotice || `<div class="notice">В базе знаний нет готового регламента по этой проблеме. Заявка направлена в отдел <b>${escapeHTML(ticket.department)}</b> с приоритетом <b>${escapeHTML(ticket.priority)}</b>.</div>`;
+    result.classList.remove('empty'); result.innerHTML = `<div class="analysis-label">ИИ-РАЗБОР ЗАЯВКИ #${ticket.id}</div><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || 'Суть не выделена')}</div><div class="enrichment"><div><span>Отдел</span>${departmentTag(ticket.department)}</div><div><span>Приоритет</span>${priorityTag(ticket.priority)}</div><div><span>Статус</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div></div>${ticket.rag_answer && !operatorReply ? '<div class="analysis-label">РЕГЛАМЕНТ / ОТВЕТ ИЗ БАЗЫ ЗНАНИЙ</div>' : ''}${answer}`;
+    $$('[data-feedback]', result).forEach(button => on(button, 'click', () => handleFeedback(ticket, result, button)));
+  }
+  async function handleFeedback(ticket, result, clickedButton) {
+    const buttons = $$('[data-feedback]', result);
+    if (!buttons.length || buttons.some(button => button.disabled)) return;
+    buttons.forEach(button => { button.disabled = true; });
+    const isResolved = clickedButton.dataset.feedback === 'true';
+    try {
+      const response = await api(`/api/tickets/${ticket.id}/feedback`, { method: 'POST', body: JSON.stringify({ resolved: isResolved }) });
+      ticket.status = response.status || (isResolved ? 'auto_resolved' : 'assigned_to_operator');
+      const current = state.tickets.find(item => String(item.id) === String(ticket.id));
+      if (current) current.status = ticket.status;
+      renderAnalysis(ticket);
+      const email = $('#email')?.value.trim() || '';
+      renderHistory(state.tickets.filter(item => !email || item.user_email === email).slice(0, 5));
+    } catch (error) {
+      buttons.forEach(button => { button.disabled = false; });
+      toast(error.message);
+    }
   }
   async function submitTicket(event) {
     event.preventDefault(); const form = event.currentTarget; const email = $('#email'); const problem = $('#problem'); const button = $('.primary-button', form); if (!email || !problem) return;
