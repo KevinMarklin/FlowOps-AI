@@ -27,6 +27,13 @@ type Base struct {
 	mu        sync.RWMutex
 	directory string
 	documents []Document
+	auditTTL  func(string)
+}
+
+func (b *Base) SetAuditTTLCallback(callback func(string)) {
+	b.mu.Lock()
+	b.auditTTL = callback
+	b.mu.Unlock()
 }
 
 var builtinDocuments = map[string]bool{
@@ -103,7 +110,7 @@ func (b *Base) AddWithOptions(department, title string, keywords []string, conte
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		return Document{}, fmt.Errorf("save knowledge document: %w", err)
 	}
-	slog.Info("knowledge document added", "filename", filename, "department", department, "title", title)
+	slog.Info("knowledge document added", "filename", filename, "department", department)
 	document := Document{Path: filepath.ToSlash(path), Filename: filename, Department: department, Title: title, Keywords: cleanKeywords, Content: "# " + title + "\n\n" + content, Kind: kind, IncidentState: state, ExpiresAt: expiresAt}
 	b.mu.Lock()
 	b.documents = append(b.documents, document)
@@ -147,17 +154,25 @@ func (b *Base) PurgeExpired() error {
 	defer b.mu.Unlock()
 	now := time.Now()
 	kept := b.documents[:0]
+	purged := make([]string, 0)
 	for _, doc := range b.documents {
 		if doc.ExpiresAt != nil && now.After(*doc.ExpiresAt) {
 			if err := os.Remove(doc.Path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			slog.Info("expired knowledge document auto-deleted", "filename", doc.Filename, "title", doc.Title)
+			slog.Info("expired knowledge document auto-deleted", "filename", doc.Filename)
+			purged = append(purged, doc.Filename)
 			continue
 		}
 		kept = append(kept, doc)
 	}
 	b.documents = kept
+	callback := b.auditTTL
+	for range purged {
+		if callback != nil {
+			callback("")
+		}
+	}
 	return nil
 }
 
@@ -210,7 +225,7 @@ func (b *Base) FindRelevant(text, department string) *Document {
 		}
 	}
 	if bestIndex < 0 {
-		slog.Info("knowledge search returned no match", "department", department, "query", text)
+		slog.Info("knowledge search returned no match", "department", department)
 		return nil
 	}
 	copy := b.documents[bestIndex]

@@ -8,20 +8,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=4">
-  <link rel="stylesheet" href="/overrides.css?v=4">
+  <link rel="stylesheet" href="/styles.css?v=5">
+  <link rel="stylesheet" href="/overrides.css?v=5">
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">F</span><div><strong>FlowOps AI</strong><span>Service Desk 2.0</span></div></div>
-    <div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div>
+    <div class="topbar-right"><div id="channel-indicators" class="channel-indicators" aria-label="Подключённые каналы"></div><div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div></div>
   </header>
   <main class="shell">
     <nav class="tabs" aria-label="Разделы приложения">
        <button type="button" class="tab active" data-tab="employee">Окно сотрудника <span>Подача обращения</span></button>
        <button type="button" class="tab" data-tab="operator">Пульт оператора и Аналитика <span>Служба поддержки</span></button>
        <button type="button" class="tab" data-tab="knowledge">База знаний <span>Регламенты ИИ</span></button>
-       <button type="button" class="tab" data-tab="channels">Каналы и API <span>Бот / Почта / Сайт</span></button>
        <button type="button" class="tab" data-tab="channels">Каналы и API <span>Бот / Почта / Сайт</span></button>
     </nav>
 
@@ -68,6 +67,6 @@
      </section>
    </main>
   <div id="toast" class="toast"></div>
-  <script src="/app.js?v=4"></script>
+   <script src="/app.js?v=5"></script>
 </body>
 </html>

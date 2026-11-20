@@ -30,11 +30,25 @@ services:
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://postgres:postgres@db:5432/flowops?sslmode=disable
+      GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      GIGACHAT_OAUTH_URL: ${GIGACHAT_OAUTH_URL:-https://ngw.devices.sberbank.ru:9443/api/v2/oauth}
+      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-https://api.giga.chat/v1}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat}
+      GIGACHAT_INSECURE_TLS: ${GIGACHAT_INSECURE_TLS:-true}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_GOOGLE_BASE_URL: ${AI_GOOGLE_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-gemini-3.8-flash}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+      MAX_API_URL: ${MAX_API_URL:-https://platform-api2.max.ru}
+      MAX_INSECURE_TLS: ${MAX_INSECURE_TLS:-true}
+      MAIL_IMAP_HOST: ${MAIL_IMAP_HOST:-}
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
     volumes:
       - ./knowledge_base:/app/knowledge_base
 

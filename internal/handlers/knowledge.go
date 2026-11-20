@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"flowops-ai/internal/knowledge"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +25,9 @@ func NewKnowledgeHandler(base *knowledge.Base, db ...*pgxpool.Pool) *KnowledgeHa
 	handler := &KnowledgeHandler{base: base}
 	if len(db) > 0 {
 		handler.db = db[0]
+		base.SetAuditTTLCallback(func(_ string) {
+			handler.audit("TTL_PURGED", "system", nil, "Автоматически удалён временный регламент")
+		})
 	}
 	return handler
 }
@@ -77,9 +83,9 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(request.Keywords) == 0 && h.db != nil && r.URL.Query().Get("ticket_id") != "" {
-		var rawText, summary string
-		_ = h.db.QueryRow(r.Context(), `SELECT raw_text, COALESCE(extracted_summary, '') FROM tickets WHERE id = $1`, r.URL.Query().Get("ticket_id")).Scan(&rawText, &summary)
-		request.Keywords = extractKeywords(rawText + " " + summary)
+		var summary string
+		_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(extracted_summary, '') FROM tickets WHERE id = $1`, r.URL.Query().Get("ticket_id")).Scan(&summary)
+		request.Keywords = extractKeywords(summary)
 	}
 	if len(request.Keywords) == 0 {
 		request.Keywords = strings.Fields(request.Title)
@@ -98,7 +104,8 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	slog.Info("knowledge document accepted through API", "filename", document.Filename, "department", document.Department, "title", document.Title)
+	slog.Info("knowledge document accepted through API", "filename", document.Filename, "department", document.Department)
+	h.audit("KB_CREATED", "operator", auditTicketID(r.URL.Query().Get("ticket_id")), "Добавлен регламент базы знаний")
 	writeJSON(w, http.StatusCreated, knowledgeDocument{Filename: document.Filename, Department: document.Department, Title: document.Title, Keywords: document.Keywords, Content: document.Content, Kind: document.Kind, IncidentState: document.IncidentState, ExpiresAt: document.ExpiresAt})
 }
 
@@ -127,7 +134,8 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if len(request.Keywords) == 0 {
 			request.Keywords = doc.Keywords
 		}
-		if request.Action == "resolve_incident" {
+		resolvedIncident := request.Action == "resolve_incident"
+		if resolvedIncident {
 			request.Content = fmt.Sprintf("Сбой по теме «%s» устранён, все системы работают в штатном режиме. %s Если проблема у вас сохраняется — передайте обращение специалисту.", request.Title, request.ResolutionNote)
 			request.IncidentState = "resolved"
 		}
@@ -152,6 +160,10 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		h.audit("KB_CREATED", "operator", nil, "Обновлён регламент базы знаний")
+		if resolvedIncident {
+			h.audit("INCIDENT_RESOLVED", "operator", nil, "Оператор подтвердил устранение сбоя")
+		}
 		writeJSON(w, http.StatusOK, knowledgeDocument{Filename: created.Filename, Department: created.Department, Title: created.Title, Keywords: created.Keywords, Content: created.Content, Kind: created.Kind, IncidentState: created.IncidentState, ExpiresAt: created.ExpiresAt})
 		return
 	}
@@ -165,6 +177,22 @@ func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
+
+func (h *KnowledgeHandler) audit(eventType, actor string, ticketID *int, details string) {
+	if h.db == nil {
+		return
+	}
+	_, _ = h.db.Exec(context.Background(), `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ($1, $2, $3, $4)`, eventType, actor, ticketID, details)
+}
+
+func auditTicketID(value string) *int {
+	id, err := strconv.Atoi(value)
+	if err != nil || id < 1 {
+		return nil
+	}
+	return &id
+}
+
 func ttlTime(seconds, minutes int) *time.Time {
 	ttl := seconds
 	if ttl == 0 {

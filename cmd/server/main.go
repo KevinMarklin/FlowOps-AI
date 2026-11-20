@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"flowops-ai/internal/analyzer"
+	"flowops-ai/internal/channels"
 	"flowops-ai/internal/database"
 	"flowops-ai/internal/handlers"
 	"flowops-ai/internal/knowledge"
@@ -49,6 +51,7 @@ func main() {
 		logger.Error("failed to load knowledge base", "error", err)
 		os.Exit(1)
 	}
+	knowledgeHandler := handlers.NewKnowledgeHandler(knowledgeBase, pool)
 	if err := knowledgeBase.PurgeExpired(); err != nil {
 		logger.Error("failed to purge knowledge at startup", "error", err)
 	}
@@ -61,8 +64,19 @@ func main() {
 			}
 		}
 	}()
-	ticketsHandler := handlers.NewTicketsHandler(pool, logger, analyzer.New(knowledgeBase))
-	knowledgeHandler := handlers.NewKnowledgeHandler(knowledgeBase, pool)
+	channelConfig := channels.Config{
+		TelegramToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+		MaxToken:       os.Getenv("MAX_BOT_TOKEN"),
+		MaxAPIURL:      os.Getenv("MAX_API_URL"),
+		MaxInsecureTLS: envBool("MAX_INSECURE_TLS", true),
+		MailIMAPHost:   os.Getenv("MAIL_IMAP_HOST"), MailSMTPHost: os.Getenv("MAIL_SMTP_HOST"),
+		MailUser: os.Getenv("MAIL_USER"), MailPassword: os.Getenv("MAIL_PASSWORD"),
+	}
+	dispatcher := channels.NewDispatcher(channelConfig)
+	ticketsHandler := handlers.NewTicketsHandler(pool, logger, analyzer.New(knowledgeBase), dispatcher)
+	channelContext, stopChannels := context.WithCancel(context.Background())
+	defer stopChannels()
+	channels.Start(channelContext, channelConfig, ticketsHandler.IngestMessage, logger)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tickets", ticketsHandler.List)
 	mux.HandleFunc("GET /api/tickets/{id}", ticketsHandler.Detail)
@@ -73,6 +87,7 @@ func main() {
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)
 	mux.HandleFunc("DELETE /api/tickets/reset", ticketsHandler.Reset)
 	mux.HandleFunc("GET /api/stats", ticketsHandler.Stats)
+	mux.HandleFunc("GET /api/audit", ticketsHandler.Audit)
 	mux.HandleFunc("GET /api/knowledge", knowledgeHandler.List)
 	mux.HandleFunc("POST /api/knowledge", knowledgeHandler.Create)
 	mux.HandleFunc("PATCH /api/knowledge/{filename}", knowledgeHandler.Update)
@@ -110,6 +125,18 @@ func main() {
 			logger.Error("graceful shutdown failed", "error", err)
 		}
 	}
+}
+
+func envBool(name string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func loadDotEnv(path string) {

@@ -43,12 +43,30 @@ CREATE TABLE IF NOT EXISTS tickets (
     priority VARCHAR(50) DEFAULT 'medium',
     extracted_summary TEXT,
     rag_answer TEXT,
+    pii_masked_count INTEGER NOT NULL DEFAULT 0,
+    pii_masked_types TEXT[] NOT NULL DEFAULT '{}',
     status VARCHAR(50) DEFAULT 'new',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`
 
 	if _, err := pool.Exec(ctx, query); err != nil {
 		return fmt.Errorf("create tickets table: %w", err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pii_masked_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pii_masked_types TEXT[] NOT NULL DEFAULT '{}'`,
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id SERIAL PRIMARY KEY,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			event_type VARCHAR(64) NOT NULL,
+			actor VARCHAR(128) NOT NULL,
+			ticket_id INT NULL,
+			details TEXT
+		)`,
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("apply security migration: %w", err)
+		}
 	}
 	if _, err := pool.Exec(ctx, `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS department VARCHAR(100) DEFAULT 'Unassigned'`); err != nil {
 		return fmt.Errorf("add department column: %w", err)

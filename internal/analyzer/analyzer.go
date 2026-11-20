@@ -17,49 +17,159 @@ import (
 	"time"
 
 	"flowops-ai/internal/knowledge"
+	"flowops-ai/internal/security"
 )
 
 type Result struct {
-	Department       string  `json:"department"`
-	Priority         string  `json:"priority"`
-	ExtractedSummary string  `json:"extracted_summary"`
-	RAGAnswer        *string `json:"rag_answer"`
+	Department       string   `json:"department"`
+	Priority         string   `json:"priority"`
+	ExtractedSummary string   `json:"extracted_summary"`
+	RAGAnswer        *string  `json:"rag_answer"`
+	PIIMaskedCount   int      `json:"pii_masked_count"`
+	PIIMaskedTypes   []string `json:"pii_masked_types"`
 }
 
 type Analyzer struct {
-	base        *knowledge.Base
-	client      *http.Client
-	modelMu     sync.RWMutex
-	googleModel string
+	base           *knowledge.Base
+	client         *http.Client
+	insecureClient *http.Client
+	modelMu        sync.RWMutex
+	googleModel    string
+	tokenMu        sync.Mutex
+	gigaToken      string
+	gigaExpiresAt  time.Time
+	gigaAuthKey    string
+	gigaOAuthURL   string
+	providerMu     sync.RWMutex
+	activeMode     string
+	activeName     string
+	activeModel    string
 }
 
 func (a *Analyzer) ResetKnowledge() error { return a.base.Reset() }
 
 func New(base *knowledge.Base) *Analyzer {
-	return &Analyzer{base: base, client: &http.Client{Timeout: 15 * time.Second}}
+	a := &Analyzer{base: base, client: &http.Client{Timeout: 15 * time.Second}, insecureClient: newInsecureGigaChatClient(15 * time.Second)}
+	a.setProviderForConfig()
+	mode, name, model := a.ActiveProvider()
+	if mode == "llm" {
+		if name == "GigaChat (РФ контур)" {
+			name = "GigaChat"
+		}
+		slog.Info("[AI] Active provider: " + name + " (model: " + model + ")")
+	}
+	return a
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, rawText string) Result {
-	if apiKey := googleAPIKey(); apiKey != "" {
-		if result, err := a.analyzeWithGoogle(ctx, rawText, apiKey); err == nil && a.validForText(result, rawText) {
+	return a.AnalyzeWithSender(ctx, rawText, "")
+}
+
+func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string) Result {
+	maskInput := rawText
+	if strings.TrimSpace(sender) != "" {
+		maskInput += "\nОтправитель: " + sender
+	}
+	masked := security.MaskPII(maskInput)
+	piiSentToAI := false
+	if config := loadGigaChatConfig(); config.authKey != "" {
+		piiSentToAI = true
+		if result, err := a.analyzeWithGigaChat(ctx, masked.MaskedText); err == nil && a.validForText(result, masked.MaskedText) {
+			result = unmaskResult(result, masked)
+			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
 			result = a.normalizeRAGSource(result, rawText)
+			a.setActiveProvider("llm", "GigaChat (РФ контур)", config.model)
+			slog.Info("ticket analyzed", "mode", "llm", "provider", "gigachat", "model", config.model, "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
+			return result
+		} else if err != nil {
+			slog.Warn("GigaChat analysis failed, trying Gemini fallback")
+			a.setProviderForConfig()
+		} else {
+			slog.Warn("GigaChat returned invalid analysis, trying Gemini fallback")
+			a.setProviderForConfig()
+		}
+	}
+	if apiKey := googleAPIKey(); apiKey != "" {
+		piiSentToAI = true
+		if result, err := a.analyzeWithGoogle(ctx, masked.MaskedText, apiKey); err == nil && a.validForText(result, masked.MaskedText) {
+			result = unmaskResult(result, masked)
+			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
+			result = a.normalizeRAGSource(result, rawText)
+			a.setActiveProvider("llm", "Gemini", a.currentGoogleModel())
 			slog.Info("ticket analyzed", "mode", "llm", "provider", "google_ai_studio", "model", a.currentGoogleModel(), "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
 			return result
 		} else if err != nil {
-			slog.Warn("Google AI Studio analysis failed, using heuristic fallback", "error", err)
+			slog.Warn("Google AI Studio analysis failed, using heuristic fallback", "error", "provider request failed")
+			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
+		} else {
+			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
 		}
 	} else if os.Getenv("AI_API_KEY") != "" {
-		if result, err := a.analyzeWithAI(ctx, rawText); err == nil && a.validForText(result, rawText) {
+		piiSentToAI = true
+		if result, err := a.analyzeWithAI(ctx, masked.MaskedText); err == nil && a.validForText(result, masked.MaskedText) {
+			result = unmaskResult(result, masked)
+			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
 			result = a.normalizeRAGSource(result, rawText)
-			slog.Info("ticket analyzed", "mode", "llm", "department", result.Department, "priority", result.Priority, "extracted_summary", result.ExtractedSummary, "rag_found", result.RAGAnswer != nil)
+			_, model := aiConfig()
+			provider := "Gemini"
+			if !strings.Contains(strings.ToLower(model), "gemini") {
+				provider = "AI API"
+			}
+			a.setActiveProvider("llm", provider, model)
+			slog.Info("ticket analyzed", "mode", "llm", "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
 			return result
 		} else if err != nil {
-			slog.Warn("LLM analysis failed, using heuristic fallback", "error", err)
+			slog.Warn("LLM analysis failed, using heuristic fallback", "error", "provider request failed")
+			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
+		} else {
+			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
 		}
 	}
 	result := a.analyzeHeuristically(rawText)
-	slog.Info("ticket analyzed", "mode", "fallback", "department", result.Department, "priority", result.Priority, "extracted_summary", result.ExtractedSummary, "rag_found", result.RAGAnswer != nil)
+	result = unmaskResult(result, masked)
+	result.PIIMaskedTypes = masked.MaskedTypes
+	if piiSentToAI {
+		result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
+	}
+	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
+	slog.Info("ticket analyzed", "mode", "fallback", "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
 	return result
+}
+
+func unmaskResult(result Result, masked security.MaskResult) Result {
+	result.ExtractedSummary = security.UnmaskPII(result.ExtractedSummary, masked.Replacements)
+	if result.RAGAnswer != nil {
+		answer := security.UnmaskPII(*result.RAGAnswer, masked.Replacements)
+		result.RAGAnswer = &answer
+	}
+	return result
+}
+
+func (a *Analyzer) setProviderForConfig() {
+	config := loadGigaChatConfig()
+	if config.authKey != "" {
+		a.setActiveProvider("llm", "GigaChat (РФ контур)", config.model)
+		return
+	}
+	if googleAPIKey() != "" {
+		a.setActiveProvider("llm", "Gemini", a.currentGoogleModel())
+		return
+	}
+	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
+}
+
+func (a *Analyzer) setActiveProvider(mode, name, model string) {
+	a.providerMu.Lock()
+	a.activeMode, a.activeName, a.activeModel = mode, name, model
+	a.providerMu.Unlock()
+}
+
+// ActiveProvider reports the provider used by the most recent successful
+// analysis, initialized to the highest-priority configured provider.
+func (a *Analyzer) ActiveProvider() (mode, name, model string) {
+	a.providerMu.RLock()
+	defer a.providerMu.RUnlock()
+	return a.activeMode, a.activeName, a.activeModel
 }
 
 func googleAPIKey() string {
@@ -93,11 +203,11 @@ func (a *Analyzer) analyzeWithGoogle(ctx context.Context, rawText, apiKey string
 		return result, nil
 	}
 	if status != http.StatusNotFound {
-		return Result{}, err
+		return Result{}, fmt.Errorf("Google AI request failed with status %d", status)
 	}
 	discovered, discoverErr := a.discoverGoogleModel(ctx, apiKey)
 	if discoverErr != nil {
-		return Result{}, fmt.Errorf("model %s unavailable: %w; discovery failed: %v", model, err, discoverErr)
+		return Result{}, fmt.Errorf("Google AI model discovery failed for %s", model)
 	}
 	a.modelMu.Lock()
 	a.googleModel = discovered
@@ -112,10 +222,7 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 		base = "https://generativelanguage.googleapis.com/v1beta"
 	}
 	endpoint := base + "/models/" + url.PathEscape(strings.TrimPrefix(model, "models/")) + ":generateContent?key=" + url.QueryEscape(apiKey)
-	docs := make([]string, 0, len(a.base.Documents()))
-	for _, doc := range a.base.Documents() {
-		docs = append(docs, fmt.Sprintf("Файл: %s\nОтдел: %s\nЗаголовок: %s\nКлючевые слова: %s\n%s", doc.Path, doc.Department, doc.Title, strings.Join(doc.Keywords, ", "), doc.Content))
-	}
+	docs := a.maskedKnowledgeDocuments()
 	prompt := "Классифицируй обращение и верни только JSON с department (IT, Billing, HR, Accounting, Facilities, General, Unassigned), priority (low, medium, high), extracted_summary и rag_answer. Заполняй rag_answer только при прямом соответствии документа конкретной проблеме. Регламенты:\n" + strings.Join(docs, "\n\n") + "\nОбращение:\n" + rawText
 	payload := map[string]any{
 		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "Ты маршрутизатор FlowOps AI. Не подставляй нерелевантные регламенты и не выдумывай ответы."}}},
@@ -144,8 +251,8 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 		return Result{}, resp.StatusCode, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Error("Google AI Studio API returned error", "status", resp.StatusCode, "duration_ms", duration, "body", string(responseBody))
-		return Result{}, resp.StatusCode, fmt.Errorf("Google AI API status: %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+		slog.Error("Google AI Studio API returned error", "status", resp.StatusCode, "duration_ms", duration)
+		return Result{}, resp.StatusCode, fmt.Errorf("Google AI API status: %s", resp.Status)
 	}
 	var envelope struct {
 		Candidates []struct {
@@ -168,7 +275,7 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 	if result.RAGAnswer != nil && strings.TrimSpace(*result.RAGAnswer) == "" {
 		result.RAGAnswer = nil
 	}
-	slog.Info("Google AI response received", "status", resp.StatusCode, "duration_ms", duration, "model", model, "json", content)
+	slog.Info("Google AI response received", "status", resp.StatusCode, "duration_ms", duration, "model", model)
 	return result, resp.StatusCode, nil
 }
 
@@ -266,10 +373,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
-	docs := make([]string, 0, len(a.base.Documents()))
-	for _, doc := range a.base.Documents() {
-		docs = append(docs, fmt.Sprintf("Файл: %s\nОтдел: %s\nЗаголовок: %s\nКлючевые слова: %s\n%s", doc.Path, doc.Department, doc.Title, strings.Join(doc.Keywords, ", "), doc.Content))
-	}
+	docs := a.maskedKnowledgeDocuments()
 	prompt := "Классифицируй обращение. Верни JSON с department (IT, Billing, HR, Accounting, Facilities, General, Unassigned), priority (low, medium, high), extracted_summary и rag_answer. Заполняй rag_answer ТОЛЬКО если один документ прямо решает конкретную систему и проблему пользователя; иначе обязательно верни null или пустую строку. Нельзя выбирать документ по общим словам: ошибка, не работает, проблема, срочно, помогите, сертификат. Для Android, мобильного банка, SSL_PINNING_ERR или Kubernetes категорически запрещено подставлять it_vpn.md, если пользователь явно не пишет про VPN, ВПН, L2TP, IPsec или ошибку 809. Не выдумывай инструкции. Для подходящего документа добавь ссылку [Источник: точный путь]. Регламенты:\n" + strings.Join(docs, "\n\n")
 	payload := map[string]any{"model": model, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": rawText}}}
 	body, _ := json.Marshal(payload)
@@ -282,7 +386,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 	started := time.Now()
 	resp, err := a.client.Do(req)
 	if err != nil {
-		slog.Error("LLM request failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
+		slog.Error("LLM request failed", "duration_ms", time.Since(started).Milliseconds())
 		return Result{}, err
 	}
 	defer resp.Body.Close()
@@ -293,8 +397,8 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 		return Result{}, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Error("LLM API returned error", "status", resp.StatusCode, "duration_ms", duration, "body", string(responseBody))
-		return Result{}, fmt.Errorf("AI API status: %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+		slog.Error("LLM API returned error", "status", resp.StatusCode, "duration_ms", duration)
+		return Result{}, fmt.Errorf("AI API status: %s", resp.Status)
 	}
 	var envelope struct {
 		Choices []struct {
@@ -304,21 +408,31 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(responseBody, &envelope); err != nil || len(envelope.Choices) == 0 {
-		slog.Error("invalid LLM response", "status", resp.StatusCode, "duration_ms", duration, "body", string(responseBody), "error", err)
+		slog.Error("invalid LLM response", "status", resp.StatusCode, "duration_ms", duration)
 		return Result{}, fmt.Errorf("invalid AI response: %w", err)
 	}
 	var result Result
 	content := cleanJSONContent(envelope.Choices[0].Message.Content)
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		slog.Error("invalid LLM JSON", "status", resp.StatusCode, "duration_ms", duration, "body", content, "error", err)
+		slog.Error("invalid LLM JSON", "status", resp.StatusCode, "duration_ms", duration)
 		return Result{}, err
 	}
 	result.Department = knowledge.NormalizeDepartment(result.Department)
 	if result.RAGAnswer != nil && strings.TrimSpace(*result.RAGAnswer) == "" {
 		result.RAGAnswer = nil
 	}
-	slog.Info("LLM response received", "status", resp.StatusCode, "duration_ms", duration, "json", content)
+	slog.Info("LLM response received", "status", resp.StatusCode, "duration_ms", duration)
 	return result, nil
+}
+
+func (a *Analyzer) maskedKnowledgeDocuments() []string {
+	documents := a.base.Documents()
+	result := make([]string, 0, len(documents))
+	for _, doc := range documents {
+		content := fmt.Sprintf("Файл: %s\nОтдел: %s\nЗаголовок: %s\nКлючевые слова: %s\n%s", doc.Path, doc.Department, doc.Title, strings.Join(doc.Keywords, ", "), doc.Content)
+		result = append(result, security.MaskPII(content).MaskedText)
+	}
+	return result
 }
 
 func aiConfig() (string, string) {

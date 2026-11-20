@@ -8,25 +8,30 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"flowops-ai/internal/analyzer"
+	"flowops-ai/internal/channels"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TicketsHandler struct {
-	db       *pgxpool.Pool
-	logger   *slog.Logger
-	analyzer *analyzer.Analyzer
+	db         *pgxpool.Pool
+	logger     *slog.Logger
+	analyzer   *analyzer.Analyzer
+	dispatcher *channels.Dispatcher
 }
 
-func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer) *TicketsHandler {
-	return &TicketsHandler{db: db, logger: logger, analyzer: ticketAnalyzer}
+func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
+	handler := &TicketsHandler{db: db, logger: logger, analyzer: ticketAnalyzer}
+	if len(dispatchers) > 0 {
+		handler.dispatcher = dispatchers[0]
+	}
+	return handler
 }
 
 func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -42,28 +47,28 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.RawText = strings.ToValidUTF8(request.RawText, "�")
-	h.logger.Info("new ticket received", "user_email", request.UserEmail, "raw_text", request.RawText)
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
 	status := "assigned_to_operator"
 	if analysis.RAGAnswer != nil {
 		status = "awaiting_confirmation"
 	}
 
-	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, status)
-VALUES ($1, 'web', NULL, NULL, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, status, created_at`
+	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
+VALUES ($1, 'web', NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at`
 
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, status).Scan(
+	err := h.db.QueryRow(r.Context(), query, request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
-		&ticket.Status, &ticket.CreatedAt,
+		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt,
 	)
 	if err != nil {
-		h.logger.Error("failed to create ticket", "error", err)
+		h.logger.Error("failed to create ticket")
 		writeError(w, http.StatusInternalServerError, "failed to create ticket")
 		return
 	}
+	h.auditPII(r.Context(), ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
 	h.logger.Info("ticket saved", "id", ticket.ID, "status", ticket.Status, "department", ticket.Department)
 
 	writeJSON(w, http.StatusCreated, ticket)
@@ -77,8 +82,21 @@ func (h *TicketsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "channel and message are required; channel must be web, email, bot or api")
 		return
 	}
+	result, err := h.IngestMessage(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to ingest ticket")
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// IngestMessage is shared by the public Ingest endpoint and background channel workers.
+func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.IngestRequest) (channels.IngestResult, error) {
+	if !validChannel(request.Channel) || strings.TrimSpace(request.Message) == "" {
+		return channels.IngestResult{}, fmt.Errorf("channel and message are required")
+	}
 	rawText := strings.TrimSpace(strings.Join([]string{request.Subject, request.Message}, "\n"))
-	analysis := h.analyzer.Analyze(r.Context(), rawText)
+	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
 	status := "assigned_to_operator"
 	autoReplied := false
 	replyText := fmt.Sprintf("Ваше обращение принято и направлено в профильный отдел: %s.", departmentLabel(analysis.Department))
@@ -90,17 +108,17 @@ func (h *TicketsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 			status = "awaiting_confirmation"
 		}
 	}
-	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, status, created_at`
+	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at`
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, status).Scan(
-		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.Status, &ticket.CreatedAt)
+	err := h.db.QueryRow(ctx, query, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
+		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to ingest ticket")
-		return
+		return channels.IngestResult{}, err
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"ticket_id": ticket.ID, "channel": ticket.Channel, "auto_replied": autoReplied, "reply_text": replyText, "department": ticket.Department, "priority": ticket.Priority, "status": ticket.Status, "extracted_summary": ticket.ExtractedSummary})
+	h.auditPII(ctx, ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
+	return channels.IngestResult{TicketID: ticket.ID, Channel: ticket.Channel, AutoReplied: autoReplied, ReplyText: replyText, Department: ticket.Department, Priority: ticket.Priority, Status: ticket.Status, ExtractedSummary: ticket.ExtractedSummary, PIIMaskedCount: ticket.PIIMaskedCount, PIIMaskedTypes: ticket.PIIMaskedTypes}, nil
 }
 
 func validChannel(value string) bool { return hasValue(value, "web", "email", "bot", "api") }
@@ -131,7 +149,7 @@ func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("ticket feedback received", "id", id, "resolved", request.Resolved, "status", status)
 	if tag, err := h.db.Exec(r.Context(), `UPDATE tickets SET status = $1 WHERE id = $2`, status, id); err != nil || tag.RowsAffected() == 0 {
 		if err != nil {
-			h.logger.Error("failed to update ticket feedback", "error", err)
+			h.logger.Error("failed to update ticket feedback")
 		}
 		writeError(w, http.StatusNotFound, "ticket not found")
 		return
@@ -198,6 +216,7 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.OperatorReply != nil {
 		h.logger.Info("operator reply saved", "id", id, "status", request.Status, "reply_length", len(*request.OperatorReply))
+		_, _ = h.db.Exec(r.Context(), `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ('OPERATOR_REPLY', 'operator', $1, 'Ответ оператора сохранён')`, id)
 		if callbackURL != "" {
 			go h.sendWebhook(callbackURL, id, strings.TrimSpace(*request.OperatorReply))
 		}
@@ -219,15 +238,28 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	const query = `UPDATE tickets SET operator_reply = $1, status = 'closed' WHERE id = $2
-RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, status, created_at`
+RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, strings.TrimSpace(request.Reply), id).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.Status, &ticket.CreatedAt,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")
 		return
+	}
+	_, _ = h.db.Exec(r.Context(), `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ('OPERATOR_REPLY', 'operator', $1, 'Ответ оператора сохранён')`, id)
+	if h.dispatcher != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := h.dispatcher.Dispatch(ctx, ticket.Channel, ticket.UserEmail, ticket.ID, strings.TrimSpace(request.Reply)); err != nil {
+				h.logger.Error("channel reply dispatch failed", "ticket_id", ticket.ID, "channel", ticket.Channel, "error", err)
+			}
+		}()
+	}
+	if ticket.CallbackURL != "" {
+		go h.sendWebhook(ticket.CallbackURL, ticket.ID, strings.TrimSpace(request.Reply))
 	}
 	writeJSON(w, http.StatusOK, ticket)
 }
@@ -272,24 +304,33 @@ func (h *TicketsHandler) Reset(w http.ResponseWriter, r *http.Request) {
 
 func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	stats := struct {
-		Total        int            `json:"total"`
-		AutoResolved int            `json:"auto_resolved"`
-		Assigned     int            `json:"assigned_to_operator"`
-		Closed       int            `json:"closed"`
-		Deflection   float64        `json:"deflection_rate_percent"`
-		ByDepartment map[string]int `json:"by_department"`
-		ByChannel    map[string]int `json:"by_channel"`
-		AIMode       string         `json:"ai_mode"`
-		AIModel      string         `json:"ai_model"`
-	}{ByDepartment: make(map[string]int), ByChannel: make(map[string]int), AIMode: "heuristic_fallback", AIModel: os.Getenv("AI_MODEL")}
-	if os.Getenv("AI_API_KEY") != "" || os.Getenv("GEMINI_API_KEY") != "" {
-		stats.AIMode = "llm"
-	}
-	if stats.AIModel == "" {
-		stats.AIModel = "gemini-3.8-flash"
+		Total           int            `json:"total"`
+		AutoResolved    int            `json:"auto_resolved"`
+		Assigned        int            `json:"assigned_to_operator"`
+		Closed          int            `json:"closed"`
+		Deflection      float64        `json:"deflection_rate_percent"`
+		ByDepartment    map[string]int `json:"by_department"`
+		ByChannel       map[string]int `json:"by_channel"`
+		AIMode          string         `json:"ai_mode"`
+		AIModel         string         `json:"ai_model"`
+		AIProvider      string         `json:"ai_provider"`
+		TotalPIIMasked  int            `json:"total_pii_masked"`
+		SecurityContour string         `json:"security_contour"`
+		ActiveChannels  []string       `json:"active_channels"`
+	}{ByDepartment: make(map[string]int), ByChannel: make(map[string]int)}
+	stats.AIMode, stats.AIProvider, stats.AIModel = h.analyzer.ActiveProvider()
+	stats.SecurityContour = "152-ФЗ / РФ Контур + PII Guard"
+	if h.dispatcher != nil {
+		stats.ActiveChannels = h.dispatcher.EnabledChannels()
+	} else {
+		stats.ActiveChannels = []string{"Web"}
 	}
 	if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'auto_resolved'), COUNT(*) FILTER (WHERE status = 'assigned_to_operator'), COUNT(*) FILTER (WHERE status = 'closed') FROM tickets`).Scan(&stats.Total, &stats.AutoResolved, &stats.Assigned, &stats.Closed); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load stats")
+		return
+	}
+	if err := h.db.QueryRow(r.Context(), `SELECT COALESCE(SUM(pii_masked_count), 0) FROM tickets`).Scan(&stats.TotalPIIMasked); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load PII stats")
 		return
 	}
 	if stats.Total > 0 {
@@ -328,6 +369,47 @@ func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+func (h *TicketsHandler) Audit(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(r.Context(), `SELECT id, created_at, event_type, actor, ticket_id, COALESCE(details, '') FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 30`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load audit log")
+		return
+	}
+	defer rows.Close()
+	type auditEntry struct {
+		ID        int       `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		EventType string    `json:"event_type"`
+		Actor     string    `json:"actor"`
+		TicketID  *int      `json:"ticket_id"`
+		Details   string    `json:"details"`
+	}
+	entries := make([]auditEntry, 0, 30)
+	for rows.Next() {
+		var entry auditEntry
+		if err := rows.Scan(&entry.ID, &entry.CreatedAt, &entry.EventType, &entry.Actor, &entry.TicketID, &entry.Details); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read audit log")
+			return
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read audit log")
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (h *TicketsHandler) auditPII(ctx context.Context, ticketID, count int, types []string) {
+	if count <= 0 {
+		return
+	}
+	details := fmt.Sprintf("Обезличено объектов: %d; типы: %s", count, strings.Join(types, ", "))
+	if _, err := h.db.Exec(ctx, `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ('PII_MASKED', 'system-pii-filter', $1, $2)`, ticketID, details); err != nil {
+		h.logger.Error("failed to record PII audit event", "ticket_id", ticketID)
+	}
+}
+
 func ticketID(r *http.Request) (int, bool) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	return id, err == nil && id > 0
@@ -351,13 +433,13 @@ func hasValue(value string, values ...string) bool {
 func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, status, created_at
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at
 FROM tickets
 ORDER BY created_at DESC, id DESC`
 
 	rows, err := h.db.Query(r.Context(), query)
 	if err != nil {
-		h.logger.Error("failed to list tickets", "error", err)
+		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
 		return
 	}
@@ -368,17 +450,17 @@ ORDER BY created_at DESC, id DESC`
 		var ticket models.Ticket
 		if err := rows.Scan(
 			&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-			&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
+			&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes,
 			&ticket.Status, &ticket.CreatedAt,
 		); err != nil {
-			h.logger.Error("failed to scan ticket", "error", err)
+			h.logger.Error("failed to scan ticket")
 			writeError(w, http.StatusInternalServerError, "failed to read tickets")
 			return
 		}
 		tickets = append(tickets, ticket)
 	}
 	if err := rows.Err(); err != nil {
-		h.logger.Error("failed while reading tickets", "error", err)
+		h.logger.Error("failed while reading tickets")
 		writeError(w, http.StatusInternalServerError, "failed to read tickets")
 		return
 	}
@@ -393,12 +475,12 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, status, created_at
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at
 FROM tickets WHERE id = $1`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, id).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.Status, &ticket.CreatedAt,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")

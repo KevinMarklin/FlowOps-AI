@@ -14,6 +14,8 @@ type Ticket struct {
 	ExtractedSummary *string   `json:"extracted_summary,omitempty"`
 	RAGAnswer        *string   `json:"rag_answer,omitempty"`
 	OperatorReply    *string   `json:"operator_reply"`
+	PIIMaskedCount   int       `json:"pii_masked_count"`
+	PIIMaskedTypes   []string  `json:"pii_masked_types"`
 	Status           string    `json:"status"`
 	CreatedAt        time.Time `json:"created_at"`
 }
