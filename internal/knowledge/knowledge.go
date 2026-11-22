@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"flowops-ai/internal/security"
 )
 
 type Document struct {
@@ -81,7 +83,59 @@ func (b *Base) Add(department, title string, keywords []string, content string) 
 	return b.AddWithOptions(department, title, keywords, content, "permanent", "active", nil)
 }
 
+// ReplaceWithOptions validates first, writes a temporary file, then replaces the
+// original. Invalid updates and write failures must not erase an existing rule.
+func (b *Base) ReplaceWithOptions(filename, department, title string, keywords []string, content, kind, state string, expiresAt *time.Time) (Document, error) {
+	if err := security.ValidateKnowledge(title, keywords, content); err != nil {
+		return Document{}, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, old := range b.documents {
+		if old.Filename != filename {
+			continue
+		}
+		department = NormalizeDepartment(department)
+		if kind != "incident" {
+			kind = "permanent"
+		}
+		if state != "resolved" {
+			state = "active"
+		}
+		expires := ""
+		if expiresAt != nil {
+			expires = expiresAt.UTC().Format(time.RFC3339)
+		}
+		body := "# " + strings.TrimSpace(title) + "\n\n" + strings.TrimSpace(content)
+		data := fmt.Sprintf("---\ndepartment: %s\nkeywords: %s\nkind: %s\nincident_state: %s\nexpires_at: %s\n---\n%s\n", department, strings.Join(keywords, ", "), kind, state, expires, body)
+		tmp, err := os.CreateTemp(b.directory, ".knowledge-*.tmp")
+		if err != nil {
+			return Document{}, fmt.Errorf("create knowledge update: %w", err)
+		}
+		tmpName := tmp.Name()
+		defer os.Remove(tmpName)
+		if _, err := tmp.WriteString(data); err != nil {
+			_ = tmp.Close()
+			return Document{}, err
+		}
+		if err := tmp.Close(); err != nil {
+			return Document{}, err
+		}
+		if err := os.Rename(tmpName, old.Path); err != nil {
+			return Document{}, fmt.Errorf("replace knowledge document: %w", err)
+		}
+		doc := Document{Path: old.Path, Filename: old.Filename, Department: department, Title: strings.TrimSpace(title), Keywords: append([]string(nil), keywords...), Content: body, Kind: kind, IncidentState: state, ExpiresAt: expiresAt}
+		b.documents[i] = doc
+		doc.Keywords = append([]string(nil), doc.Keywords...)
+		return doc, nil
+	}
+	return Document{}, fmt.Errorf("knowledge document not found")
+}
+
 func (b *Base) AddWithOptions(department, title string, keywords []string, content, kind, state string, expiresAt *time.Time) (Document, error) {
+	if err := security.ValidateKnowledge(title, keywords, content); err != nil {
+		return Document{}, err
+	}
 	department = NormalizeDepartment(department)
 	title = strings.TrimSpace(title)
 	content = strings.TrimSpace(content)
@@ -200,6 +254,9 @@ func (b *Base) FindRelevant(text, department string) *Document {
 	defer b.mu.RUnlock()
 	bestIndex, bestScore := -1, 0
 	for i, document := range b.documents {
+		if security.ValidateKnowledge(document.Title, document.Keywords, document.Content) != nil {
+			continue
+		}
 		if !isUnassigned && document.Department != "General" && document.Department != "" && document.Department != department {
 			continue
 		}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -30,6 +29,10 @@ type Result struct {
 }
 
 type Analyzer struct {
+	llmSlots       chan struct{}
+	budgetMu       sync.Mutex
+	budgetStart    time.Time
+	budgetCount    int
 	base           *knowledge.Base
 	client         *http.Client
 	insecureClient *http.Client
@@ -49,7 +52,7 @@ type Analyzer struct {
 func (a *Analyzer) ResetKnowledge() error { return a.base.Reset() }
 
 func New(base *knowledge.Base) *Analyzer {
-	a := &Analyzer{base: base, client: &http.Client{Timeout: 15 * time.Second}, insecureClient: newInsecureGigaChatClient(15 * time.Second)}
+	a := &Analyzer{llmSlots: make(chan struct{}, 4), base: base, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: rejectProviderRedirect}, insecureClient: newInsecureGigaChatClient(15 * time.Second)}
 	a.setProviderForConfig()
 	mode, name, model := a.ActiveProvider()
 	if mode == "llm" {
@@ -66,6 +69,18 @@ func (a *Analyzer) Analyze(ctx context.Context, rawText string) Result {
 }
 
 func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string) Result {
+	if reason := security.CheckPromptInput(rawText, security.MaxTicketBytes); reason != "" {
+		return reviewResult(reason)
+	}
+	if reason := security.CheckPromptInput(sender, 512); reason != "" {
+		return reviewResult("unsafe_sender")
+	}
+	if !a.acquireModelSlot() {
+		return reviewResult("model_capacity_limit")
+	}
+	defer func() { <-a.llmSlots }()
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	maskInput := rawText
 	if strings.TrimSpace(sender) != "" {
 		maskInput += "\nОтправитель: " + sender
@@ -74,10 +89,10 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	piiSentToAI := false
 	if config := loadGigaChatConfig(); config.authKey != "" {
 		piiSentToAI = true
-		if result, err := a.analyzeWithGigaChat(ctx, masked.MaskedText); err == nil && a.validForText(result, masked.MaskedText) {
+		if result, err := a.analyzeWithGigaChat(ctx, masked.MaskedText); err == nil && a.valid(result) {
 			result = unmaskResult(result, masked)
 			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.normalizeRAGSource(result, rawText)
+			result = a.attachSafeAnswer(result, rawText)
 			a.setActiveProvider("llm", "GigaChat (РФ контур)", config.model)
 			slog.Info("ticket analyzed", "mode", "llm", "provider", "gigachat", "model", config.model, "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
 			return result
@@ -91,10 +106,10 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	}
 	if apiKey := googleAPIKey(); apiKey != "" {
 		piiSentToAI = true
-		if result, err := a.analyzeWithGoogle(ctx, masked.MaskedText, apiKey); err == nil && a.validForText(result, masked.MaskedText) {
+		if result, err := a.analyzeWithGoogle(ctx, masked.MaskedText, apiKey); err == nil && a.valid(result) {
 			result = unmaskResult(result, masked)
 			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.normalizeRAGSource(result, rawText)
+			result = a.attachSafeAnswer(result, rawText)
 			a.setActiveProvider("llm", "Gemini", a.currentGoogleModel())
 			slog.Info("ticket analyzed", "mode", "llm", "provider", "google_ai_studio", "model", a.currentGoogleModel(), "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
 			return result
@@ -106,10 +121,10 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 		}
 	} else if os.Getenv("AI_API_KEY") != "" {
 		piiSentToAI = true
-		if result, err := a.analyzeWithAI(ctx, masked.MaskedText); err == nil && a.validForText(result, masked.MaskedText) {
+		if result, err := a.analyzeWithAI(ctx, masked.MaskedText); err == nil && a.valid(result) {
 			result = unmaskResult(result, masked)
 			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.normalizeRAGSource(result, rawText)
+			result = a.attachSafeAnswer(result, rawText)
 			_, model := aiConfig()
 			provider := "Gemini"
 			if !strings.Contains(strings.ToLower(model), "gemini") {
@@ -126,6 +141,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 		}
 	}
 	result := a.analyzeHeuristically(rawText)
+	result = a.attachSafeAnswer(result, rawText)
 	result = unmaskResult(result, masked)
 	result.PIIMaskedTypes = masked.MaskedTypes
 	if piiSentToAI {
@@ -138,10 +154,6 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 
 func unmaskResult(result Result, masked security.MaskResult) Result {
 	result.ExtractedSummary = security.UnmaskPII(result.ExtractedSummary, masked.Replacements)
-	if result.RAGAnswer != nil {
-		answer := security.UnmaskPII(*result.RAGAnswer, masked.Replacements)
-		result.RAGAnswer = &answer
-	}
 	return result
 }
 
@@ -222,12 +234,10 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 		base = "https://generativelanguage.googleapis.com/v1beta"
 	}
 	endpoint := base + "/models/" + url.PathEscape(strings.TrimPrefix(model, "models/")) + ":generateContent?key=" + url.QueryEscape(apiKey)
-	docs := a.maskedKnowledgeDocuments()
-	prompt := "Классифицируй обращение и верни только JSON с department (IT, Billing, HR, Accounting, Facilities, General, Unassigned), priority (low, medium, high), extracted_summary и rag_answer. Заполняй rag_answer только при прямом соответствии документа конкретной проблеме. Регламенты:\n" + strings.Join(docs, "\n\n") + "\nОбращение:\n" + rawText
 	payload := map[string]any{
-		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "Ты маршрутизатор FlowOps AI. Не подставляй нерелевантные регламенты и не выдумывай ответы."}}},
-		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": prompt}}}},
-		"generationConfig":  map[string]string{"responseMimeType": "application/json"},
+		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": classificationPolicy}}},
+		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": classificationInput(rawText)}}}},
+		"generationConfig":  map[string]any{"responseMimeType": "application/json", "temperature": 0, "maxOutputTokens": 512},
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -245,7 +255,7 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 		return Result{}, 0, err
 	}
 	defer resp.Body.Close()
-	responseBody, readErr := io.ReadAll(resp.Body)
+	responseBody, readErr := readProviderBody(resp.Body)
 	duration := time.Since(started).Milliseconds()
 	if readErr != nil {
 		return Result{}, resp.StatusCode, readErr
@@ -266,14 +276,9 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 	if err := json.Unmarshal(responseBody, &envelope); err != nil || len(envelope.Candidates) == 0 || len(envelope.Candidates[0].Content.Parts) == 0 {
 		return Result{}, resp.StatusCode, fmt.Errorf("invalid Google AI response: %w", err)
 	}
-	content := cleanJSONContent(envelope.Candidates[0].Content.Parts[0].Text)
-	var result Result
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
+	result, err := decodeModelResult(envelope.Candidates[0].Content.Parts[0].Text)
+	if err != nil {
 		return Result{}, resp.StatusCode, err
-	}
-	result.Department = knowledge.NormalizeDepartment(result.Department)
-	if result.RAGAnswer != nil && strings.TrimSpace(*result.RAGAnswer) == "" {
-		result.RAGAnswer = nil
 	}
 	slog.Info("Google AI response received", "status", resp.StatusCode, "duration_ms", duration, "model", model)
 	return result, resp.StatusCode, nil
@@ -294,7 +299,7 @@ func (a *Analyzer) discoverGoogleModel(ctx context.Context, apiKey string) (stri
 		return "", err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data, _ := readProviderBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("models discovery status: %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
@@ -373,9 +378,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
-	docs := a.maskedKnowledgeDocuments()
-	prompt := "Классифицируй обращение. Верни JSON с department (IT, Billing, HR, Accounting, Facilities, General, Unassigned), priority (low, medium, high), extracted_summary и rag_answer. Заполняй rag_answer ТОЛЬКО если один документ прямо решает конкретную систему и проблему пользователя; иначе обязательно верни null или пустую строку. Нельзя выбирать документ по общим словам: ошибка, не работает, проблема, срочно, помогите, сертификат. Для Android, мобильного банка, SSL_PINNING_ERR или Kubernetes категорически запрещено подставлять it_vpn.md, если пользователь явно не пишет про VPN, ВПН, L2TP, IPsec или ошибку 809. Не выдумывай инструкции. Для подходящего документа добавь ссылку [Источник: точный путь]. Регламенты:\n" + strings.Join(docs, "\n\n")
-	payload := map[string]any{"model": model, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": rawText}}}
+	payload := map[string]any{"model": model, "temperature": 0, "max_tokens": 512, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": classificationPolicy}, {"role": "user", "content": classificationInput(rawText)}}}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
@@ -390,7 +393,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 		return Result{}, err
 	}
 	defer resp.Body.Close()
-	responseBody, readErr := io.ReadAll(resp.Body)
+	responseBody, readErr := readProviderBody(resp.Body)
 	duration := time.Since(started).Milliseconds()
 	if readErr != nil {
 		slog.Error("LLM response read failed", "status", resp.StatusCode, "duration_ms", duration, "error", readErr)
@@ -411,28 +414,12 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 		slog.Error("invalid LLM response", "status", resp.StatusCode, "duration_ms", duration)
 		return Result{}, fmt.Errorf("invalid AI response: %w", err)
 	}
-	var result Result
-	content := cleanJSONContent(envelope.Choices[0].Message.Content)
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		slog.Error("invalid LLM JSON", "status", resp.StatusCode, "duration_ms", duration)
+	result, err := decodeModelResult(envelope.Choices[0].Message.Content)
+	if err != nil {
 		return Result{}, err
-	}
-	result.Department = knowledge.NormalizeDepartment(result.Department)
-	if result.RAGAnswer != nil && strings.TrimSpace(*result.RAGAnswer) == "" {
-		result.RAGAnswer = nil
 	}
 	slog.Info("LLM response received", "status", resp.StatusCode, "duration_ms", duration)
 	return result, nil
-}
-
-func (a *Analyzer) maskedKnowledgeDocuments() []string {
-	documents := a.base.Documents()
-	result := make([]string, 0, len(documents))
-	for _, doc := range documents {
-		content := fmt.Sprintf("Файл: %s\nОтдел: %s\nЗаголовок: %s\nКлючевые слова: %s\n%s", doc.Path, doc.Department, doc.Title, strings.Join(doc.Keywords, ", "), doc.Content)
-		result = append(result, security.MaskPII(content).MaskedText)
-	}
-	return result
 }
 
 func aiConfig() (string, string) {
@@ -449,69 +436,13 @@ func aiConfig() (string, string) {
 	return baseURL, model
 }
 
-func cleanJSONContent(content string) string {
-	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
-	if start >= 0 && end >= start {
-		return strings.TrimSpace(content[start : end+1])
-	}
-	return strings.TrimSpace(content)
-}
-
 func (a *Analyzer) valid(result Result) bool {
-	result.Department = knowledge.NormalizeDepartment(result.Department)
-	validDepartment := result.Department == "IT" || result.Department == "Billing" || result.Department == "HR" || result.Department == "Accounting" || result.Department == "Facilities" || result.Department == "General"
-	validPriority := result.Priority == "low" || result.Priority == "medium" || result.Priority == "high"
-	if !validDepartment || !validPriority || result.ExtractedSummary == "" {
+	switch result.Department {
+	case "IT", "Billing", "HR", "Accounting", "Facilities", "General", "Unassigned":
+	default:
 		return false
 	}
-	if result.RAGAnswer == nil {
-		return true
-	}
-	expectedFile := map[string]string{
-		"IT":         "it_vpn.md",
-		"HR":         "hr_certificates.md",
-		"Accounting": "accounting_payments.md",
-		"Facilities": "office_equipment.md",
-	}[result.Department]
-	for _, document := range a.base.Documents() {
-		matchesDepartment := document.Department == result.Department
-		matchesLegacyFile := expectedFile != "" && strings.HasSuffix(document.Path, "/"+expectedFile)
-		prettySource := "[Источник: «" + document.Title + "» (" + filepath.ToSlash(filepath.Join("knowledge_base", document.Filename)) + ")]"
-		if (matchesDepartment || matchesLegacyFile) && (strings.Contains(*result.RAGAnswer, "[Источник: "+document.Path+"]") || strings.Contains(*result.RAGAnswer, prettySource)) {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *Analyzer) validForText(result Result, rawText string) bool {
-	if !a.valid(result) {
-		return false
-	}
-	if result.RAGAnswer == nil || strings.TrimSpace(*result.RAGAnswer) == "" {
-		return true
-	}
-	document := a.base.FindRelevant(rawText, result.Department)
-	if document == nil {
-		return false
-	}
-	prettySource := prettySource(document)
-	return strings.Contains(*result.RAGAnswer, "[Источник: "+document.Path+"]") || strings.Contains(*result.RAGAnswer, prettySource)
-}
-
-func (a *Analyzer) normalizeRAGSource(result Result, rawText string) Result {
-	if result.RAGAnswer == nil {
-		return result
-	}
-	document := a.base.FindRelevant(rawText, result.Department)
-	if document == nil {
-		return result
-	}
-	answer := strings.TrimSpace(*result.RAGAnswer)
-	answer = strings.ReplaceAll(answer, "[Источник: "+document.Path+"]", prettySource(document))
-	result.RAGAnswer = &answer
-	return result
+	return (result.Priority == "low" || result.Priority == "medium" || result.Priority == "high") && len(result.ExtractedSummary) <= 1024 && security.SafeAnswerText(result.ExtractedSummary) && result.RAGAnswer == nil
 }
 
 func prettySource(document *knowledge.Document) string {

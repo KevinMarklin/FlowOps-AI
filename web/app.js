@@ -5,8 +5,41 @@
   const $$ = (selector, root = document) => root && root.querySelectorAll ? [...root.querySelectorAll(selector)] : [];
   const on = (element, event, handler) => { if (element) element.addEventListener(event, handler); };
 
+  let operatorToken = ''; // Memory only: never put credentials in localStorage, URLs or logs.
+  let operatorTokenPrompt = null;
+  function requestOperatorToken() {
+    if (operatorTokenPrompt) return operatorTokenPrompt;
+    operatorTokenPrompt = new Promise(resolve => {
+      const dialog = document.createElement('dialog');
+      const form = document.createElement('form');
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      const submit = document.createElement('button');
+      const cancel = document.createElement('button');
+      dialog.setAttribute('aria-label', 'Доступ оператора');
+      label.textContent = 'Токен оператора: ';
+      input.type = 'password'; input.required = true; input.minLength = 32;
+      input.maxLength = 256; input.autocomplete = 'off'; input.spellcheck = false;
+      submit.type = 'submit'; submit.textContent = 'Войти';
+      cancel.type = 'button'; cancel.textContent = 'Отмена';
+      const finish = value => { input.value = ''; dialog.close(); dialog.remove(); resolve(value); };
+      form.addEventListener('submit', event => { event.preventDefault(); finish(input.value.trim()); });
+      cancel.addEventListener('click', () => finish(''));
+      dialog.addEventListener('cancel', event => { event.preventDefault(); finish(''); });
+      label.append(input); form.append(label, submit, cancel); dialog.append(form);
+      document.body.append(dialog); dialog.showModal(); input.focus();
+    }).finally(() => { operatorTokenPrompt = null; });
+    return operatorTokenPrompt;
+  }
   async function api(path, options = {}) {
-    const response = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
+    const send = () => fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}), ...(operatorToken ? { Authorization: `Bearer ${operatorToken}` } : {}) } });
+    let response = await send();
+    if (response.status === 401) {
+      operatorToken = '';
+      const entered = await requestOperatorToken();
+      if (entered) { operatorToken = entered.trim(); response = await send(); }
+      if (response.status === 401) operatorToken = '';
+    }
     const data = response.status === 204 ? null : await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `Ошибка API: ${response.status}`);
     return data;

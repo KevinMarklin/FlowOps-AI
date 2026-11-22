@@ -18,6 +18,7 @@ import (
 	"flowops-ai/internal/database"
 	"flowops-ai/internal/handlers"
 	"flowops-ai/internal/knowledge"
+	"flowops-ai/internal/security"
 )
 
 func main() {
@@ -96,7 +97,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           loggingMiddleware(logger, mux),
+		Handler:           loggingMiddleware(logger, security.ProtectOperatorWrites(mux, os.Getenv("FLOWOPS_OPERATOR_TOKEN"))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

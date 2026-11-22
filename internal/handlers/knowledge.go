@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"flowops-ai/internal/knowledge"
+	"flowops-ai/internal/security"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -139,8 +140,8 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			request.Content = fmt.Sprintf("Сбой по теме «%s» устранён, все системы работают в штатном режиме. %s Если проблема у вас сохраняется — передайте обращение специалисту.", request.Title, request.ResolutionNote)
 			request.IncidentState = "resolved"
 		}
-		if err := h.base.Delete(filename); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if err := security.ValidateKnowledge(request.Title, request.Keywords, request.Content); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		kind := request.Kind
@@ -155,7 +156,7 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if request.TTLSeconds > 0 || request.TTLMinutes > 0 {
 			expiresAt = ttlTime(request.TTLSeconds, request.TTLMinutes)
 		}
-		created, err := h.base.AddWithOptions(request.Department, request.Title, request.Keywords, request.Content, kind, state, expiresAt)
+		created, err := h.base.ReplaceWithOptions(filename, request.Department, request.Title, request.Keywords, request.Content, kind, state, expiresAt)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

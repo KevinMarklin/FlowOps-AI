@@ -2,18 +2,22 @@
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
+# This script resets tickets and custom KB rules. Use an isolated test database.
+if ($env:FLOWOPS_TEST_ALLOW_RESET -ne '1') { throw 'Set FLOWOPS_TEST_ALLOW_RESET=1 only for an isolated test database.' }
+if ($env:FLOWOPS_OPERATOR_TOKEN.Length -lt 32) { throw 'Set the same FLOWOPS_OPERATOR_TOKEN as the test server (at least 32 characters).' }
+$testHeaders = @{ Authorization = 'Bearer ' + $env:FLOWOPS_OPERATOR_TOKEN }
 $baseUrl = 'http://localhost:8080'
 
 function Invoke-JsonRequest {
     param([string]$Method, [string]$Uri, [object]$Body)
     $json = $Body | ConvertTo-Json -Depth 10 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-    Invoke-RestMethod -Method $Method -Uri ($baseUrl + $Uri) -Body $bytes -ContentType 'application/json; charset=utf-8'
+    Invoke-RestMethod -Headers $testHeaders -Method $Method -Uri ($baseUrl + $Uri) -Body $bytes -ContentType 'application/json; charset=utf-8'
 }
 
 function Get-JsonRequest {
     param([string]$Uri)
-    Invoke-RestMethod -Method GET -Uri ($baseUrl + $Uri)
+    Invoke-RestMethod -Headers $testHeaders -Method GET -Uri ($baseUrl + $Uri)
 }
 
 function Assert-Equal {
@@ -29,7 +33,7 @@ function Assert-Contains {
 Write-Host '=== FlowOps AI: полный API E2E прогон ===' -ForegroundColor Cyan
 
 Write-Host "`nОчистка демо-данных и пользовательских регламентов" -ForegroundColor DarkGray
-Invoke-RestMethod -Method DELETE -Uri ($baseUrl + '/api/tickets/reset') | Out-Null
+Invoke-RestMethod -Headers $testHeaders -Method DELETE -Uri ($baseUrl + '/api/tickets/reset') | Out-Null
 
 Write-Host "`nТест 1. Статус и режим ИИ" -ForegroundColor Yellow
 $stats = Get-JsonRequest '/api/stats'

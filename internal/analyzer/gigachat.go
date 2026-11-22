@@ -8,14 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
-
-	"flowops-ai/internal/knowledge"
 )
 
 const gigachatTokenRefreshBuffer = 60 * time.Second
@@ -41,7 +38,7 @@ func loadGigaChatConfig() gigachatConfig {
 		oauthURL: strings.TrimSpace(os.Getenv("GIGACHAT_OAUTH_URL")),
 		baseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("GIGACHAT_BASE_URL")), "/"),
 		model:    strings.TrimSpace(os.Getenv("GIGACHAT_MODEL")),
-		insecure: true,
+		insecure: false,
 	}
 	if config.scope == "" {
 		config.scope = "GIGACHAT_API_PERS"
@@ -65,7 +62,7 @@ func newInsecureGigaChatClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// GigaChat's certificate chain may not be installed in local/dev images.
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
-	return &http.Client{Timeout: timeout, Transport: transport}
+	return &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: rejectProviderRedirect}
 }
 
 func (a *Analyzer) gigachatHTTPClient(insecure bool) *http.Client {
@@ -111,7 +108,7 @@ func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfi
 		return "", fmt.Errorf("request GigaChat OAuth token failed")
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := readProviderBody(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("read GigaChat OAuth response failed")
 	}
@@ -147,15 +144,13 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 	if err != nil {
 		return Result{}, fmt.Errorf("generate GigaChat request ID: %w", err)
 	}
-	docs := a.maskedKnowledgeDocuments()
-	systemPrompt := "Ты маршрутизатор FlowOps AI. Классифицируй обращение и верни строго валидный JSON без Markdown-обёртки с полями department (IT, Billing, HR, Accounting, Facilities, General, Unassigned), priority (low, medium, high), extracted_summary, proposed_solution и matched_article. proposed_solution и matched_article должны быть null, если документ базы знаний не подходит. matched_article — точный путь файла из контекста. Заполняй решение только по прямо соответствующему документу; не выдумывай инструкции и не подставляй нерелевантные регламенты."
-	userPrompt := "Регламенты базы знаний:\n" + strings.Join(docs, "\n\n") + "\n\nОбращение пользователя:\n" + rawText
 	payload := map[string]any{
 		"model":       config.model,
 		"temperature": 0.1,
+		"max_tokens":  512,
 		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
+			{"role": "system", "content": classificationPolicy},
+			{"role": "user", "content": classificationInput(rawText)},
 		},
 	}
 	body, err := json.Marshal(payload)
@@ -175,7 +170,7 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 		return Result{}, fmt.Errorf("request GigaChat completion failed")
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := readProviderBody(resp.Body)
 	if err != nil {
 		return Result{}, fmt.Errorf("read GigaChat completion response failed")
 	}
@@ -195,33 +190,7 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 	if len(envelope.Choices) == 0 {
 		return Result{}, fmt.Errorf("GigaChat completion response has no choices")
 	}
-	var modelResult struct {
-		Department       string  `json:"department"`
-		Priority         string  `json:"priority"`
-		ExtractedSummary string  `json:"extracted_summary"`
-		ProposedSolution *string `json:"proposed_solution"`
-		MatchedArticle   *string `json:"matched_article"`
-		LegacyRAGAnswer  *string `json:"rag_answer"`
-	}
-	content := cleanJSONContent(envelope.Choices[0].Message.Content)
-	if err := json.Unmarshal([]byte(content), &modelResult); err != nil {
-		return Result{}, fmt.Errorf("parse GigaChat JSON content: %w", err)
-	}
-	result := Result{
-		Department:       knowledge.NormalizeDepartment(modelResult.Department),
-		Priority:         modelResult.Priority,
-		ExtractedSummary: modelResult.ExtractedSummary,
-	}
-	if modelResult.ProposedSolution != nil && strings.TrimSpace(*modelResult.ProposedSolution) != "" && modelResult.MatchedArticle != nil && strings.TrimSpace(*modelResult.MatchedArticle) != "" {
-		answer := strings.TrimSpace(*modelResult.ProposedSolution) + "\n\n[Источник: " + strings.TrimSpace(*modelResult.MatchedArticle) + "]"
-		result.RAGAnswer = &answer
-	} else if modelResult.LegacyRAGAnswer != nil && strings.TrimSpace(*modelResult.LegacyRAGAnswer) != "" {
-		result.RAGAnswer = modelResult.LegacyRAGAnswer
-	}
-	if result.RAGAnswer != nil && strings.TrimSpace(*result.RAGAnswer) == "" {
-		result.RAGAnswer = nil
-	}
-	return result, nil
+	return decodeModelResult(envelope.Choices[0].Message.Content)
 }
 
 func newUUIDv4() (string, error) {

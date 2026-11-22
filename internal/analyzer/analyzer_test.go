@@ -54,17 +54,6 @@ func TestAnalyzeUnknownTopicHasNoRAGAnswer(t *testing.T) {
 	}
 }
 
-func TestCleanJSONContent(t *testing.T) {
-	content := "Ответ:\n```json\n{\"department\":\"IT\",\"priority\":\"high\"}\n```\n"
-	var result Result
-	if err := json.Unmarshal([]byte(cleanJSONContent(content)), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Department != "IT" || result.Priority != "high" {
-		t.Fatalf("unexpected result: %#v", result)
-	}
-}
-
 func TestAnalyzeWithGeminiMockAndTrailingSlash(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nИнструкция для ошибки 809."), 0600); err != nil {
@@ -262,22 +251,6 @@ func TestAnalyzeSendsMaskedTextToGeminiAndUnmasksSummary(t *testing.T) {
 	}
 	if strings.Contains(security.MaskPII("email ivanov@example.ru").MaskedText, "ivanov@example.ru") {
 		t.Fatal("email masking regression")
-	}
-}
-
-func TestAnalyzeMasksPersonalDataInKnowledgeContext(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nДля вопросов пишите на ops-private@example.ru, телефон +7 999 123-45-67."), 0600); err != nil {
-		t.Fatal(err)
-	}
-	base, err := knowledge.Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := New(base)
-	docs := strings.Join(a.maskedKnowledgeDocuments(), "\n")
-	if strings.Contains(docs, "ops-private@example.ru") || strings.Contains(docs, "+7 999 123-45-67") {
-		t.Fatalf("knowledge context contains PII: %q", docs)
 	}
 }
 

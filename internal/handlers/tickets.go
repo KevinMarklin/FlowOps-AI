@@ -48,10 +48,7 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	request.RawText = strings.ToValidUTF8(request.RawText, "�")
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
-	status := "assigned_to_operator"
-	if analysis.RAGAnswer != nil {
-		status = "awaiting_confirmation"
-	}
+	status := initialTicketStatus(analysis)
 
 	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
 VALUES ($1, 'web', NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -97,16 +94,12 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	}
 	rawText := strings.TrimSpace(strings.Join([]string{request.Subject, request.Message}, "\n"))
 	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
-	status := "assigned_to_operator"
+	status := initialTicketStatus(analysis)
 	autoReplied := false
 	replyText := fmt.Sprintf("Ваше обращение принято и направлено в профильный отдел: %s.", departmentLabel(analysis.Department))
 	if analysis.RAGAnswer != nil {
 		autoReplied = true
 		replyText = strings.TrimSpace(*analysis.RAGAnswer)
-		status = "auto_resolved"
-		if request.RequireConfirmation {
-			status = "awaiting_confirmation"
-		}
 	}
 	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -119,6 +112,14 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	}
 	h.auditPII(ctx, ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
 	return channels.IngestResult{TicketID: ticket.ID, Channel: ticket.Channel, AutoReplied: autoReplied, ReplyText: replyText, Department: ticket.Department, Priority: ticket.Priority, Status: ticket.Status, ExtractedSummary: ticket.ExtractedSummary, PIIMaskedCount: ticket.PIIMaskedCount, PIIMaskedTypes: ticket.PIIMaskedTypes}, nil
+}
+
+// User-controlled channel/confirmation flags cannot authorize ticket closure.
+func initialTicketStatus(analysis analyzer.Result) string {
+	if analysis.RAGAnswer != nil {
+		return "awaiting_confirmation"
+	}
+	return "assigned_to_operator"
 }
 
 func validChannel(value string) bool { return hasValue(value, "web", "email", "bot", "api") }
