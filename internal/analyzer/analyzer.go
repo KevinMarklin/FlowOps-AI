@@ -29,30 +29,29 @@ type Result struct {
 }
 
 type Analyzer struct {
-	llmSlots       chan struct{}
-	budgetMu       sync.Mutex
-	budgetStart    time.Time
-	budgetCount    int
-	base           *knowledge.Base
-	client         *http.Client
-	insecureClient *http.Client
-	modelMu        sync.RWMutex
-	googleModel    string
-	tokenMu        sync.Mutex
-	gigaToken      string
-	gigaExpiresAt  time.Time
-	gigaAuthKey    string
-	gigaOAuthURL   string
-	providerMu     sync.RWMutex
-	activeMode     string
-	activeName     string
-	activeModel    string
+	llmSlots      chan struct{}
+	budgetMu      sync.Mutex
+	budgetStart   time.Time
+	budgetCount   int
+	base          *knowledge.Base
+	client        *http.Client
+	modelMu       sync.RWMutex
+	googleModel   string
+	tokenMu       sync.Mutex
+	gigaToken     string
+	gigaExpiresAt time.Time
+	gigaAuthKey   string
+	gigaOAuthURL  string
+	providerMu    sync.RWMutex
+	activeMode    string
+	activeName    string
+	activeModel   string
 }
 
 func (a *Analyzer) ResetKnowledge() error { return a.base.Reset() }
 
 func New(base *knowledge.Base) *Analyzer {
-	a := &Analyzer{llmSlots: make(chan struct{}, 4), base: base, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: rejectProviderRedirect}, insecureClient: newInsecureGigaChatClient(15 * time.Second)}
+	a := &Analyzer{llmSlots: make(chan struct{}, 4), base: base, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: rejectProviderRedirect}}
 	a.setProviderForConfig()
 	mode, name, model := a.ActiveProvider()
 	if mode == "llm" {
@@ -75,80 +74,42 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	if reason := security.CheckPromptInput(sender, 512); reason != "" {
 		return reviewResult("unsafe_sender")
 	}
-	if !a.acquireModelSlot() {
-		return reviewResult("model_capacity_limit")
+	// Sender identities are routing metadata; never append them to the model input.
+	masked := security.MaskPII(rawText)
+	providers := a.approvedProviders()
+	if !sensitiveModelInputAllowed(rawText, masked) {
+		providers = nil
 	}
-	defer func() { <-a.llmSlots }()
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	maskInput := rawText
-	if strings.TrimSpace(sender) != "" {
-		maskInput += "\nОтправитель: " + sender
-	}
-	masked := security.MaskPII(maskInput)
-	piiSentToAI := false
-	if config := loadGigaChatConfig(); config.authKey != "" {
-		piiSentToAI = true
-		if result, err := a.analyzeWithGigaChat(ctx, masked.MaskedText); err == nil && a.valid(result) {
-			result = unmaskResult(result, masked)
-			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.attachSafeAnswer(result, rawText)
-			a.setActiveProvider("llm", "GigaChat (РФ контур)", config.model)
-			slog.Info("ticket analyzed", "mode", "llm", "provider", "gigachat", "model", config.model, "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
-			return result
-		} else if err != nil {
-			slog.Warn("GigaChat analysis failed, trying Gemini fallback")
-			a.setProviderForConfig()
-		} else {
-			slog.Warn("GigaChat returned invalid analysis, trying Gemini fallback")
-			a.setProviderForConfig()
-		}
-	}
-	if apiKey := googleAPIKey(); apiKey != "" {
-		piiSentToAI = true
-		if result, err := a.analyzeWithGoogle(ctx, masked.MaskedText, apiKey); err == nil && a.valid(result) {
-			result = unmaskResult(result, masked)
-			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.attachSafeAnswer(result, rawText)
-			a.setActiveProvider("llm", "Gemini", a.currentGoogleModel())
-			slog.Info("ticket analyzed", "mode", "llm", "provider", "google_ai_studio", "model", a.currentGoogleModel(), "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
-			return result
-		} else if err != nil {
-			slog.Warn("Google AI Studio analysis failed, using heuristic fallback", "error", "provider request failed")
-			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
-		} else {
-			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
-		}
-	} else if os.Getenv("AI_API_KEY") != "" {
-		piiSentToAI = true
-		if result, err := a.analyzeWithAI(ctx, masked.MaskedText); err == nil && a.valid(result) {
-			result = unmaskResult(result, masked)
-			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.attachSafeAnswer(result, rawText)
-			_, model := aiConfig()
-			provider := "Gemini"
-			if !strings.Contains(strings.ToLower(model), "gemini") {
-				provider = "AI API"
+	sentToModel := false
+	if len(providers) > 0 && a.acquireModelSlot() {
+		defer func() { <-a.llmSlots }()
+		modelCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		for i, provider := range providers {
+			if i > 0 && os.Getenv("FLOWOPS_AI_ALLOW_FALLBACK") != "true" {
+				break
 			}
-			a.setActiveProvider("llm", provider, model)
-			slog.Info("ticket analyzed", "mode", "llm", "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
+			sentToModel = true
+			result, err := provider.analyze(modelCtx, masked.MaskedText)
+			if err != nil || !a.valid(result) {
+				continue
+			}
+			result = unmaskResult(result, masked)
+			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
+			result = a.attachSafeAnswer(result, rawText)
+			a.setActiveProvider("llm", provider.name, provider.model())
 			return result
-		} else if err != nil {
-			slog.Warn("LLM analysis failed, using heuristic fallback", "error", "provider request failed")
-			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
-		} else {
-			a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
 		}
 	}
+	// External capacity limits must not disable local classification for every channel.
 	result := a.analyzeHeuristically(rawText)
 	result = a.attachSafeAnswer(result, rawText)
 	result = unmaskResult(result, masked)
 	result.PIIMaskedTypes = masked.MaskedTypes
-	if piiSentToAI {
-		result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
+	if sentToModel {
+		result.PIIMaskedCount = masked.MaskedCount
 	}
 	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
-	slog.Info("ticket analyzed", "mode", "fallback", "department", result.Department, "priority", result.Priority, "rag_found", result.RAGAnswer != nil)
 	return result
 }
 
@@ -158,13 +119,9 @@ func unmaskResult(result Result, masked security.MaskResult) Result {
 }
 
 func (a *Analyzer) setProviderForConfig() {
-	config := loadGigaChatConfig()
-	if config.authKey != "" {
-		a.setActiveProvider("llm", "GigaChat (РФ контур)", config.model)
-		return
-	}
-	if googleAPIKey() != "" {
-		a.setActiveProvider("llm", "Gemini", a.currentGoogleModel())
+	providers := a.approvedProviders()
+	if len(providers) > 0 {
+		a.setActiveProvider("llm", providers[0].name, providers[0].model())
 		return
 	}
 	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
@@ -240,7 +197,7 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 		"generationConfig":  map[string]any{"responseMimeType": "application/json", "temperature": 0, "maxOutputTokens": 512},
 	}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := newProviderRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, 0, err
 	}
@@ -289,7 +246,7 @@ func (a *Analyzer) discoverGoogleModel(ctx context.Context, apiKey string) (stri
 	if base == "" {
 		base = "https://generativelanguage.googleapis.com/v1beta"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models?key="+url.QueryEscape(apiKey), nil)
+	req, err := newProviderRequest(ctx, http.MethodGet, base+"/models?key="+url.QueryEscape(apiKey), nil)
 	if err != nil {
 		return "", err
 	}
@@ -380,7 +337,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 	}
 	payload := map[string]any{"model": model, "temperature": 0, "max_tokens": 512, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": classificationPolicy}, {"role": "user", "content": classificationInput(rawText)}}}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+	req, err := newProviderRequest(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err
 	}

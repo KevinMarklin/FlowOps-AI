@@ -16,6 +16,7 @@ import (
 	"flowops-ai/internal/analyzer"
 	"flowops-ai/internal/channels"
 	"flowops-ai/internal/database"
+	"flowops-ai/internal/delivery"
 	"flowops-ai/internal/handlers"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
@@ -69,20 +70,26 @@ func main() {
 		TelegramToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
 		MaxToken:       os.Getenv("MAX_BOT_TOKEN"),
 		MaxAPIURL:      os.Getenv("MAX_API_URL"),
-		MaxInsecureTLS: envBool("MAX_INSECURE_TLS", true),
+		MaxInsecureTLS: envBool("MAX_INSECURE_TLS", false),
 		MailIMAPHost:   os.Getenv("MAIL_IMAP_HOST"), MailSMTPHost: os.Getenv("MAIL_SMTP_HOST"),
 		MailUser: os.Getenv("MAIL_USER"), MailPassword: os.Getenv("MAIL_PASSWORD"),
 	}
 	dispatcher := channels.NewDispatcher(channelConfig)
-	ticketsHandler := handlers.NewTicketsHandler(pool, logger, analyzer.New(knowledgeBase), dispatcher)
+	callbacks, err := security.NewCallbacks(os.Getenv("FLOWOPS_CALLBACK_URLS"))
+	if err != nil {
+		logger.Error("invalid callback allowlist")
+		os.Exit(1)
+	}
+	ticketsHandler := handlers.NewTicketsHandler(pool, logger, analyzer.New(knowledgeBase), dispatcher).WithCallbacks(callbacks)
 	channelContext, stopChannels := context.WithCancel(context.Background())
 	defer stopChannels()
+	go delivery.New(pool, ticketsHandler.Deliver).Run(channelContext, logger)
 	channels.Start(channelContext, channelConfig, ticketsHandler.IngestMessage, logger)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tickets", ticketsHandler.List)
 	mux.HandleFunc("GET /api/tickets/{id}", ticketsHandler.Detail)
 	mux.HandleFunc("POST /api/tickets", ticketsHandler.Create)
-	mux.HandleFunc("POST /api/v1/ingest", ticketsHandler.Ingest)
+	mux.Handle("POST /api/v1/ingest", security.ProtectIngest(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN")))
 	mux.HandleFunc("POST /api/tickets/{id}/feedback", ticketsHandler.Feedback)
 	mux.HandleFunc("POST /api/tickets/{id}/reply", ticketsHandler.Reply)
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)

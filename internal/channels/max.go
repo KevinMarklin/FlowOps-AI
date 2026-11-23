@@ -39,6 +39,13 @@ type maxUpdate struct {
 
 func maxRequest(ctx context.Context, cfg Config, method, endpoint string, query url.Values, body any) (*http.Response, error) {
 	target := cfg.maxURL() + endpoint
+	if cfg.MaxInsecureTLS {
+		return nil, fmt.Errorf("insecure MAX TLS is no longer supported")
+	}
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return nil, fmt.Errorf("MAX endpoint must use HTTPS")
+	}
 	if len(query) != 0 {
 		target += "?" + query.Encode()
 	}
@@ -68,7 +75,7 @@ func sendMaxMessage(ctx context.Context, cfg Config, targetType, targetID, text 
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("MAX send message returned %s", resp.Status)
 	}
@@ -92,13 +99,13 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 				Updates []maxUpdate `json:"updates"`
 				Marker  int64       `json:"marker"`
 			}
-			err = json.NewDecoder(resp.Body).Decode(&payload)
+			err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
 			resp.Body.Close()
 			updates = payload.Updates
-			if payload.Marker > marker {
-				marker = payload.Marker
-			}
 			if err == nil {
+				if payload.Marker > marker {
+					marker = payload.Marker
+				}
 				for _, update := range updates {
 					if update.Marker > marker {
 						marker = update.Marker
@@ -118,7 +125,7 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						}
 						if targetID != 0 {
 							if sendErr := sendMaxMessage(ctx, cfg, target, strconv.FormatInt(targetID, 10), welcomeText); sendErr != nil {
-								logger.Error("MAX welcome failed", "error", sendErr)
+								logger.Error("MAX welcome failed", "error", "operation failed")
 							}
 						}
 						continue
@@ -149,7 +156,7 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 					}
 					result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: sender, Message: text})
 					if ingestErr != nil {
-						logger.Error("MAX ingest failed", "error", ingestErr)
+						logger.Error("MAX ingest failed", "error", "operation failed")
 						continue
 					}
 					reply := result.ReplyText
@@ -157,13 +164,13 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						reply = fmt.Sprintf("Ваше обращение передано специалисту поддержки. Номер заявки: #%d. Ответ оператора придёт сюда автоматически.", result.TicketID)
 					}
 					if sendErr := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); sendErr != nil {
-						logger.Error("MAX reply failed", "error", sendErr)
+						logger.Error("MAX reply failed", "error", "operation failed")
 					}
 				}
 			}
 		}
 		if err != nil && ctx.Err() == nil {
-			logger.Error("MAX polling failed", "error", err)
+			logger.Error("MAX polling failed", "error", "operation failed")
 			waitContext(ctx, 3*time.Second)
 		}
 	}

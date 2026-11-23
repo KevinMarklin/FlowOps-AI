@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -14,8 +14,11 @@ import (
 
 	"flowops-ai/internal/analyzer"
 	"flowops-ai/internal/channels"
+	"flowops-ai/internal/delivery"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/security"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +27,7 @@ type TicketsHandler struct {
 	logger     *slog.Logger
 	analyzer   *analyzer.Analyzer
 	dispatcher *channels.Dispatcher
+	callbacks  *security.Callbacks
 }
 
 func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
@@ -32,6 +36,12 @@ func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *an
 		handler.dispatcher = dispatchers[0]
 	}
 	return handler
+}
+
+// WithCallbacks configures the immutable outbound policy before serving requests.
+func (h *TicketsHandler) WithCallbacks(callbacks *security.Callbacks) *TicketsHandler {
+	h.callbacks = callbacks
+	return h
 }
 
 func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -52,13 +62,13 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
 VALUES ($1, 'web', NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at`
+RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
-		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt,
+		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
 	)
 	if err != nil {
 		h.logger.Error("failed to create ticket")
@@ -75,8 +85,12 @@ func (h *TicketsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 	var request models.IngestRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || !validChannel(request.Channel) || strings.TrimSpace(request.Message) == "" {
+	if err := decoder.Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "channel and message are required; channel must be web, email, bot or api")
+		return
+	}
+	if err := h.validateIngest(request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	result, err := h.IngestMessage(r.Context(), request)
@@ -89,8 +103,8 @@ func (h *TicketsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 
 // IngestMessage is shared by the public Ingest endpoint and background channel workers.
 func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.IngestRequest) (channels.IngestResult, error) {
-	if !validChannel(request.Channel) || strings.TrimSpace(request.Message) == "" {
-		return channels.IngestResult{}, fmt.Errorf("channel and message are required")
+	if err := h.validateIngest(request); err != nil {
+		return channels.IngestResult{}, err
 	}
 	rawText := strings.TrimSpace(strings.Join([]string{request.Subject, request.Message}, "\n"))
 	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
@@ -103,10 +117,10 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	}
 	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at`
+	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 	var ticket models.Ticket
 	err := h.db.QueryRow(ctx, query, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
-		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt)
+		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus)
 	if err != nil {
 		return channels.IngestResult{}, err
 	}
@@ -201,27 +215,26 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		fields = append(fields, "operator_reply = $"+strconv.Itoa(len(args)+1))
 		args = append(args, strings.TrimSpace(*request.OperatorReply))
 	}
-	var callbackURL string
-	if request.OperatorReply != nil {
-		_ = h.db.QueryRow(r.Context(), `SELECT callback_url FROM tickets WHERE id = $1`, id).Scan(&callbackURL)
-	}
+
 	if len(fields) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one field is required")
 		return
 	}
 	args = append(args, id)
 	query := "UPDATE tickets SET " + strings.Join(fields, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
-	if tag, err := h.db.Exec(r.Context(), query, args...); err != nil || tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "ticket not found")
+	if request.OperatorReply != nil && (strings.TrimSpace(*request.OperatorReply) == "" || len(*request.OperatorReply) > security.MaxDocumentBytes) {
+		writeError(w, 400, "operator reply exceeds limits or is empty")
 		return
 	}
-	if request.OperatorReply != nil {
-		h.logger.Info("operator reply saved", "id", id, "status", request.Status, "reply_length", len(*request.OperatorReply))
-		_, _ = h.db.Exec(r.Context(), `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ('OPERATOR_REPLY', 'operator', $1, 'Ответ оператора сохранён')`, id)
-		if callbackURL != "" {
-			go h.sendWebhook(callbackURL, id, strings.TrimSpace(*request.OperatorReply))
+	if err := h.applyUpdate(r.Context(), id, query, args, request.OperatorReply); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "ticket not found")
+		} else {
+			writeError(w, 500, "ticket update failed")
 		}
+		return
 	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -238,59 +251,96 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "operator_reply is required")
 		return
 	}
-	const query = `UPDATE tickets SET operator_reply = $1, status = 'closed' WHERE id = $2
-RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at`
-	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, strings.TrimSpace(request.Reply), id).Scan(
-		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt,
-	)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "ticket not found")
+	if len(request.Reply) > security.MaxDocumentBytes {
+		writeError(w, 400, "operator reply exceeds limits")
 		return
 	}
-	_, _ = h.db.Exec(r.Context(), `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ('OPERATOR_REPLY', 'operator', $1, 'Ответ оператора сохранён')`, id)
-	if h.dispatcher != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := h.dispatcher.Dispatch(ctx, ticket.Channel, ticket.UserEmail, ticket.ID, strings.TrimSpace(request.Reply)); err != nil {
-				h.logger.Error("channel reply dispatch failed", "ticket_id", ticket.ID, "channel", ticket.Channel, "error", err)
-			}
-		}()
+	query := "UPDATE tickets SET operator_reply=$1 WHERE id=$2"
+	if err := h.applyUpdate(r.Context(), id, query, []any{strings.TrimSpace(request.Reply), id}, &request.Reply); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "ticket not found")
+		} else {
+			writeError(w, 500, "ticket reply failed")
+		}
+		return
 	}
-	if ticket.CallbackURL != "" {
-		go h.sendWebhook(ticket.CallbackURL, ticket.ID, strings.TrimSpace(request.Reply))
+	h.Detail(w, r)
+}
+
+func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, args []any, reply *string) error {
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	writeJSON(w, http.StatusOK, ticket)
+	defer tx.Rollback(ctx)
+	// Lock first to serialize reply revisions with queue acknowledgements.
+	var channel, sender, callback string
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(channel,'web'),COALESCE(user_email,''),COALESCE(callback_url,'') FROM tickets WHERE id=$1 FOR UPDATE`, id).Scan(&channel, &sender, &callback); err != nil {
+		return err
+	}
+	if reply != nil {
+		if err = h.callbacks.Validate(callback); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(ctx, query, args...); err != nil {
+		return err
+	}
+	if reply != nil {
+		if _, err = tx.Exec(ctx, `UPDATE tickets SET status='resolved' WHERE id=$1`, id); err != nil {
+			return err
+		}
+		if err = delivery.EnqueueReply(ctx, tx, id, channel, sender, callback, strings.TrimSpace(*reply)); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(event_type,actor,ticket_id,details) VALUES('OPERATOR_REPLY','operator',$1,'Reply saved with durable delivery events')`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// Deliver is called by the bounded durable worker, never by request goroutines.
+func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error {
+	switch m.Kind {
+	case "callback":
+		body, _ := json.Marshal(map[string]any{"ticket_id": m.TicketID, "operator_reply": m.Body})
+		return h.callbacks.Post(ctx, m.Recipient, bytes.NewReader(body))
+	case "channel":
+		if h.dispatcher == nil {
+			return fmt.Errorf("channel dispatcher unavailable")
+		}
+		return h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, m.Body)
+	default:
+		return fmt.Errorf("unknown delivery kind")
+	}
 }
 
 func (h *TicketsHandler) sendWebhook(callbackURL string, ticketID int, reply string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	body, _ := json.Marshal(map[string]any{"ticket_id": ticketID, "operator_reply": reply})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(body))
-	if err != nil {
-		h.logger.Error("webhook callback failed", "error", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
-	if err != nil {
-		h.logger.Error("webhook callback failed", "error", err)
-		return
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		h.logger.Info("webhook callback sent", "ticket_id", ticketID, "status", resp.StatusCode)
-	} else {
-		h.logger.Error("webhook callback failed", "ticket_id", ticketID, "status", resp.StatusCode)
+	if err := h.callbacks.Post(ctx, callbackURL, bytes.NewReader(body)); err != nil {
+		h.logger.Error("webhook delivery failed", "ticket_id", ticketID)
 	}
 }
 
+// Enforce limits for HTTP adapters AND background channel workers before analysis/storage.
+func (h *TicketsHandler) validateIngest(r models.IngestRequest) error {
+	if !validChannel(r.Channel) || strings.TrimSpace(r.Message) == "" {
+		return fmt.Errorf("channel and message are required")
+	}
+	if len(r.Subject)+len(r.Message)+1 > security.MaxTicketBytes || len(r.Sender) > 255 {
+		return fmt.Errorf("ticket exceeds service limits")
+	}
+	if err := h.callbacks.Validate(r.CallbackURL); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (h *TicketsHandler) Reset(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.db.Exec(r.Context(), `TRUNCATE TABLE tickets RESTART IDENTITY`); err != nil {
+	if _, err := h.db.Exec(r.Context(), `TRUNCATE TABLE ticket_deliveries, tickets RESTART IDENTITY`); err != nil {
 		h.logger.Error("failed to reset tickets", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
 		return
@@ -434,7 +484,7 @@ func hasValue(value string, values ...string) bool {
 func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
 FROM tickets
 ORDER BY created_at DESC, id DESC`
 
@@ -452,7 +502,7 @@ ORDER BY created_at DESC, id DESC`
 		if err := rows.Scan(
 			&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 			&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes,
-			&ticket.Status, &ticket.CreatedAt,
+			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
 		); err != nil {
 			h.logger.Error("failed to scan ticket")
 			writeError(w, http.StatusInternalServerError, "failed to read tickets")
@@ -476,12 +526,12 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
 FROM tickets WHERE id = $1`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, id).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")

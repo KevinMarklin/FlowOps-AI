@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -30,7 +29,7 @@ func runEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interfa
 	defer ticker.Stop()
 	for ctx.Err() == nil {
 		if err := pollEmail(ctx, cfg, ingest, logger); err != nil && ctx.Err() == nil {
-			logger.Error("email polling failed", "error", err)
+			logger.Error("email polling failed", "error", "operation failed")
 		}
 		select {
 		case <-ctx.Done():
@@ -41,20 +40,20 @@ func runEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interfa
 }
 
 type imapSession struct {
-	conn   net.Conn
-	reader *bufio.Reader
-	next   int
+	conn    net.Conn
+	reader  *bufio.Reader
+	next    int
+	cleanup func()
 }
 
 func connectIMAP(ctx context.Context, address string) (*imapSession, error) {
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{ServerName: hostName(address), MinVersion: tls.VersionTLS12})
+	conn, cleanup, err := dialIMAP(ctx, address)
 	if err != nil {
 		return nil, err
 	}
-	session := &imapSession{conn: conn, reader: bufio.NewReader(conn), next: 1}
-	if _, err := session.reader.ReadString('\n'); err != nil {
-		conn.Close()
+	session := &imapSession{conn: conn, reader: bufio.NewReader(conn), next: 1, cleanup: cleanup}
+	if _, err := readIMAPLine(session.reader); err != nil {
+		cleanup()
 		return nil, err
 	}
 	return session, nil
@@ -77,9 +76,12 @@ func (s *imapSession) command(ctx context.Context, command string) ([]byte, erro
 	}
 	var result bytes.Buffer
 	for {
-		line, err := s.reader.ReadString('\n')
+		line, err := readIMAPLine(s.reader)
 		if err != nil {
 			return nil, err
+		}
+		if result.Len()+len(line) > 32<<20 {
+			return nil, fmt.Errorf("IMAP response exceeds limits")
 		}
 		result.WriteString(line)
 		trimmed := strings.TrimRight(line, "\r\n")
@@ -91,13 +93,16 @@ func (s *imapSession) command(ctx context.Context, command string) ([]byte, erro
 		}
 		if open := strings.LastIndex(trimmed, "{"); open >= 0 && strings.HasSuffix(trimmed, "}") {
 			n, parseErr := strconv.Atoi(strings.TrimSuffix(trimmed[open+1:], "}"))
-			if parseErr == nil && n >= 0 && n < 32<<20 {
+			if parseErr != nil || n < 0 || n > 32<<20 || result.Len()+n > 32<<20 {
+				return nil, fmt.Errorf("IMAP response exceeds limits")
+			}
+			if n >= 0 {
 				literal := make([]byte, n)
 				if _, err := io.ReadFull(s.reader, literal); err != nil {
 					return nil, err
 				}
 				result.Write(literal)
-				ending, err := s.reader.ReadString('\n')
+				ending, err := readIMAPLine(s.reader)
 				if err != nil {
 					return nil, err
 				}
@@ -118,7 +123,7 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 	if err != nil {
 		return err
 	}
-	defer session.conn.Close()
+	defer session.cleanup()
 	quote := func(value string) string { return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"` }
 	if _, err = session.command(ctx, "LOGIN "+quote(cfg.MailUser)+" "+quote(cfg.MailPassword)); err != nil {
 		return err
@@ -134,18 +139,17 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 	for _, id := range ids {
 		fetched, fetchErr := session.command(ctx, fmt.Sprintf("FETCH %d (BODY.PEEK[])", id))
 		if fetchErr != nil {
-			logger.Error("email fetch failed", "message_id", id, "error", fetchErr)
-			continue
+			return fmt.Errorf("email fetch failed")
 		}
 		raw := extractIMAPLiteral(fetched)
 		message, parseErr := mail.ReadMessage(bytes.NewReader(raw))
 		if parseErr != nil {
-			logger.Error("email parse failed", "message_id", id, "error", parseErr)
+			logger.Error("email parse failed", "message_id", id, "error", "operation failed")
 			continue
 		}
 		from, parseErr := mail.ParseAddress(message.Header.Get("From"))
 		if parseErr != nil {
-			logger.Error("email sender parse failed", "message_id", id, "error", parseErr)
+			logger.Error("email sender parse failed", "message_id", id, "error", "operation failed")
 			_, _ = session.command(ctx, fmt.Sprintf("STORE %d +FLAGS (\\Seen)", id))
 			continue
 		}
@@ -153,21 +157,21 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 		subject, _ := decoder.DecodeHeader(message.Header.Get("Subject"))
 		bodyText, bodyErr := decodeMIMEBody(message.Header.Get("Content-Type"), message.Header.Get("Content-Transfer-Encoding"), message.Body)
 		if bodyErr != nil {
-			logger.Error("email body decode failed", "message_id", id, "error", bodyErr)
+			logger.Error("email body decode failed", "message_id", id, "error", "operation failed")
 		}
 		if strings.TrimSpace(bodyText) == "" {
 			bodyText = "(Письмо без текстового содержимого)"
 		}
 		result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "email", Sender: from.Address, Subject: subject, Message: bodyText})
 		if ingestErr != nil {
-			logger.Error("email ingest failed", "message_id", id, "error", ingestErr)
+			logger.Error("email ingest failed", "message_id", id, "error", "operation failed")
 			continue
 		}
 		if err := sendEmail(ctx, cfg, from.Address, fmt.Sprintf("Re: [Заявка #%d] %s", result.TicketID, subject), result.ReplyText); err != nil {
-			logger.Error("email auto-reply failed", "ticket_id", result.TicketID, "error", err)
+			logger.Error("email auto-reply failed", "ticket_id", result.TicketID, "error", "operation failed")
 		}
 		if _, err := session.command(ctx, fmt.Sprintf("STORE %d +FLAGS (\\Seen)", id)); err != nil {
-			logger.Error("email mark-seen failed", "message_id", id, "error", err)
+			return fmt.Errorf("email acknowledgement failed")
 		}
 	}
 	return nil
@@ -225,6 +229,13 @@ func decodeCharset(label string, input io.Reader) (io.Reader, error) {
 }
 
 func decodeMIMEBody(contentType, transferEncoding string, body io.Reader) (string, error) {
+	return decodeMIMEBodyDepth(contentType, transferEncoding, body, 0)
+}
+
+func decodeMIMEBodyDepth(contentType, transferEncoding string, body io.Reader, depth int) (string, error) {
+	if depth > 16 {
+		return "", fmt.Errorf("MIME nesting exceeds limits")
+	}
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		mediaType = "text/plain"
@@ -240,7 +251,7 @@ func decodeMIMEBody(contentType, transferEncoding string, body io.Reader) (strin
 			if nextErr != nil {
 				return "", nextErr
 			}
-			text, partErr := decodeMIMEBody(part.Header.Get("Content-Type"), part.Header.Get("Content-Transfer-Encoding"), part)
+			text, partErr := decodeMIMEBodyDepth(part.Header.Get("Content-Type"), part.Header.Get("Content-Transfer-Encoding"), part, depth+1)
 			part.Close()
 			if partErr != nil {
 				continue
@@ -275,10 +286,11 @@ func sendEmail(ctx context.Context, cfg Config, to, subject, body string) error 
 	if err != nil {
 		return err
 	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", cfg.MailSMTPHost, &tls.Config{ServerName: hostName(cfg.MailSMTPHost), MinVersion: tls.VersionTLS12})
+	conn, cleanup, err := dialMail(ctx, cfg.MailSMTPHost)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 	client, err := smtp.NewClient(conn, hostName(cfg.MailSMTPHost))
 	if err != nil {
 		conn.Close()
@@ -319,4 +331,20 @@ func sendEmail(ctx context.Context, cfg Config, to, subject, body string) error 
 	default:
 	}
 	return client.Quit()
+}
+
+// ReadSlice prevents an unterminated protocol line from allocating without limit.
+func readIMAPLine(reader *bufio.Reader) (string, error) {
+	var line []byte
+	for {
+		part, err := reader.ReadSlice('\n')
+		if len(line)+len(part) > 64<<10 {
+			return "", fmt.Errorf("IMAP line exceeds limits")
+		}
+		line = append(line, part...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return string(line), err
+	}
 }

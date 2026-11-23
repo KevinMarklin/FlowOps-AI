@@ -53,6 +53,26 @@ CREATE TABLE IF NOT EXISTS tickets (
 		return fmt.Errorf("create tickets table: %w", err)
 	}
 	for _, statement := range []string{
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS reply_version INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS reply_hash TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS ticket_deliveries (
+   id BIGSERIAL PRIMARY KEY,
+   ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+   reply_version INTEGER NOT NULL,
+   kind TEXT NOT NULL,
+   channel TEXT NOT NULL DEFAULT '',
+   recipient TEXT NOT NULL,
+   body TEXT NOT NULL,
+   dedupe_key TEXT NOT NULL,
+   state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','processing','sent','failed','superseded')),
+   attempts INTEGER NOT NULL DEFAULT 0,
+   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+   locked_until TIMESTAMPTZ,
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+   UNIQUE(ticket_id,reply_version,dedupe_key)
+  )`,
+		`CREATE INDEX IF NOT EXISTS ticket_deliveries_ready ON ticket_deliveries(next_attempt_at) WHERE state IN ('pending','processing')`,
 		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pii_masked_count INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pii_masked_types TEXT[] NOT NULL DEFAULT '{}'`,
 		`CREATE TABLE IF NOT EXISTS audit_logs (

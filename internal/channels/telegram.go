@@ -44,7 +44,7 @@ func telegramRequest(ctx context.Context, token, method string, values url.Value
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return (&http.Client{Timeout: 40 * time.Second}).Do(req)
+	return (&http.Client{Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}).Do(req)
 }
 
 func query(values url.Values) string {
@@ -60,7 +60,7 @@ func sendTelegramMessage(ctx context.Context, token string, chatID int64, text s
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("Telegram sendMessage returned %s", resp.Status)
 	}
@@ -72,7 +72,7 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 	Error(string, ...any)
 }) {
 	var offset int64
-	client := &http.Client{Timeout: 40 * time.Second}
+	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}
 	for ctx.Err() == nil {
 		values := url.Values{"timeout": {"30"}}
 		if offset > 0 {
@@ -87,7 +87,7 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 					OK     bool             `json:"ok"`
 					Result []telegramUpdate `json:"result"`
 				}
-				err = json.NewDecoder(resp.Body).Decode(&payload)
+				err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
 				resp.Body.Close()
 				if err == nil && !payload.OK {
 					err = fmt.Errorf("Telegram getUpdates returned ok=false")
@@ -104,7 +104,7 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 						}
 						if text == "/start" || strings.HasPrefix(text, "/start@") || strings.HasPrefix(text, "/start ") {
 							if err := sendTelegramMessage(ctx, token, chatID, welcomeText); err != nil {
-								logger.Error("Telegram welcome failed", "error", err)
+								logger.Error("Telegram welcome failed", "error", "operation failed")
 							}
 							continue
 						}
@@ -114,7 +114,7 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 						}
 						result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: fmt.Sprintf("tg:%d", chatID), Message: text})
 						if ingestErr != nil {
-							logger.Error("Telegram ingest failed", "error", ingestErr)
+							logger.Error("Telegram ingest failed", "error", "operation failed")
 							continue
 						}
 						reply := result.ReplyText
@@ -122,14 +122,14 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 							reply = fmt.Sprintf("Ваше обращение передано специалисту поддержки. Номер заявки: #%d. Ответ оператора придёт сюда автоматически.", result.TicketID)
 						}
 						if err := sendTelegramMessage(ctx, token, chatID, reply); err != nil {
-							logger.Error("Telegram reply failed", "error", err)
+							logger.Error("Telegram reply failed", "error", "operation failed")
 						}
 					}
 				}
 			}
 		}
 		if err != nil && ctx.Err() == nil {
-			logger.Error("Telegram polling failed", "error", err)
+			logger.Error("Telegram polling failed", "error", "operation failed")
 			waitContext(ctx, 3*time.Second)
 		}
 	}

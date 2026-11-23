@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -58,20 +57,6 @@ func loadGigaChatConfig() gigachatConfig {
 	return config
 }
 
-func newInsecureGigaChatClient(timeout time.Duration) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// GigaChat's certificate chain may not be installed in local/dev images.
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
-	return &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: rejectProviderRedirect}
-}
-
-func (a *Analyzer) gigachatHTTPClient(insecure bool) *http.Client {
-	if insecure {
-		return a.insecureClient
-	}
-	return a.client
-}
-
 func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfig) (string, error) {
 	a.tokenMu.Lock()
 	defer a.tokenMu.Unlock()
@@ -90,7 +75,7 @@ func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfi
 		return "", fmt.Errorf("generate GigaChat OAuth request ID: %w", err)
 	}
 	form := url.Values{"scope": {config.scope}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.oauthURL, strings.NewReader(form.Encode()))
+	req, err := newProviderRequest(ctx, http.MethodPost, config.oauthURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("create GigaChat OAuth request: %w", err)
 	}
@@ -103,7 +88,7 @@ func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfi
 	req.Header.Set("RqUID", requestID)
 	req.Header.Set("Authorization", authKey)
 
-	resp, err := a.gigachatHTTPClient(config.insecure).Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request GigaChat OAuth token failed")
 	}
@@ -157,7 +142,7 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.baseURL+"/chat/completions", bytes.NewReader(body))
+	req, err := newProviderRequest(ctx, http.MethodPost, config.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return Result{}, fmt.Errorf("create GigaChat completion request: %w", err)
 	}
@@ -165,7 +150,7 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Request-ID", requestID)
-	resp, err := a.gigachatHTTPClient(config.insecure).Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return Result{}, fmt.Errorf("request GigaChat completion failed")
 	}

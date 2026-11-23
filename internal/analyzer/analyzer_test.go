@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 )
 
 func TestAnalyzeVPNSummaryAndRAGSource(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	content := "# VPN\nИнструкция для ошибки 809."
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte(content), 0600); err != nil {
@@ -40,6 +40,7 @@ func TestAnalyzeVPNSummaryAndRAGSource(t *testing.T) {
 }
 
 func TestAnalyzeUnknownTopicHasNoRAGAnswer(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nОшибка 809."), 0600); err != nil {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestAnalyzeUnknownTopicHasNoRAGAnswer(t *testing.T) {
 }
 
 func TestAnalyzeWithGeminiMockAndTrailingSlash(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nИнструкция для ошибки 809."), 0600); err != nil {
 		t.Fatal(err)
@@ -63,7 +65,7 @@ func TestAnalyzeWithGeminiMockAndTrailingSlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -83,6 +85,7 @@ func TestAnalyzeWithGeminiMockAndTrailingSlash(t *testing.T) {
 }
 
 func TestAnalyzeFallsBackAfterNetworkError(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nОшибка 809."), 0600); err != nil {
 		t.Fatal(err)
@@ -101,6 +104,7 @@ func TestAnalyzeFallsBackAfterNetworkError(t *testing.T) {
 }
 
 func TestLLMEmptyRAGIsNotReplacedByUnrelatedHeuristicDocument(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nОшибка сертификата для VPN."), 0600); err != nil {
 		t.Fatal(err)
@@ -109,7 +113,7 @@ func TestLLMEmptyRAGIsNotReplacedByUnrelatedHeuristicDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"department\":\"General\",\"priority\":\"medium\",\"extracted_summary\":\"Мобильный банк\",\"rag_answer\":null}"}}]}`))
 	}))
@@ -124,6 +128,7 @@ func TestLLMEmptyRAGIsNotReplacedByUnrelatedHeuristicDocument(t *testing.T) {
 }
 
 func TestGoogleAIStudioConfigFallback(t *testing.T) {
+	allowTestProviders(t)
 	t.Setenv("AI_API_KEY", "AIza-test-key")
 	t.Setenv("AI_BASE_URL", "https://openrouter.ai/api/v1/")
 	t.Setenv("AI_MODEL", "openai/gpt-4o-mini")
@@ -134,6 +139,7 @@ func TestGoogleAIStudioConfigFallback(t *testing.T) {
 }
 
 func TestHeuristicRoutesAllDepartmentsAndLeavesUnknownGeneral(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -158,6 +164,7 @@ func TestHeuristicRoutesAllDepartmentsAndLeavesUnknownGeneral(t *testing.T) {
 }
 
 func TestHeuristicRoutesBillingSeparatelyFromIT(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -170,13 +177,14 @@ func TestHeuristicRoutesBillingSeparatelyFromIT(t *testing.T) {
 }
 
 func TestGoogleNativeRESTDiscoversFlashModelAfter404(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	base, err := knowledge.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var calls []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		if r.URL.Path == "/v1beta/models/gemini-3.8-flash:generateContent" {
 			w.WriteHeader(http.StatusNotFound)
@@ -208,6 +216,7 @@ func TestGoogleNativeRESTDiscoversFlashModelAfter404(t *testing.T) {
 }
 
 func TestGeminiAPIKeyEnvironmentVariable(t *testing.T) {
+	allowTestProviders(t)
 	t.Setenv("GEMINI_API_KEY", "AIza-from-gemini")
 	t.Setenv("AI_API_KEY", "")
 	if got := googleAPIKey(); got != "AIza-from-gemini" {
@@ -216,11 +225,12 @@ func TestGeminiAPIKeyEnvironmentVariable(t *testing.T) {
 }
 
 func TestAnalyzeSendsMaskedTextToGeminiAndUnmasksSummary(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Contents []struct {
 				Parts []struct {
@@ -255,11 +265,12 @@ func TestAnalyzeSendsMaskedTextToGeminiAndUnmasksSummary(t *testing.T) {
 }
 
 func TestAnalyzeDoesNotSendSenderEmailToGemini(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(data), "sender.private@example.ru") {
 			t.Errorf("Gemini request contains sender email: %s", data)
@@ -278,6 +289,7 @@ func TestAnalyzeDoesNotSendSenderEmailToGemini(t *testing.T) {
 }
 
 func TestHeuristicFallbackReturnsPIIMetrics(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -292,6 +304,7 @@ func TestHeuristicFallbackReturnsPIIMetrics(t *testing.T) {
 }
 
 func TestGigaChatOAuthCachingAndCompletionParsing(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nИнструкция по восстановлению VPN для ошибки 809."), 0600); err != nil {
 		t.Fatal(err)
@@ -301,7 +314,7 @@ func TestGigaChatOAuthCachingAndCompletionParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenRequests, completionRequests := 0, 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth":
 			tokenRequests++
@@ -372,16 +385,17 @@ func TestGigaChatOAuthCachingAndCompletionParsing(t *testing.T) {
 }
 
 func TestGigaChatFailureFallsBackToGemini(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	gigaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gigaServer := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"error":"temporarily unavailable"}`))
 	}))
 	defer gigaServer.Close()
-	geminiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	geminiServer := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/models/gemini-test:generateContent" || r.URL.Query().Get("key") != "gemini-test-key" {
 			t.Errorf("unexpected Gemini fallback request: %s %s", r.Method, r.URL.String())
 		}
@@ -411,6 +425,7 @@ func validUUIDv4(value string) bool {
 }
 
 func TestLiveGoogleAIStudioLLM(t *testing.T) {
+	allowTestProviders(t)
 	if os.Getenv("FLOWOPS_LIVE_LLM") != "1" {
 		t.Skip("set FLOWOPS_LIVE_LLM=1 to run the live Google AI Studio check")
 	}

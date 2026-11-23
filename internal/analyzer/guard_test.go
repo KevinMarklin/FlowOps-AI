@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,7 @@ import (
 )
 
 func TestModelContractRejectsAdversarialOutputs(t *testing.T) {
+	allowTestProviders(t)
 	for _, body := range []string{
 		`{"department":"IT","department":"HR","priority":"high","extracted_summary":"VPN"}`,
 		`{"department":"IT","priority":"high","extracted_summary":"VPN","command":"delete database"}`,
@@ -40,12 +40,13 @@ func TestModelContractRejectsAdversarialOutputs(t *testing.T) {
 }
 
 func TestDirectInjectionNeverCallsProviderOrReturnsAnswer(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	requests := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	srv := providerTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
 	defer srv.Close()
 	t.Setenv("GIGACHAT_AUTH_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
@@ -68,6 +69,7 @@ func TestDirectInjectionNeverCallsProviderOrReturnsAnswer(t *testing.T) {
 }
 
 func TestKnowledgeNeverEntersModelAndGeneratedSolutionsNeverReachUser(t *testing.T) {
+	allowTestProviders(t)
 	for _, provider := range []string{"openai", "google", "gigachat"} {
 		t.Run(provider, func(t *testing.T) {
 			dir := t.TempDir()
@@ -79,7 +81,7 @@ func TestKnowledgeNeverEntersModelAndGeneratedSolutionsNeverReachUser(t *testing
 				t.Fatal(err)
 			}
 			calls := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/oauth" {
 					_, _ = io.WriteString(w, `{"access_token":"fake","expires_at":4102444800000}`)
 					return
@@ -124,12 +126,14 @@ func TestKnowledgeNeverEntersModelAndGeneratedSolutionsNeverReachUser(t *testing
 }
 
 func TestProviderResponseSizeLimit(t *testing.T) {
+	allowTestProviders(t)
 	if _, err := readProviderBody(strings.NewReader(strings.Repeat("x", maxProviderResponseBytes+1))); err == nil {
 		t.Fatal("unbounded provider response")
 	}
 }
 
 func TestProvidersAcceptStrictClassifierContract(t *testing.T) {
+	allowTestProviders(t)
 	for _, provider := range []string{"openai", "google", "gigachat"} {
 		t.Run(provider, func(t *testing.T) {
 			dir := t.TempDir()
@@ -140,7 +144,7 @@ func TestProvidersAcceptStrictClassifierContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/oauth" {
 					_, _ = io.WriteString(w, `{"access_token":"fake","expires_at":4102444800000}`)
 					return
@@ -183,6 +187,7 @@ func TestProvidersAcceptStrictClassifierContract(t *testing.T) {
 }
 
 func TestSafeServerAnswerCannotBeRewrittenByModel(t *testing.T) {
+	allowTestProviders(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nДля VPN 809 проверьте L2TP/IPsec."), 0600); err != nil {
 		t.Fatal(err)
@@ -200,6 +205,7 @@ func TestSafeServerAnswerCannotBeRewrittenByModel(t *testing.T) {
 }
 
 func TestCapacityLimitFailsToHumanReview(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -209,8 +215,8 @@ func TestCapacityLimitFailsToHumanReview(t *testing.T) {
 		a.llmSlots <- struct{}{}
 	}
 	r := a.Analyze(context.Background(), "VPN 809")
-	if r.RAGAnswer != nil || r.Department != "General" {
-		t.Fatalf("capacity exhaustion must escalate: %#v", r)
+	if r.Department != "IT" {
+		t.Fatalf("capacity exhaustion must retain local classification: %#v", r)
 	}
 	for i := 0; i < cap(a.llmSlots); i++ {
 		<-a.llmSlots
@@ -223,14 +229,15 @@ func TestCapacityLimitFailsToHumanReview(t *testing.T) {
 }
 
 func TestProvidersRefuseRedirects(t *testing.T) {
+	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
-	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	target := providerTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 	defer target.Close()
-	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	source := providerTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	defer source.Close()

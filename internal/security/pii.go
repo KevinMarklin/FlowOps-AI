@@ -20,7 +20,8 @@ type piiPattern struct {
 }
 
 var piiPatterns = []piiPattern{
-	{tokenType: "EMAIL", display: "Email", pattern: regexp.MustCompile(`(^|[^\w.+%\-])([a-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~\-]+@[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?)+)`), valueSlot: 2},
+	{tokenType: "ACCOUNT", display: "Расчётный счёт", pattern: regexp.MustCompile(`(^|[^\d])(\d{20})([^\d]|$)`), valueSlot: 2},
+	{tokenType: "EMAIL", display: "Email", pattern: regexp.MustCompile(`(?i)(^|[^\w.+%\-])([a-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~\-]+@[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?)+)`), valueSlot: 2},
 	{tokenType: "SNILS", display: "СНИЛС", pattern: regexp.MustCompile(`(^|[^\d])(\d{3}-\d{3}-\d{3}\s?\d{2})([^\d]|$)`), valueSlot: 2},
 	{tokenType: "SNILS", display: "СНИЛС", pattern: regexp.MustCompile(`(?i)(снилс[^\d]{0,12})(\d{11})([^\d]|$)`), valueSlot: 2},
 	{tokenType: "CARD", display: "Банковская карта", pattern: regexp.MustCompile(`(^|[^\d])((?:\d[ -]?){15}\d)([^\d]|$)`), valueSlot: 2},

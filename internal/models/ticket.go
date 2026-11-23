@@ -3,6 +3,7 @@ package models
 import "time"
 
 type Ticket struct {
+	DeliveryStatus   string    `json:"delivery_status"`
 	ID               int       `json:"id"`
 	UserEmail        string    `json:"user_email"`
 	Channel          string    `json:"channel"`

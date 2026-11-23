@@ -9,7 +9,7 @@ import (
 )
 
 func TestSendMaxMessageUsesAuthorizationHeader(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/messages" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -33,6 +33,8 @@ func TestSendMaxMessageUsesAuthorizationHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
+	maxClients.Store(false, server.Client())
+	t.Cleanup(func() { maxClients.Delete(false) })
 	cfg := Config{MaxToken: "test-max-token", MaxAPIURL: server.URL}
 	if err := sendMaxMessage(context.Background(), cfg, "user_id", "1234", "Ответ"); err != nil {
 		t.Fatal(err)
