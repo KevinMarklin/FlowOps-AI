@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/mail"
 	"strconv"
 	"strings"
@@ -13,7 +14,8 @@ type Dispatcher struct{ config Config }
 
 func NewDispatcher(config Config) *Dispatcher { return &Dispatcher{config: config} }
 
-func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticketID int, reply string) error {
+func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticketID int, originalSubject, originalMessage, reply string) error {
+	reply = OperatorReplyText(ticketID, reply)
 	switch channel {
 	case "bot":
 		if strings.HasPrefix(sender, "tg:") {
@@ -46,7 +48,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticke
 		if err != nil {
 			return fmt.Errorf("invalid email recipient")
 		}
-		return sendEmail(ctx, d.config, address.Address, fmt.Sprintf("Re: [Заявка #%d] Ответ службы поддержки FlowOps AI", ticketID), reply)
+		subject := strings.TrimSpace(originalSubject)
+		if subject == "" {
+			subject = "Ответ службы поддержки FlowOps AI"
+		}
+		return sendEmail(ctx, d.config, address.Address, fmt.Sprintf("Re: [Заявка #%d] %s", ticketID, subject), ticketID, html.EscapeString(originalMessage), reply, false)
 	}
 	return fmt.Errorf("unsupported delivery channel or recipient")
 }

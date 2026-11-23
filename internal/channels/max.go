@@ -39,9 +39,6 @@ type maxUpdate struct {
 
 func maxRequest(ctx context.Context, cfg Config, method, endpoint string, query url.Values, body any) (*http.Response, error) {
 	target := cfg.maxURL() + endpoint
-	if cfg.MaxInsecureTLS {
-		return nil, fmt.Errorf("insecure MAX TLS is no longer supported")
-	}
 	u, err := url.Parse(target)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return nil, fmt.Errorf("MAX endpoint must use HTTPS")
@@ -70,7 +67,7 @@ func maxRequest(ctx context.Context, cfg Config, method, endpoint string, query 
 
 func sendMaxMessage(ctx context.Context, cfg Config, targetType, targetID, text string) error {
 	query := url.Values{targetType: {targetID}}
-	resp, err := maxRequest(ctx, cfg, http.MethodPost, "/messages", query, map[string]string{"text": text})
+	resp, err := maxRequest(ctx, cfg, http.MethodPost, "/messages", query, map[string]string{"text": FormatMAXMarkdown(text)})
 	if err != nil {
 		return err
 	}
@@ -94,83 +91,88 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 		}
 		resp, err := maxRequest(ctx, cfg, http.MethodGet, "/updates", query, nil)
 		if err == nil {
-			var updates []maxUpdate
-			var payload struct {
-				Updates []maxUpdate `json:"updates"`
-				Marker  int64       `json:"marker"`
-			}
-			err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
-			resp.Body.Close()
-			updates = payload.Updates
-			if err == nil {
-				if payload.Marker > marker {
-					marker = payload.Marker
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				resp.Body.Close()
+				err = fmt.Errorf("MAX polling returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+			} else {
+				var updates []maxUpdate
+				var payload struct {
+					Updates []maxUpdate `json:"updates"`
+					Marker  int64       `json:"marker"`
 				}
-				for _, update := range updates {
-					if update.Marker > marker {
-						marker = update.Marker
+				err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
+				resp.Body.Close()
+				updates = payload.Updates
+				if err == nil {
+					if payload.Marker > marker {
+						marker = payload.Marker
 					}
-					if update.UpdateType == "bot_started" {
-						userID := update.User.UserID
-						if userID == 0 {
-							userID = update.Message.Sender.UserID
+					for _, update := range updates {
+						if update.Marker > marker {
+							marker = update.Marker
 						}
-						chatID := update.ChatID
-						if chatID == 0 {
-							chatID = update.Message.Recipient.ChatID
-						}
-						target, targetID := "user_id", userID
-						if targetID == 0 {
-							target, targetID = "chat_id", chatID
-						}
-						if targetID != 0 {
-							if sendErr := sendMaxMessage(ctx, cfg, target, strconv.FormatInt(targetID, 10), welcomeText); sendErr != nil {
-								logger.Error("MAX welcome failed", "error", "operation failed")
+						if update.UpdateType == "bot_started" {
+							userID := update.User.UserID
+							if userID == 0 {
+								userID = update.Message.Sender.UserID
 							}
+							chatID := update.ChatID
+							if chatID == 0 {
+								chatID = update.Message.Recipient.ChatID
+							}
+							target, targetID := "user_id", userID
+							if targetID == 0 {
+								target, targetID = "chat_id", chatID
+							}
+							if targetID != 0 {
+								if sendErr := sendMaxMessage(ctx, cfg, target, strconv.FormatInt(targetID, 10), welcomeText); sendErr != nil {
+									logger.Error("MAX welcome failed", "error", "operation failed")
+								}
+							}
+							continue
 						}
-						continue
-					}
-					if update.UpdateType != "message_created" || update.Message.Sender.IsBot {
-						continue
-					}
-					text := strings.TrimSpace(update.Message.Body.Text)
-					if text == "" {
-						continue
-					}
-					userID := update.Message.Sender.UserID
-					chatID := update.Message.Recipient.ChatID
-					if chatID == 0 {
-						chatID = update.ChatID
-					}
-					sender, targetType, targetID := "", "", int64(0)
-					isGroup := strings.EqualFold(update.Message.Recipient.ChatType, "chat") || strings.EqualFold(update.Message.Recipient.ChatType, "channel")
-					if isGroup && chatID != 0 {
-						sender, targetType, targetID = fmt.Sprintf("max_chat:%d", chatID), "chat_id", chatID
-					} else if userID != 0 {
-						sender, targetType, targetID = fmt.Sprintf("max:%d", userID), "user_id", userID
-					} else if chatID != 0 {
-						sender, targetType, targetID = fmt.Sprintf("max_chat:%d", chatID), "chat_id", chatID
-					}
-					if sender == "" {
-						continue
-					}
-					result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: sender, Message: text})
-					if ingestErr != nil {
-						logger.Error("MAX ingest failed", "error", "operation failed")
-						continue
-					}
-					reply := result.ReplyText
-					if !result.AutoReplied {
-						reply = fmt.Sprintf("Ваше обращение передано специалисту поддержки. Номер заявки: #%d. Ответ оператора придёт сюда автоматически.", result.TicketID)
-					}
-					if sendErr := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); sendErr != nil {
-						logger.Error("MAX reply failed", "error", "operation failed")
+						if update.UpdateType != "message_created" || update.Message.Sender.IsBot {
+							continue
+						}
+						text := strings.TrimSpace(update.Message.Body.Text)
+						if text == "" {
+							continue
+						}
+						userID := update.Message.Sender.UserID
+						chatID := update.Message.Recipient.ChatID
+						if chatID == 0 {
+							chatID = update.ChatID
+						}
+						sender, targetType, targetID := "", "", int64(0)
+						isGroup := strings.EqualFold(update.Message.Recipient.ChatType, "chat") || strings.EqualFold(update.Message.Recipient.ChatType, "channel")
+						if isGroup && chatID != 0 {
+							sender, targetType, targetID = fmt.Sprintf("max_chat:%d", chatID), "chat_id", chatID
+						} else if userID != 0 {
+							sender, targetType, targetID = fmt.Sprintf("max:%d", userID), "user_id", userID
+						} else if chatID != 0 {
+							sender, targetType, targetID = fmt.Sprintf("max_chat:%d", chatID), "chat_id", chatID
+						}
+						if sender == "" {
+							continue
+						}
+						result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: sender, Message: text})
+						if ingestErr != nil {
+							logger.Error("MAX ingest failed", "error", "operation failed")
+							continue
+						}
+						reply := result.ReplyText
+						if sendErr := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); sendErr != nil {
+							LogOutgoing(logger, "bot", sender, result.TicketID, "AI", sendErr)
+						} else {
+							LogOutgoing(logger, "bot", sender, result.TicketID, "AI", nil)
+						}
 					}
 				}
 			}
 		}
 		if err != nil && ctx.Err() == nil {
-			logger.Error("MAX polling failed", "error", "operation failed")
+			logger.Error("MAX polling failed", "error", err.Error())
 			waitContext(ctx, 3*time.Second)
 		}
 	}

@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,7 +55,9 @@ func (c Config) maxHTTPClient() *http.Client {
 		return client.(*http.Client)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// Certificate validation is mandatory even if legacy configuration requests a bypass.
+	if c.MaxInsecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} // #nosec G402 -- explicit MAX_INSECURE_TLS opt-in
+	}
 	transport.DisableKeepAlives = true
 	client := &http.Client{Transport: transport, Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}
 	actual, _ := maxClients.LoadOrStore(c.MaxInsecureTLS, client)

@@ -55,7 +55,7 @@ func query(values url.Values) string {
 }
 
 func sendTelegramMessage(ctx context.Context, token string, chatID int64, text string) error {
-	resp, err := telegramRequest(ctx, token, "sendMessage", nil, map[string]any{"chat_id": chatID, "text": text})
+	resp, err := telegramRequest(ctx, token, "sendMessage", nil, map[string]any{"chat_id": chatID, "text": FormatTelegramMarkdown(text), "parse_mode": "HTML"})
 	if err != nil {
 		return err
 	}
@@ -118,11 +118,10 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 							continue
 						}
 						reply := result.ReplyText
-						if !result.AutoReplied {
-							reply = fmt.Sprintf("Ваше обращение передано специалисту поддержки. Номер заявки: #%d. Ответ оператора придёт сюда автоматически.", result.TicketID)
-						}
 						if err := sendTelegramMessage(ctx, token, chatID, reply); err != nil {
-							logger.Error("Telegram reply failed", "error", "operation failed")
+							LogOutgoing(logger, "bot", fmt.Sprintf("tg:%d", chatID), result.TicketID, "AI", err)
+						} else {
+							LogOutgoing(logger, "bot", fmt.Sprintf("tg:%d", chatID), result.TicketID, "AI", nil)
 						}
 					}
 				}

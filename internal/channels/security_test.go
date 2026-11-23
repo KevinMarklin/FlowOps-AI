@@ -11,20 +11,28 @@ import (
 	"time"
 )
 
-func TestMAXRejectsHTTPAndUntrustedTLS(t *testing.T) {
+func TestMAXRejectsHTTPAndRequiresExplicitInsecureTLSOptIn(t *testing.T) {
 	maxClients.Delete(false)
 	maxClients.Delete(true)
 	calls := 0
 	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(200) }))
 	defer s.Close()
-	for _, cfg := range []Config{{MaxAPIURL: "http://example.test", MaxToken: "synthetic"}, {MaxAPIURL: s.URL, MaxToken: "synthetic"}, {MaxAPIURL: s.URL, MaxToken: "synthetic", MaxInsecureTLS: true}} {
+	for _, cfg := range []Config{{MaxAPIURL: "http://example.test", MaxToken: "synthetic"}, {MaxAPIURL: s.URL, MaxToken: "synthetic"}} {
 		if resp, err := maxRequest(context.Background(), cfg, "POST", "/messages", nil, nil); err == nil {
 			resp.Body.Close()
 			t.Fatal("insecure transport accepted")
 		}
 	}
 	if calls != 0 {
-		t.Fatal("token was sent to insecure peer")
+		t.Fatal("token was sent without the explicit TLS opt-in")
+	}
+	resp, err := maxRequest(context.Background(), Config{MaxAPIURL: s.URL, MaxToken: "synthetic", MaxInsecureTLS: true}, "POST", "/messages", nil, nil)
+	if err != nil {
+		t.Fatalf("explicit MAX_INSECURE_TLS opt-in failed: %v", err)
+	}
+	resp.Body.Close()
+	if calls != 1 {
+		t.Fatal("explicit MAX_INSECURE_TLS opt-in did not reach endpoint")
 	}
 }
 
@@ -92,7 +100,7 @@ func TestMailDialCancellationInterruptsStalledHandshake(t *testing.T) {
 func TestDisabledDispatcherNeverClaimsSuccess(t *testing.T) {
 	d := NewDispatcher(Config{})
 	for _, tc := range []struct{ channel, sender string }{{"bot", "tg:1"}, {"bot", "max:1"}, {"email", "user@example.test"}, {"bot", "unknown"}} {
-		if d.Dispatch(context.Background(), tc.channel, tc.sender, 1, "reply") == nil {
+		if d.Dispatch(context.Background(), tc.channel, tc.sender, 1, "", "request", "reply") == nil {
 			t.Fatalf("disabled destination reported delivered: %+v", tc)
 		}
 	}

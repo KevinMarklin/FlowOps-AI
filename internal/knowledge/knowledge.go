@@ -282,7 +282,6 @@ func (b *Base) FindRelevant(text, department string) *Document {
 		}
 	}
 	if bestIndex < 0 {
-		slog.Info("knowledge search returned no match", "department", department)
 		return nil
 	}
 	copy := b.documents[bestIndex]
@@ -319,6 +318,17 @@ func isStopWord(value string) bool {
 }
 
 func (b *Base) Find(text, category string) *Document { return b.FindRelevant(text, category) }
+
+// RuleID provides a stable numeric diagnostic identifier without logging rule
+// text, title, or other potentially sensitive knowledge-base content.
+func RuleID(filename string) uint32 {
+	var id uint32 = 2166136261
+	for i := 0; i < len(filename); i++ {
+		id ^= uint32(filename[i])
+		id *= 16777619
+	}
+	return id%999999 + 1
+}
 
 func loadDocument(path string) (Document, error) {
 	data, err := os.ReadFile(path)

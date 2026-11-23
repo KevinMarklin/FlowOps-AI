@@ -32,6 +32,22 @@ var injectionPatterns = []*regexp.Regexp{
 var encodedToken = regexp.MustCompile(`[A-Za-z0-9+/_-]{24,}={0,2}`)
 var credentialPattern = regexp.MustCompile(`(?i)(\bsk-[a-z0-9_-]{16,}|\bAIza[a-z0-9_-]{20,}|\bBearer\s+[a-z0-9._~+/-]{12,}|(password|api[_ -]?key|secret|пароль|токен)\s*[:=]\s*\S{4,})`)
 var externalLink = regexp.MustCompile(`(?i)(https?://|ftp://|mailto:|file:|javascript:|data:|www\.|\[[^\]\n]*\]\s*\(|!\[|<\s*/?\s*[a-z][^>]*>|\\\\[a-z0-9])`)
+var logEmail = regexp.MustCompile(`(?i)[a-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)`)
+var logPhone = regexp.MustCompile(`(?:\+?\d[\d ()-]{8,}\d)`)
+var logSecretQuery = regexp.MustCompile(`(?i)([?&](?:key|api_key|token|access_token)=)[^&\s"']+`)
+
+// SafeLogError preserves technical diagnostics while removing common personal
+// identifiers and credentials that may be echoed by a remote service.
+func SafeLogError(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	message := credentialPattern.ReplaceAllString(err.Error(), "[REDACTED]")
+	message = logSecretQuery.ReplaceAllString(message, "$1[REDACTED]")
+	message = logEmail.ReplaceAllString(message, "***@$1")
+	message = logPhone.ReplaceAllString(message, "[REDACTED]")
+	return message
+}
 
 // CheckPromptInput never rewrites business text: a suspect input goes to review.
 // Reason codes are deliberately content-free and suitable for security logs.

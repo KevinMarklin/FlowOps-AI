@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"flowops-ai/internal/models"
 	"golang.org/x/text/encoding/htmlindex"
@@ -27,9 +29,10 @@ func runEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interfa
 }) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	failedUIDs := make(map[int]struct{})
 	for ctx.Err() == nil {
-		if err := pollEmail(ctx, cfg, ingest, logger); err != nil && ctx.Err() == nil {
-			logger.Error("email polling failed", "error", "operation failed")
+		if err := pollEmail(ctx, cfg, ingest, logger, failedUIDs); err != nil && ctx.Err() == nil {
+			logger.Error("email polling failed", "error", err.Error())
 		}
 		select {
 		case <-ctx.Done():
@@ -118,7 +121,7 @@ func (s *imapSession) command(ctx context.Context, command string) ([]byte, erro
 func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
-}) error {
+}, failedUIDs map[int]struct{}) error {
 	session, err := connectIMAP(ctx, cfg.MailIMAPHost)
 	if err != nil {
 		return err
@@ -131,50 +134,123 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 	if _, err = session.command(ctx, "SELECT INBOX"); err != nil {
 		return err
 	}
-	result, err := session.command(ctx, "SEARCH UNSEEN")
+	result, err := session.command(ctx, "UID SEARCH UNSEEN")
 	if err != nil {
 		return err
 	}
 	ids := parseIMAPSearch(string(result))
 	for _, id := range ids {
-		fetched, fetchErr := session.command(ctx, fmt.Sprintf("FETCH %d (BODY.PEEK[])", id))
+		if _, failed := failedUIDs[id]; failed {
+			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
+				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
+			}
+			continue
+		}
+		fetched, fetchErr := session.command(ctx, fmt.Sprintf("UID FETCH %d (BODY.PEEK[])", id))
 		if fetchErr != nil {
-			return fmt.Errorf("email fetch failed")
+			return fmt.Errorf("email fetch failed: %w", fetchErr)
 		}
 		raw := extractIMAPLiteral(fetched)
 		message, parseErr := mail.ReadMessage(bytes.NewReader(raw))
 		if parseErr != nil {
-			logger.Error("email parse failed", "message_id", id, "error", "operation failed")
+			logger.Error("email parse failed", "message_uid", id, "error", parseErr.Error())
 			continue
 		}
 		from, parseErr := mail.ParseAddress(message.Header.Get("From"))
 		if parseErr != nil {
-			logger.Error("email sender parse failed", "message_id", id, "error", "operation failed")
-			_, _ = session.command(ctx, fmt.Sprintf("STORE %d +FLAGS (\\Seen)", id))
+			logger.Error("email sender parse failed", "message_uid", id, "error", parseErr.Error())
+			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
+				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
+			}
+			continue
+		}
+		if isSystemEmailSender(from.Address) {
+			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
+				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
+			}
 			continue
 		}
 		decoder := mime.WordDecoder{CharsetReader: decodeCharset}
 		subject, _ := decoder.DecodeHeader(message.Header.Get("Subject"))
 		bodyText, bodyErr := decodeMIMEBody(message.Header.Get("Content-Type"), message.Header.Get("Content-Transfer-Encoding"), message.Body)
 		if bodyErr != nil {
-			logger.Error("email body decode failed", "message_id", id, "error", "operation failed")
+			logger.Error("email body decode failed", "message_uid", id, "error", bodyErr.Error())
 		}
+		bodyText = cleanEmailText(bodyText)
+		bodyText = trimEmailQuote(bodyText)
 		if strings.TrimSpace(bodyText) == "" {
 			bodyText = "(Письмо без текстового содержимого)"
 		}
 		result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "email", Sender: from.Address, Subject: subject, Message: bodyText})
 		if ingestErr != nil {
-			logger.Error("email ingest failed", "message_id", id, "error", "operation failed")
+			logger.Error("email ingest failed", "message_uid", id, "error", ingestErr.Error())
+			failedUIDs[id] = struct{}{}
+			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
+				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
+			}
 			continue
 		}
-		if err := sendEmail(ctx, cfg, from.Address, fmt.Sprintf("Re: [Заявка #%d] %s", result.TicketID, subject), result.ReplyText); err != nil {
-			logger.Error("email auto-reply failed", "ticket_id", result.TicketID, "error", "operation failed")
+		if err := sendEmail(ctx, cfg, from.Address, fmt.Sprintf("Re: [Заявка #%d] %s", result.TicketID, subject), result.TicketID, html.EscapeString(bodyText), result.ReplyText, result.AutoReplied); err != nil {
+			LogOutgoing(logger, "email", from.Address, result.TicketID, "AI", err)
+		} else {
+			LogOutgoing(logger, "email", from.Address, result.TicketID, "AI", nil)
 		}
-		if _, err := session.command(ctx, fmt.Sprintf("STORE %d +FLAGS (\\Seen)", id)); err != nil {
-			return fmt.Errorf("email acknowledgement failed")
+		if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
+			return fmt.Errorf("email acknowledgement failed: %w", err)
 		}
 	}
 	return nil
+}
+
+func isSystemEmailSender(address string) bool {
+	parsed, err := mail.ParseAddress(address)
+	if err == nil {
+		address = parsed.Address
+	}
+	address = strings.ToLower(strings.TrimSpace(address))
+	local, domain, ok := strings.Cut(address, "@")
+	if !ok {
+		local, domain = address, ""
+	}
+	if domain == "e.mail.ru" || domain == "corp.mail.ru" {
+		return true
+	}
+	switch local {
+	case "noreply", "no-reply", "mailer-daemon", "postmaster":
+		return true
+	default:
+		return false
+	}
+}
+
+func cleanEmailText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+// trimEmailQuote removes the most common reply separators before a user message
+// is stored, preventing previously sent support templates from being duplicated.
+func trimEmailQuote(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if trimmed == "---" || strings.HasPrefix(lower, "-----original message-----") ||
+			strings.HasPrefix(lower, "----- forwarded message -----") ||
+			strings.HasPrefix(lower, "от:") || strings.HasPrefix(lower, "from:") ||
+			strings.HasPrefix(lower, "в ") && (strings.Contains(lower, "писал") || strings.Contains(lower, "wrote:")) ||
+			strings.HasPrefix(lower, "on ") && strings.Contains(lower, "wrote:") || strings.HasPrefix(trimmed, ">") {
+			return strings.TrimSpace(strings.Join(lines[:i], "\n"))
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 func parseIMAPSearch(response string) []int {
@@ -281,7 +357,7 @@ func decodeMIMEBodyDepth(contentType, transferEncoding string, body io.Reader, d
 	return strings.ToValidUTF8(string(data), "�"), err
 }
 
-func sendEmail(ctx context.Context, cfg Config, to, subject, body string) error {
+func sendEmail(ctx context.Context, cfg Config, to, subject string, ticketID int, originalMessage, replyBody string, isAutoReply bool) error {
 	address, err := mail.ParseAddress(to)
 	if err != nil {
 		return err
@@ -316,8 +392,9 @@ func sendEmail(ctx context.Context, cfg Config, to, subject, body string) error 
 	if err != nil {
 		return err
 	}
-	encodedSubject := "=?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(subject)) + "?="
-	message := "From: " + from.String() + "\r\nTo: " + address.String() + "\r\nSubject: " + encodedSubject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(body)) + "\r\n"
+	encodedSubject := mime.QEncoding.Encode("UTF-8", subject)
+	htmlBody := FormatEmailHTML(ticketID, originalMessage, replyBody, isAutoReply)
+	message := "From: " + from.String() + "\r\nTo: " + address.String() + "\r\nSubject: " + encodedSubject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(htmlBody)) + "\r\n"
 	if _, err := io.WriteString(writer, message); err != nil {
 		writer.Close()
 		return err

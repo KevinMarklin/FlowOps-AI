@@ -57,6 +57,7 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.RawText = strings.ToValidUTF8(request.RawText, "�")
+	channels.LogIncoming(h.logger, "web", request.UserEmail)
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
 	status := initialTicketStatus(analysis)
 
@@ -76,7 +77,7 @@ RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALE
 		return
 	}
 	h.auditPII(r.Context(), ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
-	h.logger.Info("ticket saved", "id", ticket.ID, "status", ticket.Status, "department", ticket.Department)
+	h.logger.Info(fmt.Sprintf("[TICKET #%d] status=%s | auto_replied=false | channel=Web | department=%s", ticket.ID, ticket.Status, ticket.Department))
 
 	writeJSON(w, http.StatusCreated, ticket)
 }
@@ -106,15 +107,11 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	if err := h.validateIngest(request); err != nil {
 		return channels.IngestResult{}, err
 	}
+	channels.LogIncoming(h.logger, request.Channel, request.Sender)
 	rawText := strings.TrimSpace(strings.Join([]string{request.Subject, request.Message}, "\n"))
 	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
 	status := initialTicketStatus(analysis)
-	autoReplied := false
-	replyText := fmt.Sprintf("Ваше обращение принято и направлено в профильный отдел: %s.", departmentLabel(analysis.Department))
-	if analysis.RAGAnswer != nil {
-		autoReplied = true
-		replyText = strings.TrimSpace(*analysis.RAGAnswer)
-	}
+	autoReplied := analysis.RAGAnswer != nil
 	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
@@ -124,7 +121,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	if err != nil {
 		return channels.IngestResult{}, err
 	}
+	replyDepartment := analysis.Department
+	if replyDepartment != "" && replyDepartment != "Unassigned" && replyDepartment != "General" {
+		replyDepartment = departmentLabel(replyDepartment)
+	}
+	replyText := channels.EscalationReplyText(ticket.ID, replyDepartment)
+	if autoReplied {
+		replyText = channels.PublicReplyText(ticket.ID, *analysis.RAGAnswer)
+	}
 	h.auditPII(ctx, ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
+	h.logger.Info(fmt.Sprintf("[TICKET #%d] status=%s | auto_replied=%t | channel=%s | department=%s", ticket.ID, ticket.Status, autoReplied, channels.DisplayChannel(ticket.Channel, request.Sender), ticket.Department))
 	return channels.IngestResult{TicketID: ticket.ID, Channel: ticket.Channel, AutoReplied: autoReplied, ReplyText: replyText, Department: ticket.Department, Priority: ticket.Priority, Status: ticket.Status, ExtractedSummary: ticket.ExtractedSummary, PIIMaskedCount: ticket.PIIMaskedCount, PIIMaskedTypes: ticket.PIIMaskedTypes}, nil
 }
 
@@ -305,12 +311,27 @@ func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error 
 	switch m.Kind {
 	case "callback":
 		body, _ := json.Marshal(map[string]any{"ticket_id": m.TicketID, "operator_reply": m.Body})
-		return h.callbacks.Post(ctx, m.Recipient, bytes.NewReader(body))
+		err := h.callbacks.Post(ctx, m.Recipient, bytes.NewReader(body))
+		if err != nil {
+			h.logger.Error(fmt.Sprintf("[OUTGOING] Failed to send reply via callback (ticket=#%d): %s", m.TicketID, security.SafeLogError(err)))
+		} else {
+			h.logger.Info(fmt.Sprintf("[OUTGOING] Reply sent via callback (ticket=#%d, source=Operator)", m.TicketID))
+		}
+		return err
 	case "channel":
 		if h.dispatcher == nil {
 			return fmt.Errorf("channel dispatcher unavailable")
 		}
-		return h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, m.Body)
+		var originalMessage string
+		var originalSubject string
+		if m.Channel == "email" {
+			if err := h.db.QueryRow(ctx, `SELECT raw_text,COALESCE(subject,'') FROM tickets WHERE id=$1`, m.TicketID).Scan(&originalMessage, &originalSubject); err != nil {
+				return fmt.Errorf("load original ticket message: %w", err)
+			}
+		}
+		err := h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
+		channels.LogOutgoing(h.logger, m.Channel, m.Recipient, m.TicketID, "Operator", err)
+		return err
 	default:
 		return fmt.Errorf("unknown delivery kind")
 	}

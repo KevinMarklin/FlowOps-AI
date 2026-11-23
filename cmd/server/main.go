@@ -25,6 +25,7 @@ import (
 func main() {
 	loadDotEnv(".env")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -80,7 +81,19 @@ func main() {
 		logger.Error("invalid callback allowlist")
 		os.Exit(1)
 	}
-	ticketsHandler := handlers.NewTicketsHandler(pool, logger, analyzer.New(knowledgeBase), dispatcher).WithCallbacks(callbacks)
+	ticketAnalyzer := analyzer.New(knowledgeBase)
+	mode, configuredProvider, _ := ticketAnalyzer.ActiveProvider()
+	primaryProvider := "Local Heuristic only"
+	if mode == "llm" {
+		primaryProvider = strings.TrimSuffix(configuredProvider, " (РФ контур)")
+	}
+	externalLLMAllowed := mode == "llm"
+	logger.Info("[AI] Configuration",
+		"primary_provider", primaryProvider,
+		"anonymized_data_to_external_llm", externalLLMAllowed,
+		"sensitive_data_to_external_llm", envBool("FLOWOPS_AI_ALLOW_SENSITIVE", false),
+	)
+	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer, dispatcher).WithCallbacks(callbacks)
 	channelContext, stopChannels := context.WithCancel(context.Background())
 	defer stopChannels()
 	go delivery.New(pool, ticketsHandler.Deliver).Run(channelContext, logger)
@@ -173,8 +186,19 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		started := time.Now()
 		writer := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(writer, r)
-		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "status", writer.status, "duration_ms", time.Since(started).Microseconds()/1000, "response_bytes", writer.bytes)
+		if !(r.Method == http.MethodGet && writer.status >= 200 && writer.status < 300 && isNoisyPollingPath(r.URL.Path)) {
+			logger.Info("http request", "method", r.Method, "path", r.URL.Path, "status", writer.status, "duration_ms", time.Since(started).Microseconds()/1000, "response_bytes", writer.bytes)
+		}
 	})
+}
+
+func isNoisyPollingPath(path string) bool {
+	switch path {
+	case "/api/tickets", "/api/stats", "/api/audit":
+		return true
+	default:
+		return false
+	}
 }
 
 type statusWriter struct {

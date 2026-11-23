@@ -7,11 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"flowops-ai/internal/security"
 )
 
 const gigachatTokenRefreshBuffer = 60 * time.Second
@@ -90,19 +93,19 @@ func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfi
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request GigaChat OAuth token failed")
+		return "", fmt.Errorf("request GigaChat OAuth token failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := readProviderBody(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read GigaChat OAuth response failed")
+		return "", fmt.Errorf("read GigaChat OAuth response failed: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("GigaChat OAuth status %s", resp.Status)
 	}
 	var token gigachatTokenResponse
 	if err := json.Unmarshal(data, &token); err != nil {
-		return "", fmt.Errorf("parse GigaChat OAuth response: %w", err)
+		return "", fmt.Errorf("parse GigaChat OAuth response: %s", security.SafeLogError(err))
 	}
 	if token.AccessToken == "" || token.ExpiresAt <= 0 {
 		return "", fmt.Errorf("GigaChat OAuth response has no valid access_token or expires_at")
@@ -117,6 +120,17 @@ func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfi
 }
 
 func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Result, error) {
+	slog.Info("[AI] Analyzing via GigaChat...")
+	result, err := a.analyzeWithGigaChatRequest(ctx, rawText)
+	if err != nil {
+		slog.Error("[AI] GigaChat failed", "reason", security.SafeLogError(err))
+		return Result{}, err
+	}
+	slog.Info("[AI] GigaChat success")
+	return result, nil
+}
+
+func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText string) (Result, error) {
 	config := loadGigaChatConfig()
 	if config.authKey == "" {
 		return Result{}, fmt.Errorf("GigaChat auth key is not configured")
@@ -152,12 +166,12 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 	req.Header.Set("X-Request-ID", requestID)
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return Result{}, fmt.Errorf("request GigaChat completion failed")
+		return Result{}, fmt.Errorf("request GigaChat completion failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := readProviderBody(resp.Body)
 	if err != nil {
-		return Result{}, fmt.Errorf("read GigaChat completion response failed")
+		return Result{}, fmt.Errorf("read GigaChat completion response failed: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Result{}, fmt.Errorf("GigaChat completion status %s", resp.Status)
@@ -170,7 +184,7 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return Result{}, fmt.Errorf("parse GigaChat completion response: %w", err)
+		return Result{}, fmt.Errorf("parse GigaChat completion response: %s", security.SafeLogError(err))
 	}
 	if len(envelope.Choices) == 0 {
 		return Result{}, fmt.Errorf("GigaChat completion response has no choices")

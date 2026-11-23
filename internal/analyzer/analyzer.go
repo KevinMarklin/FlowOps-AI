@@ -68,6 +68,7 @@ func (a *Analyzer) Analyze(ctx context.Context, rawText string) Result {
 }
 
 func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string) Result {
+	started := time.Now()
 	if reason := security.CheckPromptInput(rawText, security.MaxTicketBytes); reason != "" {
 		return reviewResult(reason)
 	}
@@ -89,17 +90,30 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 			if i > 0 && os.Getenv("FLOWOPS_AI_ALLOW_FALLBACK") != "true" {
 				break
 			}
+			providerName := strings.TrimSuffix(provider.name, " (РФ контур)")
+			if !sentToModel && masked.MaskedCount > 0 {
+				slog.Info(fmt.Sprintf("[SECURITY] PII masked: count=%d types=[%s]", masked.MaskedCount, strings.Join(masked.MaskedTypes, ", ")))
+			}
+			slog.Info(fmt.Sprintf("[AI] Requesting %s (model: %s)...", providerName, provider.model()))
 			sentToModel = true
 			result, err := provider.analyze(modelCtx, masked.MaskedText)
-			if err != nil || !a.valid(result) {
+			if err == nil && !a.valid(result) {
+				err = fmt.Errorf("provider returned an invalid or unsafe analysis result")
+			}
+			if err != nil {
+				slog.Error(fmt.Sprintf("[AI] %s failed: %s -> switching to fallback", providerName, security.SafeLogError(err)))
 				continue
 			}
 			result = unmaskResult(result, masked)
 			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
 			result = a.attachSafeAnswer(result, rawText)
 			a.setActiveProvider("llm", provider.name, provider.model())
+			slog.Info(fmt.Sprintf("[AI] Analyzed by: %s | department=%s | priority=%s | duration_ms=%d", providerName, result.Department, result.Priority, time.Since(started).Milliseconds()))
 			return result
 		}
+	}
+	if !sentToModel && masked.MaskedCount > 0 {
+		slog.Info(fmt.Sprintf("[SECURITY] PII masked: count=%d types=[%s]", masked.MaskedCount, strings.Join(masked.MaskedTypes, ", ")))
 	}
 	// External capacity limits must not disable local classification for every channel.
 	result := a.analyzeHeuristically(rawText)
@@ -110,6 +124,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 		result.PIIMaskedCount = masked.MaskedCount
 	}
 	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
+	slog.Info(fmt.Sprintf("[AI] Analyzed by: Local Heuristic (fallback) | department=%s | priority=%s | duration_ms=%d", result.Department, result.Priority, time.Since(started).Milliseconds()))
 	return result
 }
 
@@ -172,11 +187,11 @@ func (a *Analyzer) analyzeWithGoogle(ctx context.Context, rawText, apiKey string
 		return result, nil
 	}
 	if status != http.StatusNotFound {
-		return Result{}, fmt.Errorf("Google AI request failed with status %d", status)
+		return Result{}, fmt.Errorf("Google AI request failed: %w", err)
 	}
 	discovered, discoverErr := a.discoverGoogleModel(ctx, apiKey)
 	if discoverErr != nil {
-		return Result{}, fmt.Errorf("Google AI model discovery failed for %s", model)
+		return Result{}, fmt.Errorf("Google AI model discovery failed for %s: %w", model, discoverErr)
 	}
 	a.modelMu.Lock()
 	a.googleModel = discovered
@@ -230,8 +245,11 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 			} `json:"content"`
 		} `json:"candidates"`
 	}
-	if err := json.Unmarshal(responseBody, &envelope); err != nil || len(envelope.Candidates) == 0 || len(envelope.Candidates[0].Content.Parts) == 0 {
-		return Result{}, resp.StatusCode, fmt.Errorf("invalid Google AI response: %w", err)
+	if err := json.Unmarshal(responseBody, &envelope); err != nil {
+		return Result{}, resp.StatusCode, fmt.Errorf("invalid Google AI response JSON: %s", security.SafeLogError(err))
+	}
+	if len(envelope.Candidates) == 0 || len(envelope.Candidates[0].Content.Parts) == 0 {
+		return Result{}, resp.StatusCode, fmt.Errorf("invalid Google AI response: missing candidates or content")
 	}
 	result, err := decodeModelResult(envelope.Candidates[0].Content.Parts[0].Text)
 	if err != nil {
@@ -313,17 +331,6 @@ func (a *Analyzer) analyzeHeuristically(rawText string) Result {
 		summary = strings.TrimSuffix(summary, ".") + " (код ошибки: " + matches[1] + ")."
 	}
 	result := Result{Department: department, Priority: priority, ExtractedSummary: summary}
-	if doc := a.base.FindRelevant(rawText, department); doc != nil {
-		slog.Info("knowledge document found", "filename", doc.Filename, "department", doc.Department)
-		if doc.Department != "General" && doc.Department != "" {
-			result.Department = doc.Department
-		}
-		answer := strings.TrimSpace(doc.Content) + "\n\n[Источник: «" + doc.Title + "» (" + filepath.ToSlash(filepath.Join("knowledge_base", doc.Filename)) + ")]"
-		result.RAGAnswer = &answer
-	}
-	if result.RAGAnswer == nil {
-		slog.Info("knowledge document not found", "department", department)
-	}
 	return result
 }
 
@@ -353,7 +360,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 	responseBody, readErr := readProviderBody(resp.Body)
 	duration := time.Since(started).Milliseconds()
 	if readErr != nil {
-		slog.Error("LLM response read failed", "status", resp.StatusCode, "duration_ms", duration, "error", readErr)
+		slog.Error("LLM response read failed", "status", resp.StatusCode, "duration_ms", duration, "error", security.SafeLogError(readErr))
 		return Result{}, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
