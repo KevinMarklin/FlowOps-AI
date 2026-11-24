@@ -365,9 +365,11 @@ func (a *Analyzer) analyzeHeuristically(rawText string) Result {
 	text := strings.ToLower(rawText)
 	department := "Unassigned"
 	switch {
+	case hasAny(text, "командиров", "авансовый отчёт", "авансовый отчет", "авансового отчёта", "авансового отчета", "подотч"):
+		department = "Accounting"
 	case hasAny(text, "оплат", "списан", "деньги", "возврат", "счет", "счёт", "баланс", "карт", "тариф", "платеж", "платёж", "чек"):
 		department = "Billing"
-	case hasAny(text, "vpn", "впн", "l2tp", "ipsec", "парол", "1с", "1c", "компьютер", "систем", "ошибк", "сервер", "vps", "хостер", "502", "сайт", "база данных", "бд", "database"):
+	case hasAny(text, "wi-fi", "wifi", "вайфай", "вай-фай", "vpn", "впн", "l2tp", "ipsec", "парол", "1с", "1c", "компьютер", "систем", "ошибк", "сервер", "vps", "хостер", "502", "сайт", "база данных", "бд", "database"):
 		department = "IT"
 	case hasAny(text, "справк", "отпуск", "кадр", "ндфл", "места работы", "hr"):
 		department = "HR"

@@ -39,6 +39,13 @@ func (b *Base) SetAuditTTLCallback(callback func(string)) {
 }
 
 var builtinDocuments = map[string]bool{
+	"fa_study_certificate.md":    true,
+	"fa_military_certificate.md": true,
+	"fa_wifi.md":                 true,
+	"fa_portal_password.md":      true,
+	"fa_business_trip.md":        true,
+	"fa_advance_report.md":       true,
+
 	"it_vpn.md": true, "hr_certificates.md": true,
 	"accounting_payments.md": true, "office_equipment.md": true,
 }
@@ -290,6 +297,21 @@ func (b *Base) FindRelevant(text, department string) *Document {
 }
 
 func matchesBuiltinTopic(filename, query string) bool {
+	switch filename {
+	case "fa_study_certificate.md":
+		return strings.Contains(query, "справ") && !strings.Contains(query, "военком") && (strings.Contains(query, "обуч") || strings.Contains(query, "мфц") || strings.Contains(query, "месту требования"))
+	case "fa_military_certificate.md":
+		return strings.Contains(query, "военком") || strings.Contains(query, "воинск")
+	case "fa_wifi.md":
+		return strings.Contains(query, "wi-fi") || strings.Contains(query, "wifi") || strings.Contains(query, "вайфай") || strings.Contains(query, "вай-фай")
+	case "fa_portal_password.md":
+		return (strings.Contains(query, "парол") || strings.Contains(query, "доступ")) && (strings.Contains(query, "лк") || strings.Contains(query, "кабинет") || strings.Contains(query, "портал"))
+	case "fa_business_trip.md":
+		return strings.Contains(query, "командиров") && !strings.Contains(query, "авансов")
+	case "fa_advance_report.md":
+		return strings.Contains(query, "авансов") || strings.Contains(query, "подотч")
+	}
+
 	markers := map[string][]string{
 		"it_vpn.md":              {"vpn", "впн", "l2tp", "ipsec", "809"},
 		"hr_certificates.md":     {"2-ндфл", "справк", "кадр", "отпуск"},
@@ -335,7 +357,7 @@ func loadDocument(path string) (Document, error) {
 	if err != nil {
 		return Document{}, fmt.Errorf("read knowledge document %s: %w", path, err)
 	}
-	content := string(data)
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
 	filename := filepath.Base(path)
 	document := Document{Path: filepath.ToSlash(path), Filename: filename, Department: departmentFromFilename(filename), Title: titleFromMarkdown(content, filename), Content: content, Kind: "permanent", IncidentState: "active"}
 	if strings.HasPrefix(content, "---\n") {

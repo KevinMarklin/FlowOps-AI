@@ -24,9 +24,17 @@ Thumbs.db
 tmp/
 dist/
 
-# Generated knowledge-base documents; keep only the four starter documents
+# Generated knowledge-base documents; keep bundled starter documents and university guides
 knowledge_base/*.md
 !knowledge_base/it_vpn.md
 !knowledge_base/hr_certificates.md
 !knowledge_base/accounting_payments.md
 !knowledge_base/office_equipment.md
+
+# Bundled Financial University demonstration guides
+!knowledge_base/fa_study_certificate.md
+!knowledge_base/fa_military_certificate.md
+!knowledge_base/fa_wifi.md
+!knowledge_base/fa_portal_password.md
+!knowledge_base/fa_business_trip.md
+!knowledge_base/fa_advance_report.md

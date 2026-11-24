@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css?v=5">
-  <link rel="stylesheet" href="/overrides.css?v=5">
+  <link rel="stylesheet" href="/overrides.css?v=6">
 </head>
 <body>
   <header class="topbar">
@@ -32,16 +32,18 @@
            <div class="panel-title"><div><span class="step">01</span><h2>Новое обращение</h2></div><span class="live-label">● В СЕТИ</span></div>
           <form id="ticket-form">
             <label for="email">Email сотрудника</label>
-            <input id="email" type="email" value="ivanov@rtsim.ru" required>
+            <input id="email" type="email" value="student.demo@example.org" required>
             <label for="problem">Опишите вашу проблему обычным языком</label>
             <textarea id="problem" rows="7" placeholder="Например: после обновления не могу подключиться к VPN..." required></textarea>
             <button class="primary-button" type="submit"><span>Отправить обращение</span><b>↗</b></button>
           </form>
           <div class="demo-block"><div class="demo-heading"><span>Быстрые демо-сценарии</span><small>для защиты</small></div><div class="demo-grid">
-             <button type="button" data-demo="Срочно! Не работает корпоративный VPN, выдает ошибку 809, через полчаса важный созвон с клиентом."><b>Типовой IT</b><span>VPN 809</span></button>
-             <button type="button" data-demo="Подскажите, как получить справку 2-НДФЛ за прошлый год для банка?"><b>Типовой HR</b><span>Справка 2-НДФЛ</span></button>
-             <button type="button" data-demo="В переговорке на 3 этаже закончился картридж в принтере и замяло бумагу."><b>Типовой АХО</b><span>Принтер</span></button>
-             <button type="button" data-demo="Срочно! После ночного релиза упал продакшен-кластер Kubernetes, не поднимаются поды платежного шлюза."><b>Сложный инцидент</b><span>Без ответа в базе → Оператор</span></button>
+            <button type="button" data-demo="Как получить справку об обучении по месту требования в МФЦ Финуниверситета?"><b>Справка об обучении</b><span>Студенческий офис / МФЦ</span></button>
+            <button type="button" data-demo="Как заказать справку для военкомата в МФЦ Финуниверситета?"><b>Справка в военкомат</b><span>Маршрут в ответственное подразделение</span></button>
+            <button type="button" data-demo="Как подключиться к сети кампуса FA-WiFi?"><b>Wi-Fi кампуса</b><span>Подключение к FA-WiFi</span></button>
+            <button type="button" data-demo="Как восстановить пароль от ЛК или Образовательного портала Финуниверситета?"><b>Пароль ЛК / портала</b><span>Безопасное восстановление доступа</span></button>
+            <button type="button" data-demo="Как оформить командировку сотруднику Финуниверситета?"><b>Командировка</b><span>Согласование служебной поездки</span></button>
+            <button type="button" data-demo="Как оформить авансовый отчёт после командировки в Финуниверситете?"><b>Авансовый отчёт</b><span>Документы после командировки</span></button>
           </div></div>
         </div>
         <div class="result-column"><div id="analysis-result" class="panel result-panel empty"><div class="empty-state"><div class="empty-icon">✦</div><h3>Результат разбора появится здесь</h3><p>Отправьте обращение, и AI выделит суть, приоритет и подходящий регламент.</p></div></div>
@@ -103,7 +105,11 @@
 
     <section id="operator" class="view">
       <div class="page-heading operator-heading"><div><p class="eyebrow">ПУЛЬТ УПРАВЛЕНИЯ</p><h1>Пульт оператора<br><em>и аналитика.</em></h1></div><div class="heading-note"><span class="pulse"></span> Живая очередь</div></div>
-      <div id="metrics" class="metrics"></div>
+      <section class="leader-dashboard" aria-labelledby="leader-title">
+        <div class="leader-heading"><div><p class="eyebrow">ОБЗОР ДЛЯ РУКОВОДИТЕЛЯ</p><h2 id="leader-title">Эффект и нагрузка поддержки</h2></div><p id="metrics-status" role="status">Загрузка статистики PostgreSQL…</p></div>
+        <div id="metrics" class="metrics" aria-label="Показатели сервиса"></div>
+        <p class="metrics-method">Deflection Rate — подтверждённые автоответы без ответа оператора / все обращения. Ожидающие подтверждения не учитываются. Часы — расчётная оценка, не измеренное рабочее время.</p>
+      </section>
        <div class="queue-toolbar"><div><h2>Очередь обращений</h2><p id="queue-count">Загрузка тикетов...</p></div><div class="filters"><select id="department-filter"><option value="">Все отделы</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option><option>Unassigned</option></select><select id="status-filter"><option value="">Все статусы</option><option value="new">Новый</option><option value="awaiting_confirmation">Ожидает подтверждения</option><option value="assigned_to_operator">У оператора</option><option value="auto_resolved">Решен ИИ</option><option value="resolved">Решено специалистом</option><option value="closed">Решено специалистом</option></select><button id="refresh-queue" class="secondary-button">↻ Обновить</button><button id="reset-data" class="danger-button">Очистить базу</button></div></div>
       <div id="ticket-list" class="ticket-list"></div>
     </section>
@@ -119,6 +125,6 @@
       </section>
    </main>
   <div id="toast" class="toast"></div>
-   <script src="/app.js?v=5"></script>
+   <script src="/app.js?v=6"></script>
 </body>
 </html>
