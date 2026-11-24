@@ -128,6 +128,49 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	return result
 }
 
+// AnalyzeSandbox runs the same local/LLM classification and RAG lookup as a
+// ticket without persisting state or dispatching messages.
+func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
+	if reason := security.CheckPromptInput(message, security.MaxTicketBytes); reason != "" {
+		return reviewResult(reason)
+	}
+	masked := security.MaskPII(message)
+	providers := a.approvedProviders()
+	if !sensitiveModelInputAllowed(message, masked) {
+		providers = nil
+	}
+	if len(providers) > 0 && a.acquireModelSlot() {
+		defer func() { <-a.llmSlots }()
+		modelCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		for i, provider := range providers {
+			if i > 0 && os.Getenv("FLOWOPS_AI_ALLOW_FALLBACK") != "true" {
+				break
+			}
+			result, err := provider.analyze(modelCtx, masked.MaskedText)
+			if err == nil && !a.valid(result) {
+				err = fmt.Errorf("provider returned an invalid analysis result")
+			}
+			if err != nil {
+				continue
+			}
+			result = unmaskResult(result, masked)
+			result.PIIMaskedCount = masked.MaskedCount
+			result.PIIMaskedTypes = masked.MaskedTypes
+			result = a.attachSafeAnswer(result, message)
+			a.setActiveProvider("llm", provider.name, provider.model())
+			return result
+		}
+	}
+	result := a.analyzeHeuristically(message)
+	result = a.attachSafeAnswer(result, message)
+	result = unmaskResult(result, masked)
+	result.PIIMaskedCount = masked.MaskedCount
+	result.PIIMaskedTypes = masked.MaskedTypes
+	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
+	return result
+}
+
 func unmaskResult(result Result, masked security.MaskResult) Result {
 	result.ExtractedSummary = security.UnmaskPII(result.ExtractedSummary, masked.Replacements)
 	return result

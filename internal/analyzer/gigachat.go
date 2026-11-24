@@ -192,6 +192,70 @@ func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText strin
 	return decodeModelResult(envelope.Choices[0].Message.Content)
 }
 
+// GenerateStructured sends already-sanitized text to the configured GigaChat
+// provider and returns its raw completion. Callers must mask PII before use.
+func (a *Analyzer) GenerateStructured(ctx context.Context, systemPrompt, userText string) (string, bool, error) {
+	config := loadGigaChatConfig()
+	if config.authKey == "" || config.insecure || !providerAllowed("gigachat") {
+		return "", false, nil
+	}
+	if !a.acquireModelSlot() {
+		return "", false, nil
+	}
+	defer func() { <-a.llmSlots }()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	token, err := a.gigachatAccessToken(ctx, config)
+	if err != nil {
+		return "", true, err
+	}
+	requestID, err := newUUIDv4()
+	if err != nil {
+		return "", true, err
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": config.model, "temperature": 0.1, "max_tokens": 4096,
+		"messages": []map[string]string{{"role": "system", "content": systemPrompt}, {"role": "user", "content": userText}},
+	})
+	if err != nil {
+		return "", true, err
+	}
+	req, err := newProviderRequest(ctx, http.MethodPost, config.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", true, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Request-ID", requestID)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", true, fmt.Errorf("request GigaChat completion failed: %w", err)
+	}
+	defer resp.Body.Close()
+	data, err := readProviderBody(resp.Body)
+	if err != nil {
+		return "", true, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", true, fmt.Errorf("GigaChat completion status %s", resp.Status)
+	}
+	var envelope struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return "", true, fmt.Errorf("parse GigaChat response: %w", err)
+	}
+	if len(envelope.Choices) == 0 {
+		return "", true, fmt.Errorf("GigaChat completion response has no choices")
+	}
+	return envelope.Choices[0].Message.Content, true, nil
+}
+
 func newUUIDv4() (string, error) {
 	var uuid [16]byte
 	if _, err := rand.Read(uuid[:]); err != nil {

@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
@@ -13,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"flowops-ai/internal/analyzer"
 	"flowops-ai/internal/database"
 	"flowops-ai/internal/delivery"
+	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
 	"github.com/jackc/pgx/v5"
@@ -58,6 +63,106 @@ func replyTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestAPIKeyIssueRevokeAndIngestAuthorization(t *testing.T) {
+	t.Setenv("FLOWOPS_OPERATOR_TOKEN", strings.Repeat("k", 32))
+	db := replyTestDB(t)
+	handler := NewIntegrationsHandler(db)
+	request := httptest.NewRequest("POST", "/api/v1/keys", strings.NewReader(`{"name":"test CRM","scope":"ingest"}`))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("k", 32))
+	response := httptest.NewRecorder()
+	handler.Keys(response, request)
+	if response.Code != 201 {
+		t.Fatalf("issue key: %d %s", response.Code, response.Body.String())
+	}
+	var issued struct {
+		ID     int    `json:"id"`
+		Key    string `json:"key"`
+		Prefix string `json:"key_prefix"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	if issued.ID < 1 || !strings.HasPrefix(issued.Key, "flw_") || !strings.HasPrefix(issued.Key, issued.Prefix) {
+		t.Fatalf("invalid issued key: %+v", issued)
+	}
+	sum := sha256.Sum256([]byte(issued.Key))
+	var stored string
+	if err := db.QueryRow(context.Background(), `SELECT key_hash FROM api_keys WHERE id=$1`, issued.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != hex.EncodeToString(sum[:]) || stored == issued.Key {
+		t.Fatal("database must store only the SHA-256 key hash")
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	protected := security.ProtectIngestWithKeys(next, "", db)
+	ingest := httptest.NewRequest("POST", "/api/v1/ingest", strings.NewReader(`{"channel":"api","message":"test"}`))
+	ingest.Header.Set("Authorization", "Bearer "+issued.Key)
+	response = httptest.NewRecorder()
+	protected.ServeHTTP(response, ingest)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("valid DB key not accepted: %d %s", response.Code, response.Body.String())
+	}
+	var lastUsed *time.Time
+	if err := db.QueryRow(context.Background(), `SELECT last_used_at FROM api_keys WHERE id=$1`, issued.ID).Scan(&lastUsed); err != nil || lastUsed == nil {
+		t.Fatalf("last_used_at not updated: %v %v", lastUsed, err)
+	}
+	revoke := httptest.NewRequest("DELETE", "/api/v1/keys/"+strconv.Itoa(issued.ID), nil)
+	revoke.Header.Set("Authorization", "Bearer "+strings.Repeat("k", 32))
+	revoke.SetPathValue("id", strconv.Itoa(issued.ID))
+	response = httptest.NewRecorder()
+	handler.RevokeKey(response, revoke)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("revoke key: %d %s", response.Code, response.Body.String())
+	}
+	ingest = httptest.NewRequest("POST", "/api/v1/ingest", strings.NewReader(`{"channel":"api","message":"test"}`))
+	ingest.Header.Set("Authorization", "Bearer "+issued.Key)
+	response = httptest.NewRecorder()
+	protected.ServeHTTP(response, ingest)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked key still accepted: %d", response.Code)
+	}
+}
+
+func TestIssuedAPIKeyAuthorizesIngestEndpoint(t *testing.T) {
+	t.Setenv("FLOWOPS_OPERATOR_TOKEN", strings.Repeat("k", 32))
+	db := replyTestDB(t)
+	keyHandler := NewIntegrationsHandler(db)
+	issuedResponse := httptest.NewRecorder()
+	issueRequest := httptest.NewRequest("POST", "/api/v1/keys", strings.NewReader(`{"name":"endpoint test","scope":"ingest"}`))
+	issueRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("k", 32))
+	keyHandler.Keys(issuedResponse, issueRequest)
+	if issuedResponse.Code != http.StatusCreated {
+		t.Fatalf("issue key: %d %s", issuedResponse.Code, issuedResponse.Body.String())
+	}
+	var issued struct {
+		ID  int    `json:"id"`
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(issuedResponse.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	base, err := knowledge.Load("../../knowledge_base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbacks, _ := security.NewCallbacks("")
+	tickets := NewTicketsHandler(db, slog.New(slog.NewTextHandler(io.Discard, nil)), analyzer.New(base)).WithCallbacks(callbacks)
+	endpoint := security.ProtectIngestWithKeys(http.HandlerFunc(tickets.Ingest), "", db)
+	request := httptest.NewRequest("POST", "/api/v1/ingest", strings.NewReader(`{"channel":"api","sender":"crm@example.test","message":"The office VPN is unavailable"}`))
+	request.Header.Set("Authorization", "Bearer "+issued.Key)
+	response := httptest.NewRecorder()
+	endpoint.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("ingest endpoint rejected issued key: %d %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		TicketID int `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.TicketID < 1 {
+		t.Fatalf("ingest did not create ticket: %+v %v", result, err)
+	}
 }
 
 func TestReplyAndPatchUseAtomicDeliveryQueue(t *testing.T) {

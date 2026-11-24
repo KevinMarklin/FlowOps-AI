@@ -14,7 +14,11 @@ func ProtectOperatorWrites(next http.Handler, token string) http.Handler {
 	expected := sha256.Sum256([]byte(token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		privileged := strings.HasPrefix(path, "/api/knowledge") ||
+		privileged := path == "/api/v1/keys" || strings.HasPrefix(path, "/api/v1/keys/") ||
+			path == "/api/v1/kb/smart-import" || path == "/api/v1/settings/preview" ||
+			strings.HasPrefix(path, "/api/v1/settings/builder") || strings.HasPrefix(path, "/api/v1/settings/channels") ||
+			(path == "/api/v1/widget/config" && r.Method == http.MethodPut) ||
+			strings.HasPrefix(path, "/api/knowledge") ||
 			(strings.HasPrefix(path, "/api/tickets/") && (r.Method == http.MethodPatch || r.Method == http.MethodDelete || strings.HasSuffix(path, "/reply")))
 		if !privileged {
 			next.ServeHTTP(w, r)

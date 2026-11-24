@@ -66,6 +66,12 @@ func FormatTelegramMarkdown(text string) string {
 	return strings.TrimRight(out.String(), "\n")
 }
 
+// FormatTelegramHTML is the channel formatter alias used by the sandbox UI/API.
+func FormatTelegramHTML(text string) string { return FormatTelegramMarkdown(text) }
+
+// FormatMAX formats a reply using MAX-compatible Markdown.
+func FormatMAX(text string) string { return FormatMAXMarkdown(text) }
+
 func telegramInline(text string) string {
 	var out strings.Builder
 	for len(text) > 0 {
@@ -202,6 +208,11 @@ func FormatEmailHTML(ticketID int, originalMessage, replyBody string, isAutoRepl
 	</div>
 	<div style="padding:16px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:13px;line-height:1.5">Если решение не помогло или остались вопросы — просто ответьте на это письмо, и мы продолжим работу по заявке #` + strconv.Itoa(ticketID) + `.</div>
 	</div></body></html>`
+}
+
+// FormatEmailPreview returns the regular HTML email layout for a synthetic ticket.
+func FormatEmailPreview(originalMessage, replyBody string, autoReplied bool) string {
+	return FormatEmailHTML(0, originalMessage, replyBody, autoReplied)
 }
 
 func emailInline(text string) string {

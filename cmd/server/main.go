@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -75,6 +77,14 @@ func main() {
 		MailIMAPHost:   os.Getenv("MAIL_IMAP_HOST"), MailSMTPHost: os.Getenv("MAIL_SMTP_HOST"),
 		MailUser: os.Getenv("MAIL_USER"), MailPassword: os.Getenv("MAIL_PASSWORD"),
 	}
+	var savedChannelConfigJSON []byte
+	if err := pool.QueryRow(context.Background(), `SELECT channel_config FROM app_settings WHERE id=TRUE`).Scan(&savedChannelConfigJSON); err == nil {
+		savedChannelConfig := map[string]string{}
+		if json.Unmarshal(savedChannelConfigJSON, &savedChannelConfig) == nil {
+			channelConfig = applyChannelConfig(channelConfig, savedChannelConfig)
+		}
+	}
+	var channelConfigMu sync.RWMutex
 	dispatcher := channels.NewDispatcher(channelConfig)
 	callbacks, err := security.NewCallbacks(os.Getenv("FLOWOPS_CALLBACK_URLS"))
 	if err != nil {
@@ -94,15 +104,54 @@ func main() {
 		"sensitive_data_to_external_llm", envBool("FLOWOPS_AI_ALLOW_SENSITIVE", false),
 	)
 	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer, dispatcher).WithCallbacks(callbacks)
+	integrationsHandler := handlers.NewIntegrationsHandler(pool)
+	smartHandler := handlers.NewSmartHandler(knowledgeBase, ticketAnalyzer)
 	channelContext, stopChannels := context.WithCancel(context.Background())
 	defer stopChannels()
 	go delivery.New(pool, ticketsHandler.Deliver).Run(channelContext, logger)
-	channels.Start(channelContext, channelConfig, ticketsHandler.IngestMessage, logger)
+	var channelMu sync.Mutex
+	var activeChannelCancel context.CancelFunc
+	startChannels := func(config channels.Config) {
+		channelMu.Lock()
+		defer channelMu.Unlock()
+		if activeChannelCancel != nil {
+			activeChannelCancel()
+		}
+		ctx, cancel := context.WithCancel(channelContext)
+		activeChannelCancel = cancel
+		channels.Start(ctx, config, ticketsHandler.IngestMessage, logger)
+	}
+	startChannels(channelConfig)
+	integrationsHandler.WithChannelRestart(func(values map[string]string) {
+		channelConfigMu.RLock()
+		config := applyChannelConfig(channelConfig, values)
+		channelConfigMu.RUnlock()
+		channelConfigMu.Lock()
+		channelConfig = config
+		channelConfigMu.Unlock()
+		startChannels(config)
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tickets", ticketsHandler.List)
 	mux.HandleFunc("GET /api/tickets/{id}", ticketsHandler.Detail)
 	mux.HandleFunc("POST /api/tickets", ticketsHandler.Create)
-	mux.Handle("POST /api/v1/ingest", security.ProtectIngest(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN")))
+	mux.Handle("POST /api/v1/ingest", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
+	mux.Handle("OPTIONS /api/v1/ingest", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
+	mux.HandleFunc("GET /api/v1/keys", integrationsHandler.Keys)
+	mux.HandleFunc("POST /api/v1/keys", integrationsHandler.Keys)
+	mux.HandleFunc("DELETE /api/v1/keys/{id}", integrationsHandler.RevokeKey)
+	mux.HandleFunc("GET /api/v1/widget/config", integrationsHandler.WidgetConfig)
+	mux.HandleFunc("PUT /api/v1/widget/config", integrationsHandler.WidgetConfig)
+	mux.HandleFunc("OPTIONS /api/v1/widget/config", integrationsHandler.WidgetConfig)
+	mux.HandleFunc("POST /api/v1/kb/smart-import", smartHandler.SmartImport)
+	mux.HandleFunc("POST /api/v1/settings/preview", smartHandler.Preview)
+	mux.HandleFunc("GET /api/v1/settings/builder", integrationsHandler.BuilderSettings)
+	mux.HandleFunc("PUT /api/v1/settings/builder", integrationsHandler.BuilderSettings)
+	mux.HandleFunc("GET /api/v1/settings/channels", integrationsHandler.ChannelSettings)
+	mux.HandleFunc("PUT /api/v1/settings/channels", integrationsHandler.ChannelSettings)
+	mux.HandleFunc("POST /api/v1/settings/channels/{channel}/check", integrationsHandler.CheckChannel)
+	mux.Handle("GET /widget.js", noStoreFileServer(http.Dir("web")))
+	mux.Handle("GET /", noStoreFileServer(http.Dir("web")))
 	mux.HandleFunc("POST /api/tickets/{id}/feedback", ticketsHandler.Feedback)
 	mux.HandleFunc("POST /api/tickets/{id}/reply", ticketsHandler.Reply)
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)
@@ -113,7 +162,6 @@ func main() {
 	mux.HandleFunc("POST /api/knowledge", knowledgeHandler.Create)
 	mux.HandleFunc("PATCH /api/knowledge/{filename}", knowledgeHandler.Update)
 	mux.HandleFunc("DELETE /api/knowledge/{filename}", knowledgeHandler.Delete)
-	mux.Handle("/", noStoreFileServer(http.Dir("web")))
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -158,6 +206,28 @@ func envBool(name string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+func applyChannelConfig(config channels.Config, values map[string]string) channels.Config {
+	if value, ok := values["telegram_token"]; ok {
+		config.TelegramToken = value
+	}
+	if value, ok := values["max_token"]; ok {
+		config.MaxToken = value
+	}
+	if value, ok := values["mail_imap_host"]; ok {
+		config.MailIMAPHost = value
+	}
+	if value, ok := values["mail_smtp_host"]; ok {
+		config.MailSMTPHost = value
+	}
+	if value, ok := values["mail_user"]; ok {
+		config.MailUser = value
+	}
+	if value, ok := values["mail_password"]; ok {
+		config.MailPassword = value
+	}
+	return config
 }
 
 func loadDotEnv(path string) {

@@ -45,3 +45,25 @@ CREATE TABLE IF NOT EXISTS ticket_deliveries (
     UNIQUE(ticket_id,reply_version,dedupe_key)
 );
 CREATE INDEX IF NOT EXISTS ticket_deliveries_ready ON ticket_deliveries(next_attempt_at) WHERE state IN ('pending','processing');
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL DEFAULT 'ingest',
+    allowed_origin TEXT NOT NULL DEFAULT '',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    widget_title TEXT NOT NULL DEFAULT 'Онлайн-поддержка',
+    widget_color TEXT NOT NULL DEFAULT '#2563eb',
+    widget_greeting TEXT NOT NULL DEFAULT 'Здравствуйте! Чем мы можем помочь?',
+    builder_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    channel_config JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+INSERT INTO app_settings(id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;

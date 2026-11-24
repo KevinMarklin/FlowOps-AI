@@ -142,7 +142,7 @@ func initialTicketStatus(analysis analyzer.Result) string {
 	return "assigned_to_operator"
 }
 
-func validChannel(value string) bool { return hasValue(value, "web", "email", "bot", "api") }
+func validChannel(value string) bool { return hasValue(value, "web", "email", "bot", "api", "widget") }
 func departmentLabel(value string) string {
 	if value == "Billing" {
 		return "Финансы и биллинг"
