@@ -17,6 +17,7 @@ import (
 
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 )
 
 type Result struct {
@@ -46,6 +47,7 @@ type Analyzer struct {
 	activeMode    string
 	activeName    string
 	activeModel   string
+	builderConfig settings.Loader
 }
 
 func (a *Analyzer) ResetKnowledge() error { return a.base.Reset() }
@@ -63,6 +65,15 @@ func New(base *knowledge.Base) *Analyzer {
 	return a
 }
 
+func (a *Analyzer) WithBuilderConfig(loader settings.Loader) *Analyzer {
+	a.builderConfig = loader
+	return a
+}
+
+func (a *Analyzer) currentBuilderConfig(ctx context.Context) settings.BuilderConfig {
+	return settings.LoadOrDefault(ctx, a.builderConfig)
+}
+
 func (a *Analyzer) Analyze(ctx context.Context, rawText string) Result {
 	return a.AnalyzeWithSender(ctx, rawText, "")
 }
@@ -77,6 +88,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	}
 	// Sender identities are routing metadata; never append them to the model input.
 	masked := security.MaskPII(rawText)
+	builderConfig := a.currentBuilderConfig(ctx)
 	providers := a.approvedProviders()
 	if !sensitiveModelInputAllowed(rawText, masked) {
 		providers = nil
@@ -96,8 +108,8 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 			}
 			slog.Info(fmt.Sprintf("[AI] Requesting %s (model: %s)...", providerName, provider.model()))
 			sentToModel = true
-			result, err := provider.analyze(modelCtx, masked.MaskedText)
-			if err == nil && !a.valid(result) {
+			result, err := provider.analyze(modelCtx, masked.MaskedText, builderConfig)
+			if err == nil && !a.valid(result, builderConfig) {
 				err = fmt.Errorf("provider returned an invalid or unsafe analysis result")
 			}
 			if err != nil {
@@ -116,7 +128,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 		slog.Info(fmt.Sprintf("[SECURITY] PII masked: count=%d types=[%s]", masked.MaskedCount, strings.Join(masked.MaskedTypes, ", ")))
 	}
 	// External capacity limits must not disable local classification for every channel.
-	result := a.analyzeHeuristically(rawText)
+	result := a.analyzeHeuristicallyForBuilder(rawText, builderConfig)
 	result = a.attachSafeAnswer(result, rawText)
 	result = unmaskResult(result, masked)
 	result.PIIMaskedTypes = masked.MaskedTypes
@@ -135,6 +147,7 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 		return reviewResult(reason)
 	}
 	masked := security.MaskPII(message)
+	builderConfig := a.currentBuilderConfig(ctx)
 	providers := a.approvedProviders()
 	if !sensitiveModelInputAllowed(message, masked) {
 		providers = nil
@@ -147,8 +160,8 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 			if i > 0 && os.Getenv("FLOWOPS_AI_ALLOW_FALLBACK") != "true" {
 				break
 			}
-			result, err := provider.analyze(modelCtx, masked.MaskedText)
-			if err == nil && !a.valid(result) {
+			result, err := provider.analyze(modelCtx, masked.MaskedText, builderConfig)
+			if err == nil && !a.valid(result, builderConfig) {
 				err = fmt.Errorf("provider returned an invalid analysis result")
 			}
 			if err != nil {
@@ -162,7 +175,7 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 			return result
 		}
 	}
-	result := a.analyzeHeuristically(message)
+	result := a.analyzeHeuristicallyForBuilder(message, builderConfig)
 	result = a.attachSafeAnswer(result, message)
 	result = unmaskResult(result, masked)
 	result.PIIMaskedCount = masked.MaskedCount
@@ -223,9 +236,9 @@ func (a *Analyzer) currentGoogleModel() string {
 	return model
 }
 
-func (a *Analyzer) analyzeWithGoogle(ctx context.Context, rawText, apiKey string) (Result, error) {
+func (a *Analyzer) analyzeWithGoogle(ctx context.Context, rawText, apiKey string, builderConfig settings.BuilderConfig) (Result, error) {
 	model := a.currentGoogleModel()
-	result, status, err := a.googleGenerate(ctx, rawText, apiKey, model)
+	result, status, err := a.googleGenerate(ctx, rawText, apiKey, model, builderConfig)
 	if err == nil {
 		return result, nil
 	}
@@ -239,18 +252,18 @@ func (a *Analyzer) analyzeWithGoogle(ctx context.Context, rawText, apiKey string
 	a.modelMu.Lock()
 	a.googleModel = discovered
 	a.modelMu.Unlock()
-	result, _, err = a.googleGenerate(ctx, rawText, apiKey, discovered)
+	result, _, err = a.googleGenerate(ctx, rawText, apiKey, discovered, builderConfig)
 	return result, err
 }
 
-func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model string) (Result, int, error) {
+func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model string, builderConfig settings.BuilderConfig) (Result, int, error) {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AI_GOOGLE_BASE_URL")), "/")
 	if base == "" {
 		base = "https://generativelanguage.googleapis.com/v1beta"
 	}
 	endpoint := base + "/models/" + url.PathEscape(strings.TrimPrefix(model, "models/")) + ":generateContent?key=" + url.QueryEscape(apiKey)
 	payload := map[string]any{
-		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": classificationPolicy}}},
+		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": classificationPolicyFor(builderConfig)}}},
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": classificationInput(rawText)}}}},
 		"generationConfig":  map[string]any{"responseMimeType": "application/json", "temperature": 0, "maxOutputTokens": 512},
 	}
@@ -294,7 +307,7 @@ func (a *Analyzer) googleGenerate(ctx context.Context, rawText, apiKey, model st
 	if len(envelope.Candidates) == 0 || len(envelope.Candidates[0].Content.Parts) == 0 {
 		return Result{}, resp.StatusCode, fmt.Errorf("invalid Google AI response: missing candidates or content")
 	}
-	result, err := decodeModelResult(envelope.Candidates[0].Content.Parts[0].Text)
+	result, err := decodeModelResultForDepartments(envelope.Candidates[0].Content.Parts[0].Text, builderConfig.Departments)
 	if err != nil {
 		return Result{}, resp.StatusCode, err
 	}
@@ -377,7 +390,57 @@ func (a *Analyzer) analyzeHeuristically(rawText string) Result {
 	return result
 }
 
-func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, error) {
+func (a *Analyzer) analyzeHeuristicallyForBuilder(rawText string, config settings.BuilderConfig) Result {
+	result := a.analyzeHeuristically(rawText)
+	if config.Departments == nil {
+		return result
+	}
+	if len(config.Departments) == 0 {
+		result.Department = "General"
+		return result
+	}
+	for _, department := range config.Departments {
+		if result.Department == department.Name {
+			return result
+		}
+	}
+	text := strings.ToLower(rawText)
+	best, bestScore := "", 0
+	for _, department := range config.Departments {
+		score := departmentTextScore(text, department.Name+" "+department.Description)
+		if score > bestScore {
+			best, bestScore = department.Name, score
+		}
+	}
+	if bestScore > 0 {
+		result.Department = best
+	}
+	return result
+}
+
+func departmentTextScore(text, label string) int {
+	textWords := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'а' && r <= 'я' || r >= 'А' && r <= 'Я' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	})
+	labelWords := strings.FieldsFunc(strings.ToLower(label), func(r rune) bool {
+		return !(r >= 'а' && r <= 'я' || r >= 'А' && r <= 'Я' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	})
+	score := 0
+	for _, wanted := range labelWords {
+		if len([]rune(wanted)) < 4 {
+			continue
+		}
+		for _, present := range textWords {
+			if len([]rune(present)) >= 4 && (strings.Contains(wanted, present) || strings.Contains(present, wanted)) {
+				score++
+				break
+			}
+		}
+	}
+	return score
+}
+
+func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string, builderConfig settings.BuilderConfig) (Result, error) {
 	baseURL, model := aiConfig()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
@@ -385,7 +448,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
-	payload := map[string]any{"model": model, "temperature": 0, "max_tokens": 512, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": classificationPolicy}, {"role": "user", "content": classificationInput(rawText)}}}
+	payload := map[string]any{"model": model, "temperature": 0, "max_tokens": 512, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": classificationPolicyFor(builderConfig)}, {"role": "user", "content": classificationInput(rawText)}}}
 	body, _ := json.Marshal(payload)
 	req, err := newProviderRequest(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
@@ -421,7 +484,7 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string) (Result, e
 		slog.Error("invalid LLM response", "status", resp.StatusCode, "duration_ms", duration)
 		return Result{}, fmt.Errorf("invalid AI response: %w", err)
 	}
-	result, err := decodeModelResult(envelope.Choices[0].Message.Content)
+	result, err := decodeModelResultForDepartments(envelope.Choices[0].Message.Content, builderConfig.Departments)
 	if err != nil {
 		return Result{}, err
 	}
@@ -443,11 +506,24 @@ func aiConfig() (string, string) {
 	return baseURL, model
 }
 
-func (a *Analyzer) valid(result Result) bool {
-	switch result.Department {
-	case "IT", "Billing", "HR", "Accounting", "Facilities", "General", "Unassigned":
-	default:
-		return false
+func (a *Analyzer) valid(result Result, configs ...settings.BuilderConfig) bool {
+	if len(configs) > 0 && configs[0].Departments != nil {
+		found := false
+		for _, department := range configs[0].Departments {
+			if result.Department == department.Name {
+				found = true
+				break
+			}
+		}
+		if !found && result.Department != "General" && result.Department != "Unassigned" {
+			return false
+		}
+	} else {
+		switch result.Department {
+		case "IT", "Billing", "HR", "Accounting", "Facilities", "General", "Unassigned":
+		default:
+			return false
+		}
 	}
 	return (result.Priority == "low" || result.Priority == "medium" || result.Priority == "high") && len(result.ExtractedSummary) <= 1024 && security.SafeAnswerText(result.ExtractedSummary) && result.RAGAnswer == nil
 }

@@ -18,16 +18,18 @@ import (
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TicketsHandler struct {
-	db         *pgxpool.Pool
-	logger     *slog.Logger
-	analyzer   *analyzer.Analyzer
-	dispatcher *channels.Dispatcher
-	callbacks  *security.Callbacks
+	db            *pgxpool.Pool
+	logger        *slog.Logger
+	analyzer      *analyzer.Analyzer
+	dispatcher    *channels.Dispatcher
+	builderConfig settings.Loader
+	callbacks     *security.Callbacks
 }
 
 func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
@@ -41,6 +43,11 @@ func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *an
 // WithCallbacks configures the immutable outbound policy before serving requests.
 func (h *TicketsHandler) WithCallbacks(callbacks *security.Callbacks) *TicketsHandler {
 	h.callbacks = callbacks
+	return h
+}
+
+func (h *TicketsHandler) WithBuilderConfig(loader settings.Loader) *TicketsHandler {
+	h.builderConfig = loader
 	return h
 }
 
@@ -112,6 +119,7 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
 	status := initialTicketStatus(analysis)
 	autoReplied := analysis.RAGAnswer != nil
+	builderConfig := settings.LoadOrDefault(ctx, h.builderConfig)
 	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
@@ -123,11 +131,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	}
 	replyDepartment := analysis.Department
 	if replyDepartment != "" && replyDepartment != "Unassigned" && replyDepartment != "General" {
-		replyDepartment = departmentLabel(replyDepartment)
+		if label := departmentLabel(replyDepartment); label != "" {
+			replyDepartment = label
+		}
 	}
-	replyText := channels.EscalationReplyText(ticket.ID, replyDepartment)
+	replyText := channels.BuilderEscalationReplyText(ticket.ID, replyDepartment, builderConfig.HandoffTemplate)
 	if autoReplied {
-		replyText = channels.PublicReplyText(ticket.ID, *analysis.RAGAnswer)
+		replyText = channels.PublicReplyText(ticket.ID, channels.AppendSignature(*analysis.RAGAnswer, builderConfig.Signature))
 	}
 	h.auditPII(ctx, ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
 	h.logger.Info(fmt.Sprintf("[TICKET #%d] status=%s | auto_replied=%t | channel=%s | department=%s", ticket.ID, ticket.Status, autoReplied, channels.DisplayChannel(ticket.Channel, request.Sender), ticket.Department))
@@ -147,7 +157,10 @@ func departmentLabel(value string) string {
 	if value == "Billing" {
 		return "Финансы и биллинг"
 	}
-	return map[string]string{"IT": "IT", "HR": "HR", "Accounting": "Бухгалтерию", "Facilities": "АХО и офис", "General": "Общий отдел"}[value]
+	if label, ok := map[string]string{"IT": "IT", "HR": "HR", "Accounting": "Бухгалтерию", "Facilities": "АХО и офис", "General": "Общий отдел"}[value]; ok {
+		return label
+	}
+	return value
 }
 
 func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {

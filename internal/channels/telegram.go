@@ -13,9 +13,8 @@ import (
 	"time"
 
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/settings"
 )
-
-const welcomeText = "Здравствуйте! Я ИИ-помощник службы поддержки FlowOps AI. Опишите вашу проблему — я сразу найду решение по регламенту или передам заявку профильному специалисту."
 
 type telegramUpdate struct {
 	UpdateID int64 `json:"update_id"`
@@ -67,7 +66,7 @@ func sendTelegramMessage(ctx context.Context, token string, chatID int64, text s
 	return nil
 }
 
-func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger interface {
+func runTelegram(ctx context.Context, token string, builderConfig settings.Loader, ingest IngestFunc, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
 }) {
@@ -103,7 +102,7 @@ func runTelegram(ctx context.Context, token string, ingest IngestFunc, logger in
 							continue
 						}
 						if text == "/start" || strings.HasPrefix(text, "/start@") || strings.HasPrefix(text, "/start ") {
-							if err := sendTelegramMessage(ctx, token, chatID, welcomeText); err != nil {
+							if err := sendTelegramMessage(ctx, token, chatID, StartReplyText(ctx, builderConfig)); err != nil {
 								logger.Error("Telegram welcome failed", "error", "operation failed")
 							}
 							continue

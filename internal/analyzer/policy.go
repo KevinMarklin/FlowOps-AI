@@ -7,12 +7,13 @@ import (
 	"strings"
 
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 )
 
 type approvedProvider struct {
 	name    string
 	model   func() string
-	analyze func(context.Context, string) (Result, error)
+	analyze func(context.Context, string, settings.BuilderConfig) (Result, error)
 }
 
 // API keys are credentials, not authorization to export corporate data.
@@ -40,7 +41,9 @@ func (a *Analyzer) approvedProviders() []approvedProvider {
 		providers = append(providers, approvedProvider{"GigaChat (РФ контур)", func() string { return giga.model }, a.analyzeWithGigaChat})
 	}
 	if key := googleAPIKey(); key != "" && providerAllowed("gemini") {
-		providers = append(providers, approvedProvider{"Gemini", a.currentGoogleModel, func(ctx context.Context, text string) (Result, error) { return a.analyzeWithGoogle(ctx, text, key) }})
+		providers = append(providers, approvedProvider{"Gemini", a.currentGoogleModel, func(ctx context.Context, text string, config settings.BuilderConfig) (Result, error) {
+			return a.analyzeWithGoogle(ctx, text, key, config)
+		}})
 	} else if key == "" && os.Getenv("AI_API_KEY") != "" && providerAllowed("compatible") {
 		providers = append(providers, approvedProvider{"AI API", func() string { _, model := aiConfig(); return model }, a.analyzeWithAI})
 	}

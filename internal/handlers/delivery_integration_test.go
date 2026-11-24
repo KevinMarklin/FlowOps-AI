@@ -17,11 +17,13 @@ import (
 	"time"
 
 	"flowops-ai/internal/analyzer"
+	"flowops-ai/internal/channels"
 	"flowops-ai/internal/database"
 	"flowops-ai/internal/delivery"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -63,6 +65,58 @@ func replyTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestSavedBuilderSettingsChangeLiveRepliesAndAnalyzerPrompt(t *testing.T) {
+	t.Setenv("FLOWOPS_OPERATOR_TOKEN", strings.Repeat("b", 32))
+	db := replyTestDB(t)
+	api := NewIntegrationsHandler(db)
+	put := func() {
+		t.Helper()
+		body := `{"departments":[{"name":"Custom Ops","description":"Управляет корпоративными принтерами и печатью"}],"tone":"formal","start_template":"Добрый день, настройка обновлена.","handoff_template":"Обращение {ticket_id} передано в {department}.","signature":"Команда Custom Ops"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/builder", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+strings.Repeat("b", 32))
+		res := httptest.NewRecorder()
+		api.BuilderSettings(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("save builder config: %d %s", res.Code, res.Body.String())
+		}
+	}
+	put()
+	loader := func(ctx context.Context) (settings.BuilderConfig, error) { return api.LoadBuilderConfig(ctx) }
+	if got := channels.StartReplyText(context.Background(), loader); got != "Добрый день, настройка обновлена." {
+		t.Fatalf("start reply = %q", got)
+	}
+	config, err := loader(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := channels.BuilderEscalationReplyText(45, "Custom Ops", config.HandoffTemplate); got != "Обращение #45 передано в Custom Ops." {
+		t.Fatalf("handoff reply = %q", got)
+	}
+	if got := channels.BuilderEscalationReplyText(45, "Unassigned", config.HandoffTemplate); got != "Обращение #45 передано в дежурный отдел." {
+		t.Fatalf("unassigned handoff reply = %q", got)
+	}
+	if got := channels.AppendSignature("Ответ базы знаний", config.Signature); got != "Ответ базы знаний\n\nКоманда Custom Ops" {
+		t.Fatalf("signed answer = %q", got)
+	}
+	if got := channels.FormatTelegramHTML(channels.AppendSignature("Ответ базы знаний", config.Signature)); !strings.Contains(got, "Команда Custom Ops") {
+		t.Fatalf("telegram signature missing: %q", got)
+	}
+	if got := channels.FormatMAX(channels.AppendSignature("Ответ базы знаний", config.Signature)); !strings.Contains(got, "Команда Custom Ops") {
+		t.Fatalf("MAX signature missing: %q", got)
+	}
+	if got := channels.FormatEmailHTML(45, "Вопрос", channels.AppendSignature("Ответ базы знаний", config.Signature), true); !strings.Contains(got, "Команда Custom Ops") {
+		t.Fatalf("email signature missing: %q", got)
+	}
+	settingsForPrompt := settings.LoadOrDefault(context.Background(), loader)
+	prompt := analyzer.ClassificationPolicy(settingsForPrompt)
+	if !strings.Contains(prompt, "Custom Ops: Управляет корпоративными принтерами и печатью") || !strings.Contains(prompt, "официальный") {
+		t.Fatalf("builder settings missing from analyzer prompt: %q", prompt)
+	}
+	if _, err := analyzer.DecodeModelResultForTest(`{"department":"Custom Ops","priority":"medium","extracted_summary":"Заявка на печать"}`, settingsForPrompt.Departments); err != nil {
+		t.Fatalf("configured department rejected by model contract: %v", err)
+	}
 }
 
 func TestAPIKeyIssueRevokeAndIngestAuthorization(t *testing.T) {

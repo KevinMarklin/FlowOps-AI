@@ -126,7 +126,8 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 								target, targetID = "chat_id", chatID
 							}
 							if targetID != 0 {
-								if sendErr := sendMaxMessage(ctx, cfg, target, strconv.FormatInt(targetID, 10), welcomeText); sendErr != nil {
+								builderConfig := cfg.builderConfig(ctx)
+								if sendErr := sendMaxMessage(ctx, cfg, target, strconv.FormatInt(targetID, 10), builderConfig.StartTemplate); sendErr != nil {
 									logger.Error("MAX welcome failed", "error", "operation failed")
 								}
 							}
@@ -137,6 +138,24 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						}
 						text := strings.TrimSpace(update.Message.Body.Text)
 						if text == "" {
+							continue
+						}
+						if text == "/start" || strings.HasPrefix(text, "/start@") || strings.HasPrefix(text, "/start ") {
+							userID := update.Message.Sender.UserID
+							chatID := update.Message.Recipient.ChatID
+							if chatID == 0 {
+								chatID = update.ChatID
+							}
+							target, targetID := "user_id", userID
+							if targetID == 0 {
+								target, targetID = "chat_id", chatID
+							}
+							if targetID != 0 {
+								builderConfig := cfg.builderConfig(ctx)
+								if sendErr := sendMaxMessage(ctx, cfg, target, strconv.FormatInt(targetID, 10), builderConfig.StartTemplate); sendErr != nil {
+									logger.Error("MAX welcome failed", "error", "operation failed")
+								}
+							}
 							continue
 						}
 						userID := update.Message.Sender.UserID

@@ -21,7 +21,7 @@
        <button type="button" class="tab active" data-tab="employee">Окно сотрудника <span>Подача обращения</span></button>
        <button type="button" class="tab" data-tab="operator">Пульт оператора и Аналитика <span>Служба поддержки</span></button>
        <button type="button" class="tab" data-tab="knowledge">База знаний <span>Регламенты ИИ</span></button>
-       <button type="button" class="tab" data-tab="channels">Виджет и API <span>Интеграции</span></button>
+       <button type="button" class="tab" data-tab="channels">API и каналы <span>Интеграции</span></button>
        <button type="button" class="tab" data-tab="builder">Конструктор <span>Каналы / стиль / AI</span></button>
     </nav>
 
@@ -71,6 +71,33 @@
             <div class="preview-controls"><label for="sandbox-message">Тестовый вопрос клиента</label><textarea id="sandbox-message" rows="4" placeholder="Например: Не могу подключиться к VPN, ошибка 809"></textarea><div class="sandbox-toolbar"><label>Канал<select id="sandbox-channel"><option value="telegram">Telegram</option><option value="max">MAX</option><option value="email">Email</option></select></label><button id="sandbox-run" type="button" class="primary-button"><span>Проверить ответ</span><b>↗</b></button></div></div>
             <div class="sandbox-result"><div class="sandbox-meta" id="sandbox-meta">Введите вопрос для тестового прогона.</div><pre id="sandbox-text-preview" hidden></pre><iframe id="sandbox-email-preview" title="Предпросмотр письма FlowOps" sandbox="" hidden></iframe></div>
           </section>
+          <section class="panel builder-block">
+            <div class="builder-block-title"><span class="step">05</span><div><h2>Виджет на сайт и API</h2><p>Настройте внешний вид чата, выпустите ключ и подключите сайт или CRM.</p></div></div>
+            <section class="integration-section">
+              <div class="integration-grid">
+                <div class="panel widget-settings">
+                  <div class="panel-title"><h2>Настройка виджета</h2></div>
+                  <label for="widget-title">Заголовок</label><input id="widget-title" maxlength="100" value="Онлайн-поддержка">
+                  <label for="widget-greeting">Приветствие</label><textarea id="widget-greeting" rows="3" maxlength="500">Здравствуйте! Чем мы можем помочь?</textarea>
+                  <label for="widget-color">Цвет кнопки</label><div class="color-control"><input id="widget-color" type="color" value="#2563eb"><input id="widget-color-text" value="#2563eb" maxlength="7" aria-label="HEX-цвет"></div>
+                  <button type="button" id="widget-save" class="secondary-button">Сохранить настройки</button>
+                </div>
+                <div class="panel widget-preview-panel"><h2>Предпросмотр</h2><div class="widget-preview"><div class="preview-window"><b id="preview-title">Онлайн-поддержка</b><p id="preview-greeting">Здравствуйте! Чем мы можем помочь?</p><span>Введите вопрос…</span></div><button id="preview-launcher" type="button" aria-label="Предпросмотр кнопки">✦</button></div><p class="muted">Так виджет будет выглядеть на сайте заказчика.</p></div>
+              </div>
+              <div class="panel integration-keys">
+                <div class="panel-title"><div><span class="step">01</span><h2>Ключ для виджета</h2></div></div>
+                <div class="key-create-row"><label for="widget-origin">Origin сайта (например, https://example.ru)</label><input id="widget-origin" placeholder="https://example.ru"><button id="create-widget-key" class="primary-button" type="button"><span>Создать ключ для виджета</span><b>↗</b></button></div>
+                <div id="widget-snippet-box" class="snippet-box" hidden><label for="widget-snippet">Сниппет для вставки перед &lt;/body&gt;</label><textarea id="widget-snippet" readonly rows="3"></textarea><button id="copy-widget-snippet" type="button" class="secondary-button">Копировать сниппет</button><p class="muted">Полный ключ показан только при выпуске. Сохраните его в сниппете.</p></div>
+              </div>
+              <div class="panel integration-keys">
+                <div class="panel-title"><div><span class="step">02</span><h2>API-ключи 1С / CRM</h2></div><button id="refresh-api-keys" class="icon-button" type="button" title="Обновить">↻</button></div>
+                <div class="key-create-row crm-key-row"><label for="crm-key-name">Название интеграции</label><input id="crm-key-name" value="1С / CRM"><button id="create-ingest-key" type="button" class="secondary-button">Выпустить ingest-ключ</button></div>
+                <div id="issued-key-notice" class="issued-key-notice" hidden></div>
+                <div class="table-wrap"><table class="keys-table"><thead><tr><th>Название</th><th>Префикс</th><th>Scope / Origin</th><th>Создан</th><th>Использован</th><th></th></tr></thead><tbody id="api-keys-list"><tr><td colspan="6">Загрузка ключей…</td></tr></tbody></table></div>
+                <h3>Пример curl для 1С / CRM</h3><pre><code id="crm-curl">curl -X POST http://localhost:8080/api/v1/ingest -H "Authorization: Bearer flw_ВАШ_КЛЮЧ" -H "Content-Type: application/json" -d '{"channel":"api","sender":"crm","message":"Вопрос клиента"}'</code></pre>
+              </div>
+            </section>
+          </section>
         </div>
       </section>
 
@@ -89,32 +116,7 @@
        <div class="page-heading"><div><p class="eyebrow">OMNICHANNEL INGEST API / DEMO</p><h1>Все каналы.<br><em>Один поток поддержки.</em></h1><p class="lede">Подключайте сайт, почту и ботов к единому API.</p></div></div>
        <div class="employee-grid"><div class="panel request-panel"><div class="panel-title"><h2>Симулятор внешнего канала</h2></div><label>Канал</label><select id="ingest-channel"><option value="email">✉️ Входящая почта</option><option value="bot">🤖 Telegram / MAX бот</option><option value="web">🌐 Виджет сайта</option></select><label>Отправитель</label><input id="ingest-sender" value="client@company.ru"><label>Тема</label><input id="ingest-subject" value="Лежит сервер!"><label>Сообщение</label><textarea id="ingest-message" rows="7">Здравствуйте! У нас перестал отвечать VPS-сервер в кластере NL-1, сайты выдают 502.</textarea><div class="demo-grid"><button type="button" data-ingest-demo="hoster">🔥 Авария хостера</button><button type="button" data-ingest-demo="bot">🤖 Тот же вопрос из бота</button><button type="button" data-ingest-demo="billing">💳 Денежный вопрос</button></div><button id="ingest-submit" class="primary-button" type="button"><span>Отправить через Ingest API</span><b>↗</b></button></div><div class="panel result-panel"><h2>Ответ интеграции</h2><pre id="ingest-result">Выберите сценарий.</pre></div></div>
         <div class="panel api-docs"><h2>Документация API</h2><p><code>POST /api/v1/ingest</code> принимает email, Telegram/MAX, сайт и API.</p><pre><code>curl -X POST http://localhost:8080/api/v1/ingest -H "Content-Type: application/json" -d '{"channel":"bot","sender":"@alex_dev","message":"Сервер недоступен"}'</code></pre></div>
-        <section class="integration-section">
-          <div class="page-heading"><div><p class="eyebrow">ИНТЕГРАЦИЯ / WIDGET + API</p><h1>Виджет на сайт<br><em>и API.</em></h1><p class="lede">Настройте поддержку на сайте и выпускайте отдельные ключи для доверенных интеграций.</p></div></div>
-          <div class="integration-grid">
-            <div class="panel widget-settings">
-              <div class="panel-title"><h2>Настройка виджета</h2></div>
-              <label for="widget-title">Заголовок</label><input id="widget-title" maxlength="100" value="Онлайн-поддержка">
-              <label for="widget-greeting">Приветствие</label><textarea id="widget-greeting" rows="3" maxlength="500">Здравствуйте! Чем мы можем помочь?</textarea>
-              <label for="widget-color">Цвет кнопки</label><div class="color-control"><input id="widget-color" type="color" value="#2563eb"><input id="widget-color-text" value="#2563eb" maxlength="7" aria-label="HEX-цвет"></div>
-              <button type="button" id="widget-save" class="secondary-button">Сохранить настройки</button>
-            </div>
-            <div class="panel widget-preview-panel"><h2>Предпросмотр</h2><div class="widget-preview"><div class="preview-window"><b id="preview-title">Онлайн-поддержка</b><p id="preview-greeting">Здравствуйте! Чем мы можем помочь?</p><span>Введите вопрос…</span></div><button id="preview-launcher" type="button" aria-label="Предпросмотр кнопки">✦</button></div><p class="muted">Так виджет будет выглядеть на сайте заказчика.</p></div>
-          </div>
-          <div class="panel integration-keys">
-            <div class="panel-title"><div><span class="step">01</span><h2>Ключ для виджета</h2></div></div>
-            <div class="key-create-row"><label for="widget-origin">Origin сайта (например, https://example.ru)</label><input id="widget-origin" placeholder="https://example.ru"><button id="create-widget-key" class="primary-button" type="button"><span>Создать ключ для виджета</span><b>↗</b></button></div>
-            <div id="widget-snippet-box" class="snippet-box" hidden><label for="widget-snippet">Сниппет для вставки перед &lt;/body&gt;</label><textarea id="widget-snippet" readonly rows="3"></textarea><button id="copy-widget-snippet" type="button" class="secondary-button">Копировать сниппет</button><p class="muted">Полный ключ показан только при выпуске. Сохраните его в сниппете.</p></div>
-          </div>
-          <div class="panel integration-keys">
-            <div class="panel-title"><div><span class="step">02</span><h2>API-ключи 1С / CRM</h2></div><button id="refresh-api-keys" class="icon-button" type="button" title="Обновить">↻</button></div>
-            <div class="key-create-row crm-key-row"><label for="crm-key-name">Название интеграции</label><input id="crm-key-name" value="1С / CRM"><button id="create-ingest-key" type="button" class="secondary-button">Выпустить ingest-ключ</button></div>
-            <div id="issued-key-notice" class="issued-key-notice" hidden></div>
-            <div class="table-wrap"><table class="keys-table"><thead><tr><th>Название</th><th>Префикс</th><th>Scope / Origin</th><th>Создан</th><th>Использован</th><th></th></tr></thead><tbody id="api-keys-list"><tr><td colspan="6">Загрузка ключей…</td></tr></tbody></table></div>
-            <h3>Пример curl для 1С / CRM</h3><pre><code id="crm-curl">curl -X POST http://localhost:8080/api/v1/ingest -H "Authorization: Bearer flw_ВАШ_КЛЮЧ" -H "Content-Type: application/json" -d '{"channel":"api","sender":"crm","message":"Вопрос клиента"}'</code></pre>
-          </div>
-        </section>
-     </section>
+      </section>
    </main>
   <div id="toast" class="toast"></div>
    <script src="/app.js?v=5"></script>

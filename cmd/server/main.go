@@ -22,6 +22,7 @@ import (
 	"flowops-ai/internal/handlers"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 )
 
 func main() {
@@ -33,7 +34,6 @@ func main() {
 	if databaseURL == "" {
 		databaseURL = "postgres://postgres:secret@127.0.0.1:5433/flowops?sslmode=disable"
 	}
-
 	pool, err := database.NewPool(context.Background(), databaseURL)
 	if err != nil {
 		logger.Error("failed to connect to database", "error", err)
@@ -44,6 +44,10 @@ func main() {
 	if err := database.Migrate(context.Background(), pool); err != nil {
 		logger.Error("failed to initialize database", "error", err)
 		os.Exit(1)
+	}
+	integrationsHandler := handlers.NewIntegrationsHandler(pool)
+	loadBuilderConfig := func(ctx context.Context) (settings.BuilderConfig, error) {
+		return integrationsHandler.LoadBuilderConfig(ctx)
 	}
 
 	port := os.Getenv("PORT")
@@ -76,6 +80,7 @@ func main() {
 		MaxInsecureTLS: envBool("MAX_INSECURE_TLS", false),
 		MailIMAPHost:   os.Getenv("MAIL_IMAP_HOST"), MailSMTPHost: os.Getenv("MAIL_SMTP_HOST"),
 		MailUser: os.Getenv("MAIL_USER"), MailPassword: os.Getenv("MAIL_PASSWORD"),
+		BuilderConfig: loadBuilderConfig,
 	}
 	var savedChannelConfigJSON []byte
 	if err := pool.QueryRow(context.Background(), `SELECT channel_config FROM app_settings WHERE id=TRUE`).Scan(&savedChannelConfigJSON); err == nil {
@@ -91,7 +96,7 @@ func main() {
 		logger.Error("invalid callback allowlist")
 		os.Exit(1)
 	}
-	ticketAnalyzer := analyzer.New(knowledgeBase)
+	ticketAnalyzer := analyzer.New(knowledgeBase).WithBuilderConfig(loadBuilderConfig)
 	mode, configuredProvider, _ := ticketAnalyzer.ActiveProvider()
 	primaryProvider := "Local Heuristic only"
 	if mode == "llm" {
@@ -103,9 +108,8 @@ func main() {
 		"anonymized_data_to_external_llm", externalLLMAllowed,
 		"sensitive_data_to_external_llm", envBool("FLOWOPS_AI_ALLOW_SENSITIVE", false),
 	)
-	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer, dispatcher).WithCallbacks(callbacks)
-	integrationsHandler := handlers.NewIntegrationsHandler(pool)
-	smartHandler := handlers.NewSmartHandler(knowledgeBase, ticketAnalyzer)
+	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer, dispatcher).WithCallbacks(callbacks).WithBuilderConfig(loadBuilderConfig)
+	smartHandler := handlers.NewSmartHandler(knowledgeBase, ticketAnalyzer).WithBuilderConfig(loadBuilderConfig)
 	channelContext, stopChannels := context.WithCancel(context.Background())
 	defer stopChannels()
 	go delivery.New(pool, ticketsHandler.Deliver).Run(channelContext, logger)

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"flowops-ai/internal/settings"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,6 +35,14 @@ func NewIntegrationsHandler(db *pgxpool.Pool) *IntegrationsHandler {
 func (h *IntegrationsHandler) WithChannelRestart(restart func(map[string]string)) *IntegrationsHandler {
 	h.restartChannels = restart
 	return h
+}
+
+func (h *IntegrationsHandler) LoadBuilderConfig(ctx context.Context) (settings.BuilderConfig, error) {
+	return settings.LoadBuilderConfig(ctx, func(ctx context.Context) ([]byte, error) {
+		var raw []byte
+		err := h.db.QueryRow(ctx, `SELECT builder_config FROM app_settings WHERE id=TRUE`).Scan(&raw)
+		return raw, err
+	})
 }
 
 type apiKey struct {
@@ -211,16 +220,13 @@ func (h *IntegrationsHandler) BuilderSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if r.Method == http.MethodGet {
-		var raw []byte
-		if err := h.db.QueryRow(r.Context(), `SELECT builder_config FROM app_settings WHERE id=TRUE`).Scan(&raw); err != nil {
+		config, err := h.LoadBuilderConfig(r.Context())
+		if err != nil {
 			writeError(w, 500, "failed to load constructor settings")
 			return
 		}
-		if len(raw) == 0 || string(raw) == "null" {
-			raw = []byte(`{"departments":[{"name":"IT","description":"ИТ-поддержка"},{"name":"HR","description":"Кадровые вопросы"},{"name":"Accounting","description":"Бухгалтерия"},{"name":"Facilities","description":"Офис и АХО"}],"tone":"friendly","start_template":"Здравствуйте! Опишите ваш вопрос — я постараюсь помочь.","handoff_template":"Заявка #{ticket_id} направлена в отдел {department}.","signature":"Служба поддержки FlowOps"}`)
-		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write(raw)
+		_ = json.NewEncoder(w).Encode(config)
 		return
 	}
 	if r.Method != http.MethodPut {
@@ -241,6 +247,10 @@ func (h *IntegrationsHandler) BuilderSettings(w http.ResponseWriter, r *http.Req
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<18))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
+		writeError(w, 400, "invalid JSON body")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, 400, "invalid JSON body")
 		return
 	}

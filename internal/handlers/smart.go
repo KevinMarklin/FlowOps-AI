@@ -12,12 +12,19 @@ import (
 	"flowops-ai/internal/channels"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 )
 
 type SmartHandler struct {
-	base      *knowledge.Base
-	analyzer  *analyzer.Analyzer
-	generator func(context.Context, string, string) (string, bool, error)
+	base          *knowledge.Base
+	analyzer      *analyzer.Analyzer
+	generator     func(context.Context, string, string) (string, bool, error)
+	builderConfig settings.Loader
+}
+
+func (h *SmartHandler) WithBuilderConfig(loader settings.Loader) *SmartHandler {
+	h.builderConfig = loader
+	return h
 }
 
 func NewSmartHandler(base *knowledge.Base, ticketAnalyzer *analyzer.Analyzer) *SmartHandler {
@@ -184,9 +191,12 @@ func (h *SmartHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	analysis := h.analyzer.AnalyzeSandbox(r.Context(), input.Message)
+	config := settings.LoadOrDefault(r.Context(), h.builderConfig)
 	answer := "Ваш вопрос передан специалисту поддержки."
 	if analysis.RAGAnswer != nil {
-		answer = *analysis.RAGAnswer
+		answer = channels.AppendSignature(*analysis.RAGAnswer, config.Signature)
+	} else {
+		answer = channels.BuilderEscalationReplyText(0, analysis.Department, config.HandoffTemplate)
 	}
 	autoReplied := analysis.RAGAnswer != nil
 	var rendered string

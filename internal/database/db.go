@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS tickets (
 		)`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS builder_config JSONB NOT NULL DEFAULT '{}'::jsonb`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS channel_config JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS widget_title TEXT NOT NULL DEFAULT 'Онлайн-поддержка'`,
+		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS widget_color TEXT NOT NULL DEFAULT '#2563eb'`,
+		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS widget_greeting TEXT NOT NULL DEFAULT 'Здравствуйте! Чем мы можем помочь?'`,
 		`INSERT INTO app_settings(id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {

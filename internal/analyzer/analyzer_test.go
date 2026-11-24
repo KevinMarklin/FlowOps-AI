@@ -14,6 +14,7 @@ import (
 
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 )
 
 func TestAnalyzeVPNSummaryAndRAGSource(t *testing.T) {
@@ -437,7 +438,7 @@ func TestLiveGoogleAIStudioLLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := New(base).analyzeWithAI(context.Background(), "Срочно! Не работает корпоративный VPN, ошибка 809.")
+	result, err := New(base).analyzeWithAI(context.Background(), "Срочно! Не работает корпоративный VPN, ошибка 809.", settings.DefaultBuilderConfig())
 	if err != nil {
 		t.Fatal(err)
 	}

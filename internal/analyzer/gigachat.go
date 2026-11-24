@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"flowops-ai/internal/security"
+	"flowops-ai/internal/settings"
 )
 
 const gigachatTokenRefreshBuffer = 60 * time.Second
@@ -119,9 +120,9 @@ func (a *Analyzer) gigachatAccessToken(ctx context.Context, config gigachatConfi
 	return a.gigaToken, nil
 }
 
-func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Result, error) {
+func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string, builderConfig settings.BuilderConfig) (Result, error) {
 	slog.Info("[AI] Analyzing via GigaChat...")
-	result, err := a.analyzeWithGigaChatRequest(ctx, rawText)
+	result, err := a.analyzeWithGigaChatRequest(ctx, rawText, builderConfig)
 	if err != nil {
 		slog.Error("[AI] GigaChat failed", "reason", security.SafeLogError(err))
 		return Result{}, err
@@ -130,7 +131,7 @@ func (a *Analyzer) analyzeWithGigaChat(ctx context.Context, rawText string) (Res
 	return result, nil
 }
 
-func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText string) (Result, error) {
+func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText string, builderConfig settings.BuilderConfig) (Result, error) {
 	config := loadGigaChatConfig()
 	if config.authKey == "" {
 		return Result{}, fmt.Errorf("GigaChat auth key is not configured")
@@ -148,7 +149,7 @@ func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText strin
 		"temperature": 0.1,
 		"max_tokens":  512,
 		"messages": []map[string]string{
-			{"role": "system", "content": classificationPolicy},
+			{"role": "system", "content": classificationPolicyFor(builderConfig)},
 			{"role": "user", "content": classificationInput(rawText)},
 		},
 	}
@@ -189,7 +190,7 @@ func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText strin
 	if len(envelope.Choices) == 0 {
 		return Result{}, fmt.Errorf("GigaChat completion response has no choices")
 	}
-	return decodeModelResult(envelope.Choices[0].Message.Content)
+	return decodeModelResultForDepartments(envelope.Choices[0].Message.Content, builderConfig.Departments)
 }
 
 // GenerateStructured sends already-sanitized text to the configured GigaChat

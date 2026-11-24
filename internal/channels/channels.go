@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/settings"
 )
 
 type Config struct {
@@ -20,6 +21,19 @@ type Config struct {
 	MailSMTPHost   string
 	MailUser       string
 	MailPassword   string
+	BuilderConfig  settings.Loader
+}
+
+func (c Config) builderConfig(ctx context.Context) settings.BuilderConfig {
+	return settings.LoadOrDefault(ctx, c.BuilderConfig)
+}
+
+func StartReplyText(ctx context.Context, loader settings.Loader) string {
+	config := settings.LoadOrDefault(ctx, loader)
+	if strings.TrimSpace(config.StartTemplate) == "" {
+		return settings.DefaultBuilderConfig().StartTemplate
+	}
+	return config.StartTemplate
 }
 
 type IngestResult struct {
@@ -68,11 +82,14 @@ func Start(ctx context.Context, cfg Config, ingest IngestFunc, logger interface 
 	Info(string, ...any)
 	Error(string, ...any)
 }) {
+	if cfg.BuilderConfig == nil {
+		cfg.BuilderConfig = func(context.Context) (settings.BuilderConfig, error) { return settings.DefaultBuilderConfig(), nil }
+	}
 	if strings.TrimSpace(cfg.TelegramToken) == "" {
 		logger.Info("channel status", "channel", "Telegram", "status", "disabled")
 	} else {
 		logger.Info("channel status", "channel", "Telegram", "status", "starting")
-		go runTelegram(ctx, cfg.TelegramToken, ingest, logger)
+		go runTelegram(ctx, cfg.TelegramToken, cfg.BuilderConfig, ingest, logger)
 	}
 	if strings.TrimSpace(cfg.MaxToken) == "" {
 		logger.Info("channel status", "channel", "MAX", "status", "disabled")

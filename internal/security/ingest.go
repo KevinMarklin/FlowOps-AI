@@ -139,7 +139,7 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 			return
 		}
 		ip := clientIP(r)
-		if !limiter.allow(identity + "|" + ip) {
+		if !limiter.allow("key:"+identity) || !limiter.allow("ip:"+ip) {
 			ingestError(w, http.StatusTooManyRequests, "Integration rate limit exceeded")
 			return
 		}

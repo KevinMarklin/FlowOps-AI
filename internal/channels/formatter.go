@@ -32,6 +32,29 @@ func EscalationReplyText(ticketID int, department string) string {
 	return text + "\nОтвет специалиста придёт прямо сюда автоматически."
 }
 
+func BuilderEscalationReplyText(ticketID int, department, template string) string {
+	department = strings.TrimSpace(department)
+	if department == "" || strings.EqualFold(department, "Unassigned") || strings.EqualFold(department, "General") {
+		department = "дежурный отдел"
+	}
+	if strings.TrimSpace(template) == "" {
+		template = "Заявка #{ticket_id} направлена в отдел {department}."
+	}
+	return strings.NewReplacer("{ticket_id}", "#"+strconv.Itoa(ticketID), "{department}", department).Replace(template)
+}
+
+func AppendSignature(answer, signature string) string {
+	answer = strings.TrimSpace(answer)
+	signature = strings.TrimSpace(signature)
+	if signature == "" {
+		return answer
+	}
+	if strings.Contains(answer, signature) {
+		return answer
+	}
+	return answer + "\n\n" + signature
+}
+
 // OperatorReplyText adds a consistent header before an operator's response.
 func OperatorReplyText(ticketID int, reply string) string {
 	return "**👨‍💻 Ответ специалиста по заявке #" + strconv.Itoa(ticketID) + ":**\n\n" + stripKnowledgeSource(reply)
