@@ -115,3 +115,24 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
 
 ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS auth_version BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS auth_version BIGINT NOT NULL DEFAULT 0;
+
+
+CREATE TABLE IF NOT EXISTS bot_link_codes (
+ token_hash TEXT PRIMARY KEY,
+ member_id TEXT NOT NULL REFERENCES workspace_members(id) ON DELETE CASCADE,
+ channel TEXT NOT NULL CHECK(channel IN ('telegram','max')),
+ auth_version BIGINT NOT NULL,
+ expires_at TIMESTAMPTZ NOT NULL,
+ UNIQUE(member_id,channel)
+);
+CREATE TABLE IF NOT EXISTS member_bot_links (
+ bot_tenant_id TEXT NOT NULL,
+ sender TEXT NOT NULL,
+ channel TEXT NOT NULL CHECK(channel IN ('telegram','max')),
+ member_id TEXT NOT NULL REFERENCES workspace_members(id) ON DELETE CASCADE,
+ auth_version BIGINT NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(bot_tenant_id,sender),
+ UNIQUE(member_id,channel)
+);
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS bot_tenant_id TEXT NOT NULL DEFAULT '';

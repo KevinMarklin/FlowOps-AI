@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"flowops-ai/internal/security"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -178,6 +179,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_member ON auth_sessions(member_id);
 ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS auth_version BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`); err != nil {
 		return fmt.Errorf("apply password migration: %w", err)
+	}
+	if _, err := pool.Exec(ctx, security.BotLinkSchema); err != nil {
+		return fmt.Errorf("apply bot link migration: %w", err)
 	}
 	return nil
 }

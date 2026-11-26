@@ -83,7 +83,7 @@ func sendMaxMessage(ctx context.Context, cfg Config, targetType, targetID, text 
 func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
-}) {
+}, services ...EmployeeTickets) {
 	ctx = security.WithTenantID(ctx, cfg.TenantID)
 	cfg.updateStatus("max", "starting", "")
 	var marker int64
@@ -176,6 +176,16 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 							sender, targetType, targetID = fmt.Sprintf("max_chat:%d", chatID), "chat_id", chatID
 						}
 						if sender == "" {
+							continue
+						}
+						var service EmployeeTickets
+						if len(services) > 0 {
+							service = services[0]
+						}
+						if reply, handled := botLinkCommand(ctx, sender, text, service); handled {
+							if err := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); err != nil {
+								logger.Error("MAX account link response failed", "error", "operation failed")
+							}
 							continue
 						}
 						result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: sender, Message: text})

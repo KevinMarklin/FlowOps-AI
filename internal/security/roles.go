@@ -69,6 +69,12 @@ func AllowRequest(role, method, path string) bool {
 	if path == "/api/v1/auth/me" && method == http.MethodGet {
 		return true
 	}
+	if path == "/api/v1/profile/bots" {
+		return method == http.MethodGet
+	}
+	if path == "/api/v1/profile/bots/telegram" || path == "/api/v1/profile/bots/max" {
+		return method == http.MethodPost || method == http.MethodDelete
+	}
 	if role == "admin" {
 		return true
 	}

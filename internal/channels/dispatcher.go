@@ -51,7 +51,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticke
 			if err != nil {
 				return fmt.Errorf("invalid Telegram chat id: %w", err)
 			}
-			return sendTelegramMessage(ctx, d.config.TelegramToken, id, reply)
+			return sendTelegramMessage(ctx, d.config.TelegramToken, id, reply, ticketID)
 		}
 		if strings.HasPrefix(sender, "max:") {
 			if strings.TrimSpace(d.config.MaxToken) == "" {

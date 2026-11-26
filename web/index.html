@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#102a43">
   <title>FlowOps AI — Служба поддержки</title>
+  <script src="/theme.js?v=1"></script>
   <link rel="stylesheet" href="/styles.css?v=7">
   <link rel="stylesheet" href="/overrides.css?v=7">
   <link rel="stylesheet" href="/workspace.css?v=7">
   <link rel="stylesheet" href="/workflow.css?v=4">
+  <link rel="stylesheet" href="/user-settings.css?v=2">
   <link rel="icon" type="image/png" href="/assets/flowops-mark.png">
 </head>
 <body class="auth-required">
@@ -43,8 +45,20 @@
   </section>
   <header class="topbar">
     <div class="brand"><img class="brand-logo" src="/assets/flowops-mark.png" alt="" width="44" height="44"><div><strong>FlowOps AI</strong><span>Служба поддержки</span></div></div>
-    <div class="topbar-right"><div id="channel-indicators" class="channel-indicators" aria-label="Подключённые каналы"></div><div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div><span id="user-name-label" class="workspace-label"></span><span id="role-label" class="role-label"></span><span id="workspace-name-label" class="workspace-label"></span><button id="logout" type="button" class="logout-button">Выйти</button></div>
+    <div class="topbar-right"><div id="channel-indicators" class="channel-indicators" aria-label="Подключённые каналы"></div><div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div><span id="user-name-label" class="workspace-label"></span><span id="role-label" class="role-label"></span><span id="workspace-name-label" class="workspace-label"></span><button id="open-user-settings" type="button" class="user-menu-button" aria-label="Настройки пользователя" aria-haspopup="dialog" aria-controls="user-settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div>
   </header>
+  <dialog id="user-settings" class="user-settings" aria-labelledby="user-settings-title">
+    <div class="settings-heading"><h2 id="user-settings-title">Настройки пользователя</h2><button id="close-user-settings" type="button" class="secondary-button">Закрыть</button></div>
+    <p id="settings-identity" class="muted"></p>
+    <fieldset class="theme-picker"><legend>Тема сайта</legend><label><input type="radio" name="site-theme" value="light"> Светлая</label><label><input type="radio" name="site-theme" value="dark"> Тёмная</label></fieldset>
+    <div class="settings-section-heading"><h3>Подключённые аккаунты</h3><button type="button" id="refresh-user-links" class="secondary-button">Обновить</button></div>
+    <p class="settings-description">Получите одноразовый код и отправьте команду в личный чат с ботом компании. Код действует 10 минут. Почта и пароль боту не нужны.</p>
+    <p id="settings-access-hint" class="muted" hidden>Привязка бота доступна аккаунтам с ролью «Сотрудник». Тему можно изменить для любой роли.</p>
+    <div class="personal-connection" data-personal-channel="telegram"><h3>Telegram</h3><p data-link-status role="status">Загрузка…</p><div class="personal-actions"><button type="button" class="secondary-button" data-issue-link>Получить код</button><button type="button" class="danger-button" data-unlink hidden>Отключить</button></div><div data-personal-code hidden><label>Команда для бота<input readonly autocomplete="off" spellcheck="false"></label><button type="button" class="secondary-button" data-copy-link>Скопировать команду</button><p class="muted" data-code-expiry></p></div></div>
+    <div class="personal-connection" data-personal-channel="max"><h3>MAX</h3><p data-link-status role="status">Загрузка…</p><div class="personal-actions"><button type="button" class="secondary-button" data-issue-link>Получить код</button><button type="button" class="danger-button" data-unlink hidden>Отключить</button></div><div data-personal-code hidden><label>Команда для бота<input readonly autocomplete="off" spellcheck="false"></label><button type="button" class="secondary-button" data-copy-link>Скопировать команду</button><p class="muted" data-code-expiry></p></div></div>
+    <div class="settings-footer"><button id="logout" type="button" class="secondary-button">Выйти</button></div>
+    <p id="user-settings-error" class="form-error" role="alert" hidden></p>
+  </dialog>
   <main class="shell">
     <nav class="tabs" aria-label="Разделы приложения">
        <button type="button" class="tab active" aria-current="page" data-tab="employee">Обращения <span>Подача обращения</span></button>
@@ -167,6 +181,6 @@
     </section>
    </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=17"></script>
+    <script src="/app.js?v=18"></script>
 </body>
 </html>

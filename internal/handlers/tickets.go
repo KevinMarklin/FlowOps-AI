@@ -131,6 +131,15 @@ func (h *TicketsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 
 // IngestMessage is shared by the public Ingest endpoint and background channel workers.
 func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.IngestRequest) (channels.IngestResult, error) {
+	botTenant := ""
+	if request.Channel == "bot" && security.BotSenderChannel(request.Sender) != "" {
+		botTenant = security.TenantID(ctx)
+		var err error
+		ctx, err = security.BotContext(ctx, h.db, request.Sender)
+		if err != nil {
+			return channels.IngestResult{}, err
+		}
+	}
 	if err := h.validateIngest(request); err != nil {
 		return channels.IngestResult{}, err
 	}
@@ -141,11 +150,11 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	autoReplied := analysis.RAGAnswer != nil
 	builderConfig := settings.LoadOrDefault(ctx, h.builderConfig)
 	tenant := security.TenantID(ctx)
-	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,requester_id,bot_tenant_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,$14,$15)
 	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 	var ticket models.Ticket
-	err := h.db.QueryRow(ctx, query, tenant, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
+	err := h.db.QueryRow(ctx, query, tenant, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(ctx), botTenant).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus)
 	if err != nil {
 		return channels.IngestResult{}, err
@@ -369,7 +378,17 @@ func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error 
 		}
 		var err error
 		if h.tenantDispatcher != nil {
-			err = h.tenantDispatcher.Dispatch(ctx, m.TenantID, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
+			routeTenant := m.TenantID
+			if m.Channel == "bot" {
+				var originalBotTenant string
+				if loadErr := h.db.QueryRow(ctx, `SELECT bot_tenant_id FROM tickets WHERE tenant_id=$1 AND id=$2`, m.TenantID, m.TicketID).Scan(&originalBotTenant); loadErr != nil {
+					return loadErr
+				}
+				if originalBotTenant != "" {
+					routeTenant = originalBotTenant
+				}
+			}
+			err = h.tenantDispatcher.Dispatch(ctx, routeTenant, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
 		} else {
 			err = h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
 		}

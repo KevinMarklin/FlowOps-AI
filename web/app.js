@@ -17,6 +17,8 @@
     if (element) element.addEventListener(event, handler);
   };
   const initialAnalysis = $('#analysis-result')?.cloneNode(true);
+  let settingsEpoch = 0;
+  let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
     admin: ['admin', 'operator', 'analytics', 'knowledge', 'builder', 'channels', 'employee'],
@@ -27,6 +29,8 @@
   const canTab = name => (roleTabs[state.user?.role] || []).includes(name);
 
   function clearWorkspaceData() {
+    $('#user-settings')?.close();
+    clearPersonalCodes();
     state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear();
     state.historyTickets = [];
     ['#history-search', '#queue-search'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
@@ -378,6 +382,66 @@
     return authReady;
   }
 
+  function clearPersonalCodes() {
+    settingsEpoch++;
+    if (settingsRefresh) clearInterval(settingsRefresh);
+    settingsRefresh = null;
+    $$('[data-personal-code]').forEach(box => { box.hidden = true; $('input', box).value = ''; });
+  }
+
+  function setSiteTheme(theme) {
+    const selected = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = selected;
+    try { localStorage.setItem('flowops_theme', selected); } catch {}
+    $$('[name="site-theme"]').forEach(input => { input.checked = input.value === selected; });
+  }
+
+  async function loadPersonalLinks() {
+    const dialog = $('#user-settings');
+    if (!dialog?.open || !hasSession()) return;
+    try {
+      const status = await api('/api/v1/profile/bots');
+      if (!dialog.open) return;
+      $('#settings-access-hint').hidden = status.can_connect;
+      $$('[data-personal-channel]').forEach(row => {
+        const connection = status.channels[row.dataset.personalChannel] || {};
+        $('[data-link-status]', row).textContent = connection.connected ? 'Аккаунт подключён' : connection.linked ? 'Нужно подключить заново: доступ или пароль изменились' : 'Не подключён';
+        $('[data-issue-link]', row).disabled = !status.can_connect || !!connection.linked;
+        $('[data-unlink]', row).hidden = !connection.linked;
+        if (connection.connected) { const box = $('[data-personal-code]', row); box.hidden = true; $('input', box).value = ''; }
+      });
+      $('#user-settings-error').hidden = true;
+    } catch (error) { const box = $('#user-settings-error'); box.textContent = error.message; box.hidden = false; }
+  }
+
+  function openUserSettings() {
+    clearPersonalCodes();
+    $('#settings-identity').textContent = `${state.user?.display_name || ''} · ${state.user?.email || ''}`;
+    setSiteTheme(document.documentElement.dataset.theme);
+    $('#user-settings-error').hidden = true;
+    $('#user-settings').showModal();
+    loadPersonalLinks();
+    settingsRefresh = setInterval(loadPersonalLinks, 5000);
+  }
+
+  async function changePersonalLink(row, disconnect) {
+    const epoch = settingsEpoch;
+    const buttons = $$('button', row); buttons.forEach(button => { button.disabled = true; });
+    try {
+      const data = await api(`/api/v1/profile/bots/${row.dataset.personalChannel}`, { method: disconnect ? 'DELETE' : 'POST', body: '{}' });
+      if (epoch !== settingsEpoch || !$('#user-settings').open) return;
+      const box = $('[data-personal-code]', row);
+      if (disconnect) { box.hidden = true; $('input', box).value = ''; }
+      else {
+        $('input', box).value = data.command;
+        $('[data-code-expiry]', box).textContent = `Действует до ${new Date(data.expires_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}. Новый код отменит предыдущий.`;
+        box.hidden = false;
+      }
+      await loadPersonalLinks();
+    } catch (error) { const box = $('#user-settings-error'); box.textContent = error.message; box.hidden = false; }
+    finally { buttons.forEach(button => { button.disabled = false; }); if (epoch === settingsEpoch) loadPersonalLinks(); }
+  }
+
   async function api(path, options = {}) {
     if (!hasSession()) throw new Error('Сначала войдите в рабочее пространство.');
     const requestGeneration = sessionGeneration;
@@ -527,7 +591,7 @@
       const tickets = await api('/api/tickets');
       state.tickets = tickets;
       const value = email ? email.value.trim() : '';
-      renderHistory(tickets.filter(ticket => !value || ticket.user_email === value));
+      renderHistory(tickets.filter(ticket => state.user?.role === 'employee' || !value || ticket.user_email === value));
       const emptyWorkspace = $('#employee-workspace-empty');
       if (emptyWorkspace) emptyWorkspace.hidden = true;
       const employeeGrid = $('.employee-grid');
@@ -604,7 +668,7 @@
       if (current) current.status = ticket.status;
       renderAnalysis(ticket);
       const email = $('#email')?.value.trim() || '';
-      renderHistory(state.tickets.filter(item => !email || item.user_email === email));
+      renderHistory(state.tickets.filter(item => state.user?.role === 'employee' || !email || item.user_email === email));
     } catch (error) {
       buttons.forEach(button => {
         button.disabled = false;
@@ -1534,6 +1598,21 @@
     );
     on($('#smart-import-submit'), 'click', runSmartImport);
     on($('#sandbox-run'), 'click', runSandboxPreview);
+
+    on($('#open-user-settings'), 'click', openUserSettings);
+    on($('#close-user-settings'), 'click', () => $('#user-settings').close());
+    on($('#user-settings'), 'close', clearPersonalCodes);
+    on($('#refresh-user-links'), 'click', loadPersonalLinks);
+    $$('[name="site-theme"]').forEach(input => on(input, 'change', () => setSiteTheme(input.value)));
+    $$('[data-personal-channel]').forEach(row => {
+      on($('[data-issue-link]', row), 'click', () => changePersonalLink(row, false));
+      on($('[data-unlink]', row), 'click', () => changePersonalLink(row, true));
+      on($('[data-copy-link]', row), 'click', async () => {
+        const input = $('[data-personal-code] input', row);
+        try { await navigator.clipboard.writeText(input.value); toast('Команда скопирована. Отправьте её боту в личный чат.'); }
+        catch { input.focus(); input.select(); toast('Скопируйте выделенную команду вручную.'); }
+      });
+    });
 
     restoreSession();
 

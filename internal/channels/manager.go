@@ -9,9 +9,10 @@ import (
 )
 
 type ChannelManager struct {
-	root   context.Context
-	ingest IngestFunc
-	logger interface {
+	root            context.Context
+	ingest          IngestFunc
+	employeeTickets EmployeeTickets
+	logger          interface {
 		Info(string, ...any)
 		Error(string, ...any)
 	}
@@ -33,6 +34,11 @@ func NewManager(root context.Context, ingest IngestFunc, logger interface {
 
 func workerKey(tenant, channel string) string { return tenant + "\x00" + channel }
 
+func (m *ChannelManager) WithEmployeeTickets(service EmployeeTickets) *ChannelManager {
+	m.employeeTickets = service
+	return m
+}
+
 // Configure replaces only the workers belonging to tenant. Each channel has
 // its own cancellation scope so one channel can be stopped independently.
 func (m *ChannelManager) Configure(tenant string, cfg Config) {
@@ -49,11 +55,11 @@ func (m *ChannelManager) Configure(tenant string, cfg Config) {
 	}
 	if strings.TrimSpace(cfg.TelegramToken) != "" {
 		m.start(tenant, "telegram", func(ctx context.Context) {
-			runTelegram(ctx, tenant, cfg.TelegramToken, cfg.BuilderConfig, cfg.StatusUpdate, m.ingest, m.logger)
+			runTelegram(ctx, tenant, cfg.TelegramToken, cfg.BuilderConfig, cfg.StatusUpdate, m.ingest, m.logger, m.employeeTickets)
 		})
 	}
 	if strings.TrimSpace(cfg.MaxToken) != "" {
-		m.start(tenant, "max", func(ctx context.Context) { runMax(ctx, cfg, m.ingest, m.logger) })
+		m.start(tenant, "max", func(ctx context.Context) { runMax(ctx, cfg, m.ingest, m.logger, m.employeeTickets) })
 	}
 	if cfg.emailEnabled() {
 		m.start(tenant, "email", func(ctx context.Context) { runEmail(ctx, cfg, m.ingest, m.logger) })
@@ -76,12 +82,12 @@ func (m *ChannelManager) ConfigureChannel(tenant, channel string, cfg Config) {
 	case "telegram":
 		if strings.TrimSpace(cfg.TelegramToken) != "" {
 			m.start(tenant, channel, func(ctx context.Context) {
-				runTelegram(ctx, tenant, cfg.TelegramToken, cfg.BuilderConfig, cfg.StatusUpdate, m.ingest, m.logger)
+				runTelegram(ctx, tenant, cfg.TelegramToken, cfg.BuilderConfig, cfg.StatusUpdate, m.ingest, m.logger, m.employeeTickets)
 			})
 		}
 	case "max":
 		if strings.TrimSpace(cfg.MaxToken) != "" {
-			m.start(tenant, channel, func(ctx context.Context) { runMax(ctx, cfg, m.ingest, m.logger) })
+			m.start(tenant, channel, func(ctx context.Context) { runMax(ctx, cfg, m.ingest, m.logger, m.employeeTickets) })
 		}
 	case "email":
 		if cfg.emailEnabled() {

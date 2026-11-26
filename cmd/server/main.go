@@ -116,7 +116,7 @@ func main() {
 		entry := map[string]string{"status": status, "last_error": lastError}
 		_, _ = pool.Exec(context.Background(), `UPDATE app_settings SET channel_metadata=jsonb_set(channel_metadata,ARRAY[$1],COALESCE(channel_metadata->$1,'{}'::jsonb)||$2::jsonb,TRUE) WHERE tenant_id=$3 AND id=TRUE`, channel, mustJSON(entry), tenant)
 	}
-	channelManager := channels.NewManager(channelContext, ticketsHandler.IngestMessage, logger, channelStatusUpdate)
+	channelManager := channels.NewManager(channelContext, ticketsHandler.IngestMessage, logger, channelStatusUpdate).WithEmployeeTickets(ticketsHandler)
 	loadTenantChannels := func(ctx context.Context, tenant string) (channels.Config, error) {
 		base := channels.Config{TenantID: tenant, MaxAPIURL: os.Getenv("MAX_API_URL"), MaxInsecureTLS: envBool("MAX_INSECURE_TLS", false), BuilderConfig: func(ctx context.Context) (settings.BuilderConfig, error) {
 			return integrationsHandler.LoadBuilderConfig(security.WithTenantID(ctx, tenant))
@@ -192,6 +192,10 @@ func main() {
 	mux := http.NewServeMux()
 	workspaceHandler := security.NewWorkspaceHandler(pool)
 	passwordHandler := security.NewPasswordHandler(pool)
+	botLinksHandler := security.NewBotLinksHandler(pool)
+	mux.HandleFunc("GET /api/v1/profile/bots", botLinksHandler.Status)
+	mux.HandleFunc("POST /api/v1/profile/bots/{channel}", botLinksHandler.Change)
+	mux.HandleFunc("DELETE /api/v1/profile/bots/{channel}", botLinksHandler.Change)
 	mux.HandleFunc("POST /api/v1/auth/login", passwordHandler.Login)
 	mux.HandleFunc("POST /api/v1/auth/activate", passwordHandler.Activate)
 	mux.HandleFunc("POST /api/v1/auth/logout", passwordHandler.Logout)
