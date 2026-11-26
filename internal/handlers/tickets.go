@@ -71,6 +71,14 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	if security.IsEmployee(r.Context()) {
+		p, _ := security.CurrentPrincipal(r.Context())
+		request.UserEmail = p.Email
+	}
+	if len(request.RawText) > security.MaxTicketBytes || len(request.UserEmail) > 255 {
+		writeError(w, 400, "ticket exceeds service limits")
+		return
+	}
 	if strings.TrimSpace(request.RawText) == "" {
 		writeError(w, http.StatusBadRequest, "raw_text is required")
 		return
@@ -80,12 +88,12 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
 	status := initialTicketStatus(analysis)
 
-	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
-VALUES ($1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
+	const query = `INSERT INTO tickets (requester_id,tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
+VALUES ($11,$1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
+	err := h.db.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
 		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
@@ -177,7 +185,7 @@ func departmentLabel(value string) string {
 }
 
 func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
-	if !security.IsOperatorAuthenticated(r.Context()) && r.Header.Get("Origin") == "" {
+	if _, session := security.CurrentPrincipal(r.Context()); !session && !security.IsOperatorAuthenticated(r.Context()) && r.Header.Get("Origin") == "" {
 		writeError(w, http.StatusUnauthorized, "integration authorization required")
 		return
 	}
@@ -483,10 +491,10 @@ func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE tenant_id=$1
+FROM tickets WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3)
 ORDER BY created_at DESC, id DESC`
 
-	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()))
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()))
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
@@ -525,9 +533,9 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE id = $1 AND tenant_id=$2`
+FROM tickets WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context())).Scan(
+	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
 	)

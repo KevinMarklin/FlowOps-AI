@@ -58,6 +58,7 @@ func TestKnowledgeAPIListCreateNormalizeAndFilter(t *testing.T) {
 }
 
 func TestSmartImportMasksPIIAndSanitizesGeneratedFilename(t *testing.T) {
+	t.Setenv("FLOWOPS_AI_ALLOW_SENSITIVE", "true")
 	operatorToken := strings.Repeat("x", 32)
 	t.Setenv("FLOWOPS_OPERATOR_TOKEN", operatorToken)
 	dir := t.TempDir()
@@ -136,6 +137,7 @@ func TestSmartImportRequiresOperatorAndFallsBackByParagraph(t *testing.T) {
 }
 
 func TestSmartImportMasksPhoneBeforeLLM(t *testing.T) {
+	t.Setenv("FLOWOPS_AI_ALLOW_SENSITIVE", "true")
 	operatorToken := strings.Repeat("m", 32)
 	t.Setenv("FLOWOPS_OPERATOR_TOKEN", operatorToken)
 	base, err := knowledge.Load(t.TempDir())

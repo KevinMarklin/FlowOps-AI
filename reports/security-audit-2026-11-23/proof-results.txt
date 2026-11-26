@@ -1,0 +1,276 @@
+=== RUN   TestAuditUnprotectedRoutes
+=== RUN   TestAuditUnprotectedRoutes/GET/api/tickets
+=== RUN   TestAuditUnprotectedRoutes/GET/api/tickets/1
+=== RUN   TestAuditUnprotectedRoutes/POST/api/tickets/1/feedback
+=== RUN   TestAuditUnprotectedRoutes/POST/api/v1/ingest
+=== RUN   TestAuditUnprotectedRoutes/GET/api/audit
+=== RUN   TestAuditUnprotectedRoutes/GET/api/stats
+--- PASS: TestAuditUnprotectedRoutes (0.00s)
+    --- PASS: TestAuditUnprotectedRoutes/GET/api/tickets (0.00s)
+    --- PASS: TestAuditUnprotectedRoutes/GET/api/tickets/1 (0.00s)
+    --- PASS: TestAuditUnprotectedRoutes/POST/api/tickets/1/feedback (0.00s)
+    --- PASS: TestAuditUnprotectedRoutes/POST/api/v1/ingest (0.00s)
+    --- PASS: TestAuditUnprotectedRoutes/GET/api/audit (0.00s)
+    --- PASS: TestAuditUnprotectedRoutes/GET/api/stats (0.00s)
+=== RUN   TestAuditPIILeakExamples
+    audit_proof_test.go:35: synthetic sensitive text remains eligible for provider submission
+    audit_proof_test.go:35: synthetic sensitive text remains eligible for provider submission
+--- PASS: TestAuditPIILeakExamples (0.00s)
+PASS
+ok  	flowops-ai/internal/security	(cached)
+=== RUN   TestAuditCallbackReachesLoopbackAfterRedirect
+    audit_proof_test.go:29: callback followed redirect and posted operator reply to loopback
+--- PASS: TestAuditCallbackReachesLoopbackAfterRedirect (0.05s)
+PASS
+ok  	flowops-ai/internal/handlers	(cached)
+=== RUN   TestAuditMaxAcceptsUntrustedCertificate
+    audit_proof_test.go:19: MAX insecure mode sent token to server with untrusted certificate
+--- PASS: TestAuditMaxAcceptsUntrustedCertificate (0.01s)
+PASS
+ok  	flowops-ai/internal/channels	(cached)
+=== RUN   TestAuditAnonymousBudgetExhaustsLocalAnalysis
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO knowledge document not found department=IT
+2026/11/23 01:42:08 INFO knowledge search returned no match department=IT
+2026/11/23 01:42:08 INFO ticket analyzed mode=fallback department=IT priority=high rag_found=false
+2026/11/23 01:42:08 WARN prompt security review required reason=model_capacity_limit
+    audit_proof_test.go:16: global budget diverts even local-only analysis to manual review
+--- PASS: TestAuditAnonymousBudgetExhaustsLocalAnalysis (0.06s)
+PASS
+ok  	flowops-ai/internal/analyzer	(cached)

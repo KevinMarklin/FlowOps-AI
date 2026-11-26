@@ -13,6 +13,10 @@
 *.pid
 *.log
 coverage.*
+# Generated audit coverage, event streams and machine-specific overlays
+reports/**/coverage
+reports/**/go-tests.json
+reports/**/overlay.json
 
 # Operating system and IDE files
 .idea/
@@ -26,6 +30,8 @@ dist/
 
 # Generated knowledge-base documents; keep bundled starter documents and university guides
 knowledge_base/*.md
+# Runtime workspace regulations can contain company data.
+knowledge_base/ws_*/
 !knowledge_base/it_vpn.md
 !knowledge_base/hr_certificates.md
 !knowledge_base/accounting_payments.md

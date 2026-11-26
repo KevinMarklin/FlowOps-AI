@@ -1,0 +1,8 @@
+	flowops-ai/cmd/server		coverage: 0.0% of statements
+ok  	flowops-ai/internal/analyzer	(cached)	coverage: 87.1% of statements
+ok  	flowops-ai/internal/channels	(cached)	coverage: 11.9% of statements
+	flowops-ai/internal/database		coverage: 0.0% of statements
+ok  	flowops-ai/internal/handlers	(cached)	coverage: 21.2% of statements
+ok  	flowops-ai/internal/knowledge	(cached)	coverage: 64.2% of statements
+?   	flowops-ai/internal/models	[no test files]
+ok  	flowops-ai/internal/security	(cached)	coverage: 94.7% of statements

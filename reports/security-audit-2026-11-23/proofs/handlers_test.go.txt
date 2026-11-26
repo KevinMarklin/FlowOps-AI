@@ -1,0 +1,32 @@
+package handlers
+
+import (
+ "io"
+ "log/slog"
+ "net/http"
+ "net/http/httptest"
+ "strings"
+ "testing"
+)
+
+func TestAuditCallbackReachesLoopbackAfterRedirect(t *testing.T) {
+ received:=make(chan string,1)
+ internal:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  data,_:=io.ReadAll(r.Body)
+  received<-r.Method+" "+string(data)
+  w.WriteHeader(204)
+ }))
+ defer internal.Close()
+ redirect:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  http.Redirect(w,r,internal.URL+"/private",http.StatusTemporaryRedirect)
+ }))
+ defer redirect.Close()
+ h:=&TicketsHandler{logger:slog.New(slog.NewTextHandler(io.Discard,nil))}
+ h.sendWebhook(redirect.URL,123,"SYNTHETIC_OPERATOR_REPLY")
+ select {
+ case body:=<-received:
+  if !strings.Contains(body,"POST") || !strings.Contains(body,"SYNTHETIC_OPERATOR_REPLY") {t.Fatalf("unexpected %s",body)}
+  t.Log("callback followed redirect and posted operator reply to loopback")
+ default: t.Fatal("callback weakness no longer reproduced")
+ }
+}

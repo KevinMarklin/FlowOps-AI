@@ -60,20 +60,20 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if p, ok := CurrentPrincipal(r.Context()); ok && strings.HasSuffix(r.URL.Path, "/feedback") && AllowRequest(p.Role, r.Method, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Vary", "Origin")
 			if r.Header.Get("Origin") != "" {
-				value, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-				if !hasBearer || value == "" {
-					w.WriteHeader(http.StatusForbidden)
-					return
-				}
 				var allowed bool
-				credentialHash := sha256.Sum256([]byte(value))
-				err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM api_keys WHERE is_active=TRUE AND scope='widget' AND allowed_origin=$1 AND key_hash=$2)`, r.Header.Get("Origin"), hex.EncodeToString(credentialHash[:])).Scan(&allowed)
+				// Browser preflights contain requested header names, never the
+				// bearer itself. Actual POST still validates key AND exact origin.
+				err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM api_keys WHERE is_active=TRUE AND scope='widget' AND allowed_origin=$1)`, r.Header.Get("Origin")).Scan(&allowed)
 				if err != nil || !allowed {
 					w.WriteHeader(http.StatusForbidden)
 					return
@@ -84,21 +84,48 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 			return
 		}
 		value, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		cookieAuth := false
+		var cookieUser Principal
 		if !hasBearer || value == "" {
-			ingestUnauthorized(w)
-			return
+			if r.Header.Get("Authorization") != "" {
+				ingestUnauthorized(w)
+				return
+			}
+			var csrfHash string
+			var err error
+			cookieUser, csrfHash, err = cookiePrincipal(r, db)
+			if err != nil {
+				ingestUnauthorized(w)
+				return
+			}
+			if cookieUser.Role != "admin" || !validSessionWrite(r, csrfHash) {
+				ingestError(w, 403, "Недостаточно прав или не пройдена проверка сеанса")
+				return
+			}
+			cookie, _ := r.Cookie(sessionCookie)
+			value = "session:" + cookie.Value
+			cookieAuth = true
+			r = r.WithContext(WithPrincipal(r.Context(), cookieUser))
 		}
 		credentialHash := sha256.Sum256([]byte(value))
 		identity := ""
 		tenantID := "default"
 		widgetKey := false
 		authorized := false
-		if len(token) >= 32 && subtle.ConstantTimeCompare(expected[:], credentialHash[:]) == 1 {
+		if cookieAuth {
+			authorized, identity, tenantID = true, hex.EncodeToString(credentialHash[:]), cookieUser.TenantID
+		} else if len(token) >= 32 && subtle.ConstantTimeCompare(expected[:], credentialHash[:]) == 1 {
 			authorized, identity = true, "global"
 		} else {
-			var operatorTenant string
-			if err := db.QueryRow(r.Context(), `SELECT tenant_id FROM workspaces WHERE token_hash=$1`, hex.EncodeToString(credentialHash[:])).Scan(&operatorTenant); err == nil {
-				authorized, identity, tenantID = true, "operator:"+hex.EncodeToString(credentialHash[:]), operatorTenant
+			if p, err := LookupPrincipal(r.Context(), db, value); err == nil {
+				if p.Role != "admin" {
+					ingestError(w, 403, "Только администратор может использовать симулятор интеграций")
+					return
+				}
+				authorized, identity, tenantID = true, "admin:"+hex.EncodeToString(credentialHash[:]), p.TenantID
+			} else if err != pgx.ErrNoRows {
+				ingestError(w, 503, "Integration credential store unavailable")
+				return
 			}
 			if authorized {
 				// The authenticated dashboard uses the same ingest pipeline as

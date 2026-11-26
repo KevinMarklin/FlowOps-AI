@@ -1,0 +1,1395 @@
+Fetching vulnerabilities from the database...
+
+Checking the code against the vulnerabilities...
+
+The package pattern matched the following 8 root packages:
+  flowops-ai/internal/security
+  flowops-ai/internal/knowledge
+  flowops-ai/internal/analyzer
+  flowops-ai/internal/models
+  flowops-ai/internal/channels
+  flowops-ai/internal/database
+  flowops-ai/internal/handlers
+  flowops-ai/cmd/server
+Govulncheck scanned the following 8 modules and the go1.25.1 standard library:
+  flowops-ai
+  github.com/jackc/pgpassfile@v1.0.0
+  github.com/jackc/pgservicefile@v0.0.0-20240606120523-5a60cdf6a761
+  github.com/jackc/pgx/v5@v5.7.1
+  github.com/jackc/puddle/v2@v2.2.2
+  golang.org/x/crypto@v0.27.0
+  golang.org/x/sync@v0.8.0
+  golang.org/x/text@v0.18.0
+
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.11
+    Example traces found:
+      #1: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.CanonicalHeaderKey
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #3: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader, which eventually calls http.Header.Del
+      #4: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.Header.Get
+      #5: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #6: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #7: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #8: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #9: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #10: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #11: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #12: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #13: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #14: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #15: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #16: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #17: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #18: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #19: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #20: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #21: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #22: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #23: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #24: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #25: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #26: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #27: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #28: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #29: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #30: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #31: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #32: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #33: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #34: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #35: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #36: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #37: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #38: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #39: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #40: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #41: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Vulnerability #2: GO-2026-6809
+    Distrust compromised intermediate certificates in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2026-6809
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.26.10
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+
+Vulnerability #3: GO-2026-6629
+    Panic parsing crafted input in x/text/secure/precis in golang.org/x/text
+  More info: https://pkg.go.dev/vuln/GO-2026-6629
+  Module: golang.org/x/text
+    Found in: golang.org/x/text@v0.18.0
+    Fixed in: golang.org/x/text@v0.41.0
+    Example traces found:
+      #1: internal/database/db.go:18:36: database.NewPool calls pgxpool.NewWithConfig, which eventually calls precis.Profile.Bytes
+
+Vulnerability #4: GO-2026-6617
+    HTTP/2 server crash due to HPACK encoder race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6617
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #3: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #4: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #5: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #6: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #7: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #8: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #9: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #10: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #11: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #12: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #13: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #14: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #15: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #16: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #17: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #18: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #19: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #20: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #21: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #22: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #23: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #24: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #25: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #26: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #27: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #28: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #29: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #30: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #31: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #32: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #33: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #34: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #35: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #36: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #37: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #38: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #39: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #40: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #41: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #42: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #43: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #44: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #45: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #46: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #47: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #48: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #49: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #50: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #51: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #52: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #53: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #54: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #55: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #56: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #57: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #58: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #59: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #60: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #61: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #62: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #63: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #64: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #65: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #66: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #67: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #68: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #69: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #70: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #71: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #72: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #73: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #74: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #75: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #76: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #77: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #78: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #79: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #80: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #81: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #82: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #83: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #84: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #85: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #86: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #87: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #88: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #89: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #90: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #91: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #92: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #93: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #94: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #95: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #96: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #97: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #98: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #99: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #100: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #101: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #102: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #103: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #104: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #105: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #106: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #107: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #108: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #109: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #110: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #111: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #112: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #113: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #114: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #115: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #116: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #117: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #118: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #119: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #120: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #121: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #122: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #123: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+      #124: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Vulnerability #5: GO-2026-6613
+    HTTP/1 server connection desynchronization after 2xx CONNECT response in
+    net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6613
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.CanonicalHeaderKey
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #3: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader, which eventually calls http.Header.Del
+      #4: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.Header.Get
+      #5: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #6: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #7: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #8: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #9: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #10: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #11: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #12: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #13: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #14: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #15: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #16: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #17: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #18: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #19: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #20: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #21: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #22: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #23: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #24: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #25: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #26: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #27: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #28: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #29: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #30: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #31: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #32: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #33: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #34: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #35: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #36: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #37: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #38: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #39: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #40: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #41: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Vulnerability #6: GO-2026-6612
+    Double flow control refund on HTTP/2 server streams in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6612
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #3: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #4: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #5: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #6: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #7: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #8: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #9: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #10: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #11: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #12: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #13: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #14: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #15: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #16: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #17: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #18: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #19: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #20: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #21: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #22: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #23: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #24: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #25: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #26: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #27: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #28: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #29: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #30: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #31: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #32: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #33: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #34: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #35: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #36: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #37: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #38: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #39: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #40: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #41: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #42: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #43: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #44: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #45: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #46: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #47: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #48: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #49: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #50: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #51: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #52: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #53: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #54: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #55: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #56: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #57: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #58: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #59: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #60: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #61: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #62: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #63: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #64: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #65: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #66: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #67: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #68: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #69: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #70: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #71: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #72: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #73: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #74: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #75: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #76: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #77: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #78: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #79: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #80: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #81: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #82: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #83: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #84: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #85: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #86: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #87: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #88: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #89: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #90: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #91: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #92: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #93: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #94: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #95: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #96: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #97: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #98: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #99: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #100: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #101: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #102: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #103: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #104: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #105: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #106: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #107: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #108: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #109: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #110: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #111: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #112: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #113: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #114: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #115: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #116: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #117: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #118: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #119: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #120: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #121: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #122: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #123: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+      #124: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Vulnerability #7: GO-2026-6611
+    Excessive CPU consumption from repeated initial window changes in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6611
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #3: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #4: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #5: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #6: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #7: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #8: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #9: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #10: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #11: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #12: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #13: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #14: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #15: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #16: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #17: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #18: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #19: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #20: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #21: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #22: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #23: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #24: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #25: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #26: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #27: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #28: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #29: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #30: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #31: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #32: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #33: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #34: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #35: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #36: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #37: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #38: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #39: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #40: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #41: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #42: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #43: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #44: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #45: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #46: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #47: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #48: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #49: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #50: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #51: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #52: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #53: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #54: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #55: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #56: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #57: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #58: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #59: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #60: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #61: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #62: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #63: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #64: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #65: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #66: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #67: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #68: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #69: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #70: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #71: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #72: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #73: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #74: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #75: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #76: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #77: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #78: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #79: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #80: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #81: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #82: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #83: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #84: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #85: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #86: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #87: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #88: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #89: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #90: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #91: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #92: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #93: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #94: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #95: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #96: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #97: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #98: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #99: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #100: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #101: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #102: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #103: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #104: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #105: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #106: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #107: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #108: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #109: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #110: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #111: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #112: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #113: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #114: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #115: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #116: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #117: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #118: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #119: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #120: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #121: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #122: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #123: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+      #124: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Vulnerability #8: GO-2026-6610
+    HTTP/2 transport accepts malformed framing-related headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6610
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+
+Vulnerability #9: GO-2026-6609
+    Lack of limit on size of parsed Range headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6609
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: cmd/server/main.go:196:34: server.noStoreFileServer calls http.fileHandler.ServeHTTP
+
+Vulnerability #10: GO-2026-6608
+    Memory limit bypass when parsing MIME headers in net/textproto,
+    mime/multipart
+  More info: https://pkg.go.dev/vuln/GO-2026-6608
+  Standard library
+    Found in: net/textproto@go1.25.1
+    Fixed in: net/textproto@go1.26.9
+    Example traces found:
+      #1: internal/channels/email.go:236:36: channels.decodeMIMEBody calls multipart.Reader.NextPart
+      #2: internal/channels/email.go:141:40: channels.pollEmail calls mail.ReadMessage, which eventually calls textproto.Reader.ReadContinuedLine
+      #3: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls textproto.Reader.ReadMIMEHeader
+
+Vulnerability #11: GO-2026-6607
+    Reject malformed ECH outer extension references in crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-6607
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.26.9
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #12: GO-2026-6605
+    HTTP/1 client connection desynchronization after CONNECT rejection in
+    net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6605
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+
+Vulnerability #13: GO-2026-6603
+    HTTP/2 server memory exhaustion due to Trailer headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6603
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #2: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+      #3: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #4: internal/handlers/tickets.go:494:16: handlers.writeJSON calls http.Header.Set
+      #5: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #6: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext
+      #7: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #8: cmd/server/main.go:96:12: server.main calls http.ServeMux.Handle
+      #9: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #10: cmd/server/main.go:82:16: server.main calls http.ServeMux.HandleFunc
+      #11: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #12: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+      #13: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #14: cmd/server/main.go:125:28: server.main calls http.Server.Shutdown
+      #15: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #16: internal/analyzer/gigachat.go:62:60: analyzer.newInsecureGigaChatClient calls http.Transport.Clone
+      #17: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #18: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.body.Close
+      #19: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #20: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.body.Read
+      #21: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #22: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.bodyEOFSignal.Close
+      #23: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #24: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyEOFSignal.Read
+      #25: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #26: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.bodyLocked.Read
+      #27: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #28: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.bufioFlushWriter.Write
+      #29: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #30: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.cancelTimerBody.Close
+      #31: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #32: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.cancelTimerBody.Read
+      #33: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #34: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.checkConnErrorWriter.Write
+      #35: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #36: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.chunkWriter.Write
+      #37: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #38: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.connReader.Read
+      #39: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #40: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.expectContinueReader.Read
+      #41: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #42: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.gzipReader.Close
+      #43: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #44: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.gzipReader.Read
+      #45: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #46: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2ConnectionError.Error
+      #47: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #48: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2ErrCode.String
+      #49: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #50: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameHeader.String
+      #51: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #52: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameType.String
+      #53: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #54: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2FrameWriteRequest.String
+      #55: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #56: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2GoAwayError.Error
+      #57: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #58: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2Setting.String
+      #59: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #60: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2SettingID.String
+      #61: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #62: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2StreamError.Error
+      #63: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #64: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2bufferedWriterTimeoutWriter.Write
+      #65: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #66: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2chunkWriter.Write
+      #67: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #68: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2connError.Error
+      #69: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #70: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2duplicatePseudoHeaderError.Error
+      #71: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #72: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2gzipReader.Close
+      #73: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #74: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2gzipReader.Read
+      #75: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #76: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldNameError.Error
+      #77: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #78: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2headerFieldValueError.Error
+      #79: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #80: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.http2pseudoHeaderError.Error
+      #81: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #82: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2requestBody.Read
+      #83: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #84: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.Write
+      #85: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #86: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.http2responseWriter.WriteHeader
+      #87: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #88: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.http2responseWriter.WriteString
+      #89: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #90: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.http2stickyErrWriter.Write
+      #91: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #92: internal/analyzer/analyzer.go:395:2: analyzer.Analyzer.analyzeWithAI calls http.http2transportResponseBody.Close
+      #93: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #94: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.http2transportResponseBody.Read
+      #95: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #96: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls http.http2writeData.String
+      #97: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #98: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.loggingConn.Read
+      #99: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #100: internal/channels/email.go:75:26: channels.imapSession.command calls fmt.Fprintf, which calls http.loggingConn.Write
+      #101: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #102: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.maxBytesReader.Read
+      #103: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #104: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #105: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #106: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConn.Read
+      #107: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #108: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #109: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #110: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which eventually calls http.persistConnWriter.Write
+      #111: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #112: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readTrackingBody.Read
+      #113: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #114: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.readWriteCloserBody.Read
+      #115: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #116: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls http.response.ReadFrom
+      #117: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #118: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.Write
+      #119: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #120: internal/handlers/tickets.go:495:15: handlers.writeJSON calls http.response.WriteHeader
+      #121: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #122: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls http.response.WriteString
+      #123: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+      #124: internal/analyzer/gigachat.go:198:24: analyzer.newUUIDv4 calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Vulnerability #14: GO-2026-6218
+    Avoid quadratic complexity in resolvePath in net/url
+  More info: https://pkg.go.dev/vuln/GO-2026-6218
+  Standard library
+    Found in: net/url@go1.25.1
+    Fixed in: net/url@go1.25.13
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls url.URL.Parse
+
+Vulnerability #15: GO-2026-6090
+    Limit handshake messages we are willing to accept post-handshake in
+    crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-6090
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.25.13
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #16: GO-2026-6089
+    Apply ReadHeaderTimeout when doing unencrypted HTTP/2 check in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6089
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.25.13
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe
+
+Vulnerability #17: GO-2026-6088
+    Add recursion depth guard during decode in encoding/xml
+  More info: https://pkg.go.dev/vuln/GO-2026-6088
+  Standard library
+    Found in: encoding/xml@go1.25.1
+    Fixed in: encoding/xml@go1.25.13
+    Example traces found:
+      #1: internal/handlers/tickets.go:452:22: handlers.TicketsHandler.List calls pgxpool.poolRows.Scan, which eventually calls xml.Unmarshal
+
+Vulnerability #18: GO-2026-5972
+    Enforce maximum recursion depth in encoding/asn1
+  More info: https://pkg.go.dev/vuln/GO-2026-5972
+  Standard library
+    Found in: encoding/asn1@go1.25.1
+    Fixed in: encoding/asn1@go1.25.13
+    Example traces found:
+      #1: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls asn1.Unmarshal
+
+Vulnerability #19: GO-2026-5970
+    Infinite loop on invalid input in golang.org/x/text
+  More info: https://pkg.go.dev/vuln/GO-2026-5970
+  Module: golang.org/x/text
+    Found in: golang.org/x/text@v0.18.0
+    Fixed in: golang.org/x/text@v0.39.0
+    Example traces found:
+      #1: internal/database/db.go:18:36: database.NewPool calls pgxpool.NewWithConfig, which eventually calls norm.Form.Properties
+      #2: internal/database/db.go:18:36: database.NewPool calls pgxpool.NewWithConfig, which eventually calls norm.Form.Span
+      #3: internal/security/prompt.go:86:154: security.SafeAnswerText calls norm.Form.String
+      #4: internal/database/db.go:18:36: database.NewPool calls pgxpool.NewWithConfig, which eventually calls norm.Form.Transform
+
+Vulnerability #20: GO-2026-5856
+    Invoking Encrypted Client Hello privacy leak in crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-5856
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.25.12
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #21: GO-2026-5039
+    Arbitrary inputs are included in errors without any escaping in
+    net/textproto
+  More info: https://pkg.go.dev/vuln/GO-2026-5039
+  Standard library
+    Found in: net/textproto@go1.25.1
+    Fixed in: net/textproto@go1.25.11
+    Example traces found:
+      #1: internal/knowledge/knowledge.go:163:21: knowledge.Base.AddWithOptions calls fmt.Sprintf, which eventually calls textproto.Error.Error
+      #2: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls textproto.Reader.ReadMIMEHeader
+      #3: internal/channels/email.go:282:31: channels.sendEmail calls smtp.NewClient, which calls textproto.Reader.ReadResponse
+
+Vulnerability #22: GO-2026-5038
+    Quadratic complexity in WordDecoder.DecodeHeader in mime
+  More info: https://pkg.go.dev/vuln/GO-2026-5038
+  Standard library
+    Found in: mime@go1.25.1
+    Fixed in: mime@go1.25.11
+    Example traces found:
+      #1: internal/channels/email.go:153:37: channels.pollEmail calls mime.WordDecoder.DecodeHeader
+
+Vulnerability #23: GO-2026-5037
+    Inefficient candidate hostname parsing in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2026-5037
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.11
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+      #2: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.VerifyHostname
+      #3: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls x509.HostnameError.Error
+
+Vulnerability #24: GO-2026-5026
+    Invoking failure to reject ASCII-only Punycode-encoded labels in
+    golang.org/x/net/idna
+  More info: https://pkg.go.dev/vuln/GO-2026-5026
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.25.13
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+
+Vulnerability #25: GO-2026-5004
+    SQL Injection via placeholder confusion with dollar quoted string literals
+    in github.com/jackc/pgx
+  More info: https://pkg.go.dev/vuln/GO-2026-5004
+  Module: github.com/jackc/pgx/v5
+    Found in: github.com/jackc/pgx/v5@v5.7.1
+    Fixed in: github.com/jackc/pgx/v5@v5.9.2
+    Example traces found:
+      #1: internal/handlers/tickets.go:441:25: handlers.TicketsHandler.List calls pgxpool.Pool.Query, which eventually calls sanitize.SanitizeSQL
+
+Vulnerability #26: GO-2026-4986
+    Quadratic string concatentation in consumeComment in net/mail
+  More info: https://pkg.go.dev/vuln/GO-2026-4986
+  Standard library
+    Found in: net/mail@go1.25.1
+    Fixed in: net/mail@go1.25.10
+    Example traces found:
+      #1: internal/channels/dispatcher.go:33:36: channels.Dispatcher.Dispatch calls mail.ParseAddress
+
+Vulnerability #27: GO-2026-4977
+    Quadratic string concatenation in consumePhrase in net/mail
+  More info: https://pkg.go.dev/vuln/GO-2026-4977
+  Standard library
+    Found in: net/mail@go1.25.1
+    Fixed in: net/mail@go1.25.10
+    Example traces found:
+      #1: internal/channels/dispatcher.go:33:36: channels.Dispatcher.Dispatch calls mail.ParseAddress
+
+Vulnerability #28: GO-2026-4971
+    Panic in Dial and LookupPort when handling NUL byte on Windows in net
+  More info: https://pkg.go.dev/vuln/GO-2026-4971
+  Standard library
+    Found in: net@go1.25.1
+    Fixed in: net@go1.25.10
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls net.Dialer.DialContext
+      #2: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which calls net.Listen
+      #3: internal/database/db.go:18:36: database.NewPool calls pgxpool.NewWithConfig, which eventually calls net.Resolver.LookupHost
+
+Vulnerability #29: GO-2026-4947
+    Unexpected work during chain building in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2026-4947
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.9
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+
+Vulnerability #30: GO-2026-4946
+    Inefficient policy validation in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2026-4946
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.9
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+
+Vulnerability #31: GO-2026-4918
+    Infinite loop in HTTP/2 transport when given bad SETTINGS_MAX_FRAME_SIZE in
+    net/http/internal/http2 in golang.org/x/net
+  More info: https://pkg.go.dev/vuln/GO-2026-4918
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.25.10
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+
+Vulnerability #32: GO-2026-4870
+    Unauthenticated TLS 1.3 KeyUpdate record can cause persistent connection
+    retention and DoS in crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-4870
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.25.9
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #33: GO-2026-4602
+    FileInfo can escape from a Root in os
+  More info: https://pkg.go.dev/vuln/GO-2026-4602
+  Standard library
+    Found in: os@go1.25.1
+    Fixed in: os@go1.25.8
+    Example traces found:
+      #1: cmd/server/main.go:196:34: server.noStoreFileServer calls http.fileHandler.ServeHTTP, which eventually calls os.File.ReadDir
+      #2: cmd/server/main.go:196:34: server.noStoreFileServer calls http.fileHandler.ServeHTTP, which eventually calls os.File.Readdir
+      #3: internal/knowledge/knowledge.go:180:28: knowledge.Base.Reset calls os.ReadDir
+
+Vulnerability #34: GO-2026-4601
+    Incorrect parsing of IPv6 host literals in net/url
+  More info: https://pkg.go.dev/vuln/GO-2026-4601
+  Standard library
+    Found in: net/url@go1.25.1
+    Fixed in: net/url@go1.25.8
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext, which calls url.Parse
+      #2: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls url.ParseRequestURI
+      #3: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls url.URL.Parse
+
+Vulnerability #35: GO-2026-4341
+    Memory exhaustion in query parameter parsing in net/url
+  More info: https://pkg.go.dev/vuln/GO-2026-4341
+  Standard library
+    Found in: net/url@go1.25.1
+    Fixed in: net/url@go1.25.6
+    Example traces found:
+      #1: internal/handlers/knowledge.go:86:61: handlers.KnowledgeHandler.Create calls url.URL.Query
+
+Vulnerability #36: GO-2026-4340
+    Handshake messages may be processed at the incorrect encryption level in
+    crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-4340
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.25.6
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #37: GO-2026-4337
+    Unexpected session resumption in crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-4337
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.25.7
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #38: GO-2025-4175
+    Improper application of excluded DNS name constraints when verifying
+    wildcard names in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2025-4175
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.5
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+
+Vulnerability #39: GO-2025-4155
+    Excessive resource consumption when printing error string for host
+    certificate validation in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2025-4155
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.5
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+      #2: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.VerifyHostname
+
+Vulnerability #40: GO-2025-4015
+    Excessive CPU consumption in Reader.ReadResponse in net/textproto
+  More info: https://pkg.go.dev/vuln/GO-2025-4015
+  Standard library
+    Found in: net/textproto@go1.25.1
+    Fixed in: net/textproto@go1.25.2
+    Example traces found:
+      #1: internal/channels/email.go:282:31: channels.sendEmail calls smtp.NewClient, which calls textproto.Reader.ReadResponse
+
+Vulnerability #41: GO-2025-4013
+    Panic when validating certificates with DSA public keys in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2025-4013
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.2
+    Example traces found:
+      #1: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+
+Vulnerability #42: GO-2025-4012
+    Lack of limit when parsing cookies can cause memory exhaustion in net/http
+  More info: https://pkg.go.dev/vuln/GO-2025-4012
+  Standard library
+    Found in: net/http@go1.25.1
+    Fixed in: net/http@go1.25.2
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do
+
+Vulnerability #43: GO-2025-4011
+    Parsing DER payload can cause memory exhaustion in encoding/asn1
+  More info: https://pkg.go.dev/vuln/GO-2025-4011
+  Standard library
+    Found in: encoding/asn1@go1.25.1
+    Fixed in: encoding/asn1@go1.25.2
+    Example traces found:
+      #1: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls asn1.Unmarshal
+
+Vulnerability #44: GO-2025-4010
+    Insufficient validation of bracketed IPv6 hostnames in net/url
+  More info: https://pkg.go.dev/vuln/GO-2025-4010
+  Standard library
+    Found in: net/url@go1.25.1
+    Fixed in: net/url@go1.25.2
+    Example traces found:
+      #1: internal/analyzer/analyzer.go:383:40: analyzer.Analyzer.analyzeWithAI calls http.NewRequestWithContext, which calls url.Parse
+      #2: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls url.ParseRequestURI
+      #3: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls url.URL.Parse
+
+Vulnerability #45: GO-2025-4009
+    Quadratic complexity when parsing some invalid inputs in encoding/pem
+  More info: https://pkg.go.dev/vuln/GO-2025-4009
+  Standard library
+    Found in: encoding/pem@go1.25.1
+    Fixed in: encoding/pem@go1.25.2
+    Example traces found:
+      #1: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls pem.Decode
+
+Vulnerability #46: GO-2025-4008
+    ALPN negotiation error contains attacker controlled information in
+    crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2025-4008
+  Standard library
+    Found in: crypto/tls@go1.25.1
+    Fixed in: crypto/tls@go1.25.2
+    Example traces found:
+      #1: cmd/server/main.go:110:40: server.main calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #2: internal/handlers/tickets.go:284:16: handlers.TicketsHandler.sendWebhook calls io.Copy, which eventually calls tls.Conn.Read
+      #3: internal/channels/email.go:309:29: channels.sendEmail calls io.WriteString, which calls tls.Conn.Write
+      #4: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer
+      #5: internal/analyzer/analyzer.go:390:26: analyzer.Analyzer.analyzeWithAI calls http.Client.Do, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #47: GO-2025-4007
+    Quadratic complexity when checking name constraints in crypto/x509
+  More info: https://pkg.go.dev/vuln/GO-2025-4007
+  Standard library
+    Found in: crypto/x509@go1.25.1
+    Fixed in: crypto/x509@go1.25.3
+    Example traces found:
+      #1: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls x509.CertPool.AppendCertsFromPEM
+      #2: internal/channels/email.go:278:33: channels.sendEmail calls tls.DialWithDialer, which eventually calls x509.Certificate.Verify
+      #3: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls x509.DecryptPEMBlock
+      #4: cmd/server/main.go:38:2: server.main calls pgxpool.Pool.Close, which eventually calls x509.ParseCertificate
+      #5: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls x509.ParseECPrivateKey
+      #6: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls x509.ParsePKCS1PrivateKey
+      #7: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls x509.ParsePKCS8PrivateKey
+      #8: internal/database/db.go:12:36: database.NewPool calls pgxpool.ParseConfig, which eventually calls x509.SystemCertPool
+
+Vulnerability #48: GO-2025-4006
+    Excessive CPU consumption in ParseAddress in net/mail
+  More info: https://pkg.go.dev/vuln/GO-2025-4006
+  Standard library
+    Found in: net/mail@go1.25.1
+    Fixed in: net/mail@go1.25.2
+    Example traces found:
+      #1: internal/channels/dispatcher.go:33:36: channels.Dispatcher.Dispatch calls mail.ParseAddress
+
+=== Package Results ===
+
+Vulnerability #1: GO-2026-6604
+    Root.Mkdir(All) can follow junctions out of the root on Windows in os
+  More info: https://pkg.go.dev/vuln/GO-2026-6604
+  Standard library
+    Found in: os@go1.25.1
+    Fixed in: os@go1.26.9
+    Platforms: windows
+
+Vulnerability #2: GO-2026-4981
+    Crash when handling long CNAME response in net
+  More info: https://pkg.go.dev/vuln/GO-2026-4981
+  Standard library
+    Found in: net@go1.25.1
+    Fixed in: net@go1.25.10
+
+Vulnerability #3: GO-2026-4970
+    Root escape via symlink plus trailing slash in os
+  More info: https://pkg.go.dev/vuln/GO-2026-4970
+  Standard library
+    Found in: os@go1.25.1
+    Fixed in: os@go1.25.12
+
+Vulnerability #4: GO-2026-4772
+    CVE-2026-33816 in github.com/jackc/pgx
+  More info: https://pkg.go.dev/vuln/GO-2026-4772
+  Module: github.com/jackc/pgx/v5
+    Found in: github.com/jackc/pgx/v5@v5.7.1
+    Fixed in: github.com/jackc/pgx/v5@v5.9.0
+
+Vulnerability #5: GO-2026-4771
+    CVE-2026-33815 in github.com/jackc/pgx
+  More info: https://pkg.go.dev/vuln/GO-2026-4771
+  Module: github.com/jackc/pgx/v5
+    Found in: github.com/jackc/pgx/v5@v5.7.1
+    Fixed in: github.com/jackc/pgx/v5@v5.9.0
+
+=== Module Results ===
+
+Vulnerability #1: GO-2026-6600
+    Recognize yield as regexp preceder keyword in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6600
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.26.9
+
+Vulnerability #2: GO-2026-6599
+    Reset context tracking on consecutive template expressions in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6599
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.26.9
+
+Vulnerability #3: GO-2026-6355
+    Prevent DoS on deadlocked established channel in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-6355
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.56.0
+
+Vulnerability #4: GO-2026-6354
+    Prevent DoS on deadlocked undecided channel in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-6354
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.56.0
+
+Vulnerability #5: GO-2026-6303
+    Source-address critical option not enforced for non-public-key auth
+    callbacks in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-6303
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.55.0
+
+Vulnerability #6: GO-2026-6091
+    Fix Javascript regexp context tracking in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6091
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.13
+
+Vulnerability #7: GO-2026-5932
+    The golang.org/x/crypto/openpgp package is unmaintained, unsafe by design,
+    and has known security issues
+  More info: https://pkg.go.dev/vuln/GO-2026-5932
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+
+Vulnerability #8: GO-2026-5033
+    Invoking pathological inputs can lead to client panic in
+    golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2026-5033
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #9: GO-2026-5023
+    Invoking VerifiedPublicKeyCallback permissions skip enforcement in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5023
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #10: GO-2026-5021
+    Invoking auth bypass via unenforced @revoked status in
+    golang.org/x/crypto/ssh/knownhosts
+  More info: https://pkg.go.dev/vuln/GO-2026-5021
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #11: GO-2026-5020
+    Invoking infinite loop on large channel writes in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5020
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #12: GO-2026-5019
+    Invoking bypass of FIDO/U2F security keys physical interaction in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5019
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #13: GO-2026-5018
+    Invoking pathological RSA/DSA parameters may cause DoS in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5018
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #14: GO-2026-5017
+    Invoking client can cause server deadlock on unexpected responses in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5017
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #15: GO-2026-5016
+    Invoking memory leak when rejecting channels can lead to DoS in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5016
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #16: GO-2026-5015
+    Invoking server panic during CheckHostKey/Authenticate in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5015
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #17: GO-2026-5014
+    Invoking bypass of certificate restrictions in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5014
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #18: GO-2026-5013
+    Invoking byte arithmetic causes underflow and panic in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5013
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #19: GO-2026-5006
+    Invoking agent constraints dropped when forwarding keys in
+    golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2026-5006
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #20: GO-2026-5005
+    Invoking key constraints not enforced in golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2026-5005
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #21: GO-2026-4982
+    Bypass of meta content URL escaping causes XSS in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-4982
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.10
+
+Vulnerability #22: GO-2026-4980
+    Escaper bypass leads to XSS in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-4980
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.10
+
+Vulnerability #23: GO-2026-4976
+    ReverseProxy forwards queries with more than urlmaxqueryparams parameters in
+    net/http/httputil
+  More info: https://pkg.go.dev/vuln/GO-2026-4976
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.10
+
+Vulnerability #24: GO-2026-4869
+    Unbounded allocation for old GNU sparse in archive/tar
+  More info: https://pkg.go.dev/vuln/GO-2026-4869
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.9
+
+Vulnerability #25: GO-2026-4865
+    JsBraceDepth Context Tracking Bugs (XSS) in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-4865
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.9
+
+Vulnerability #26: GO-2026-4864
+    TOCTOU permits root escape on Linux via Root.Chmod in os in
+    internal/syscall/unix
+  More info: https://pkg.go.dev/vuln/GO-2026-4864
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.9
+    Platforms: linux
+
+Vulnerability #27: GO-2026-4603
+    URLs in meta content attribute actions are not escaped in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-4603
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.8
+
+Vulnerability #28: GO-2026-4342
+    Excessive CPU consumption when building archive index in archive/zip
+  More info: https://pkg.go.dev/vuln/GO-2026-4342
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.6
+
+Vulnerability #29: GO-2025-4135
+    Malformed constraint may cause denial of service in
+    golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2025-4135
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.45.0
+
+Vulnerability #30: GO-2025-4134
+    Unbounded memory consumption in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2025-4134
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.45.0
+
+Vulnerability #31: GO-2025-4116
+    Potential denial of service in golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2025-4116
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.43.0
+
+Vulnerability #32: GO-2025-4014
+    Unbounded allocation when parsing GNU sparse map in archive/tar
+  More info: https://pkg.go.dev/vuln/GO-2025-4014
+  Standard library
+    Found in: stdlib@go1.25.1
+    Fixed in: stdlib@go1.25.2
+
+Vulnerability #33: GO-2025-3487
+    Potential denial of service in golang.org/x/crypto
+  More info: https://pkg.go.dev/vuln/GO-2025-3487
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.35.0
+
+Vulnerability #34: GO-2024-3321
+    Misuse of connection.serverAuthenticate may cause authorization bypass in
+    golang.org/x/crypto
+  More info: https://pkg.go.dev/vuln/GO-2024-3321
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.27.0
+    Fixed in: golang.org/x/crypto@v0.31.0
+
+Your code is affected by 48 vulnerabilities from 2 modules and the Go standard library.
+This scan also found 5 vulnerabilities in packages you import and 34
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.

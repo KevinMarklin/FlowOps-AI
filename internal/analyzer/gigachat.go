@@ -196,6 +196,11 @@ func (a *Analyzer) analyzeWithGigaChatRequest(ctx context.Context, rawText strin
 // GenerateStructured sends already-sanitized text to the configured GigaChat
 // provider and returns its raw completion. Callers must mask PII before use.
 func (a *Analyzer) GenerateStructured(ctx context.Context, systemPrompt, userText string) (string, bool, error) {
+	masked := security.MaskPII(userText)
+	if !sensitiveModelInputAllowed(userText, masked) {
+		return "", false, nil
+	}
+	userText = masked.MaskedText
 	config := loadGigaChatConfig()
 	if config.authKey == "" || config.insecure || !providerAllowed("gigachat") {
 		return "", false, nil

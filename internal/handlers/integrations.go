@@ -340,6 +340,9 @@ func (h *IntegrationsHandler) ChannelSettings(w http.ResponseWriter, r *http.Req
 	}
 	tenant := security.TenantID(r.Context())
 	channel := channelFromValues(values)
+	if channel == "email" {
+		values["mail_user"] = strings.ToLower(strings.TrimSpace(values["mail_user"]))
+	}
 	if channel == "" {
 		writeError(w, 400, "exactly one channel configuration is required")
 		return
@@ -607,6 +610,13 @@ func (h *IntegrationsHandler) CheckChannel(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *IntegrationsHandler) operatorAuthorized(w http.ResponseWriter, r *http.Request) bool {
+	if p, ok := security.CurrentPrincipal(r.Context()); ok {
+		if p.Role == "admin" {
+			return true
+		}
+		writeError(w, http.StatusForbidden, "administrator access required")
+		return false
+	}
 	if security.IsOperatorAuthenticated(r.Context()) {
 		return true
 	}

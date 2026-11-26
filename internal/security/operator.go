@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"github.com/jackc/pgx/v5"
 	"net"
 	"net/http"
 	"os"
@@ -46,32 +48,68 @@ func IsOperatorAuthenticated(ctx context.Context) bool {
 func ProtectOperatorTenants(next http.Handler, db *pgxpool.Pool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		if r.Method == http.MethodPost && (path == "/api/v1/auth/login" || path == "/api/v1/auth/activate" || path == "/api/v1/auth/logout") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !strings.HasPrefix(path, "/api/") || path == "/api/v1/workspaces" && r.Method == http.MethodPost ||
-			path == "/api/v1/widget/config" && r.Method == http.MethodOptions {
+			path == "/api/v1/widget/config" && r.Method == http.MethodOptions ||
+			path == "/api/v1/ingest" && (r.Method == http.MethodPost || r.Method == http.MethodOptions) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || value == "" {
+			if r.Header.Get("Authorization") == "" {
+				p, csrfHash, err := cookiePrincipal(r, db)
+				if err == nil {
+					// A shared browser cookie may have been replaced by another tab.
+					// The member ID is a consistency guard, never an authorization credential.
+					if expected := r.Header.Get("X-FlowOps-Member"); expected != "" && expected != p.ID {
+						roleJSON(w, http.StatusConflict, map[string]string{"code": "session_changed", "error": "В другой вкладке выполнен вход в другой аккаунт. Войдите заново."})
+						return
+					}
+					if !validSessionWrite(r, csrfHash) {
+						ingestError(w, 403, "Проверка безопасности сеанса не пройдена. Обновите страницу.")
+						return
+					}
+					if !authorizePrincipal(w, r, db, p) {
+						return
+					}
+					w.Header().Set("Cache-Control", "no-store")
+					next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
+					return
+				}
+				if !errors.Is(err, pgx.ErrNoRows) {
+					ingestError(w, 503, "Сервис авторизации недоступен")
+					return
+				}
+				clearSessionCookies(w, r)
+			}
 			operatorUnauthorized(w)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		hash := sha256.Sum256([]byte(value))
-		var tenant string
-		hashText := hex.EncodeToString(hash[:])
-		isWorkspaceToken := true
-		if err := db.QueryRow(r.Context(), `SELECT tenant_id FROM workspaces WHERE token_hash=$1`, hashText).Scan(&tenant); err != nil {
-			isWorkspaceToken = false
-			if path != "/api/v1/widget/config" || r.Method != http.MethodGet || db.QueryRow(r.Context(), `SELECT tenant_id FROM api_keys WHERE key_hash=$1 AND scope='widget' AND allowed_origin=$2 AND is_active=TRUE`, hashText, r.Header.Get("Origin")).Scan(&tenant) != nil {
-				operatorUnauthorized(w)
+		p, err := LookupPrincipal(r.Context(), db, value)
+		if err == nil {
+			if !authorizePrincipal(w, r, db, p) {
 				return
 			}
+			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
+			return
 		}
-		ctx := context.WithValue(r.Context(), tenantContextKey{}, tenant)
-		if isWorkspaceToken {
-			ctx = context.WithValue(ctx, operatorAuthContextKey{}, true)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			ingestError(w, 503, "Сервис авторизации недоступен")
+			return
 		}
+		var tenant string
+		hashText := hex.EncodeToString(hash[:])
+		if path != "/api/v1/widget/config" || r.Method != http.MethodGet || db.QueryRow(r.Context(), `SELECT tenant_id FROM api_keys WHERE key_hash=$1 AND scope='widget' AND allowed_origin=$2 AND is_active=TRUE`, hashText, r.Header.Get("Origin")).Scan(&tenant) != nil {
+			operatorUnauthorized(w)
+			return
+		}
+		ctx := WithTenantID(r.Context(), tenant)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -104,6 +142,10 @@ func (h *WorkspaceHandler) Me(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"workspace not found"}`, http.StatusUnauthorized)
 		return
 	}
+	if p, ok := CurrentPrincipal(r.Context()); ok && p.Role != "admin" {
+		roleJSON(w, 200, map[string]any{"tenant_id": tenant, "name": name, "user": p})
+		return
+	}
 	var tickets, kb int
 	_ = h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM tickets WHERE tenant_id=$1`, tenant).Scan(&tickets)
 	entries, _ := os.ReadDir(filepath.Join("knowledge_base", tenant))
@@ -113,7 +155,7 @@ func (h *WorkspaceHandler) Me(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": tenant, "name": name, "is_empty": tickets == 0 && kb == 0})
+	_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": tenant, "name": name, "is_empty": tickets == 0 && kb == 0, "user": currentUser(r.Context())})
 }
 
 func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -155,12 +197,18 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := "ws_" + hex.EncodeToString(tenantBytes)
-	_, err := h.db.Exec(r.Context(), `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES($1,$2,$3,$4)`, tenant, strings.TrimSpace(input.Name), token[:11], hex.EncodeToString(hash[:]))
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		ingestError(w, 500, "Не удалось создать компанию")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	_, err = tx.Exec(r.Context(), `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES($1,$2,$3,$4)`, tenant, strings.TrimSpace(input.Name), token[:11], hex.EncodeToString(hash[:]))
 	if err != nil {
 		http.Error(w, `{"error":"workspace creation failed"}`, 500)
 		return
 	}
-	if _, err = h.db.Exec(r.Context(), `INSERT INTO app_settings(tenant_id,id) VALUES($1,TRUE) ON CONFLICT (tenant_id,id) DO NOTHING`, tenant); err != nil {
+	if _, err = tx.Exec(r.Context(), `INSERT INTO app_settings(tenant_id,id) VALUES($1,TRUE) ON CONFLICT (tenant_id,id) DO NOTHING`, tenant); err != nil {
 		http.Error(w, `{"error":"workspace initialization failed"}`, 500)
 		return
 	}
@@ -168,6 +216,11 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"workspace initialization failed"}`, 500)
 		return
 	}
+	if err = tx.Commit(r.Context()); err != nil {
+		ingestError(w, 500, "Не удалось сохранить компанию")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]string{"tenant_id": tenant, "name": strings.TrimSpace(input.Name), "token": token})

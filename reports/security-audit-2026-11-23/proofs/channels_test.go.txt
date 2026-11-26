@@ -1,0 +1,20 @@
+package channels
+
+import (
+ "context"
+ "net/http"
+ "net/http/httptest"
+ "testing"
+)
+
+func TestAuditMaxAcceptsUntrustedCertificate(t *testing.T) {
+ gotToken:=make(chan string,1)
+ server:=httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){gotToken<-r.Header.Get("Authorization");w.WriteHeader(204)}))
+ defer server.Close()
+ cfg:=Config{MaxAPIURL:server.URL,MaxToken:"SYNTHETIC_TEST_TOKEN",MaxInsecureTLS:true}
+ resp,err:=maxRequest(context.Background(),cfg,http.MethodPost,"/messages",nil,nil)
+ if err!=nil {t.Fatal(err)}
+ resp.Body.Close()
+ if token:=<-gotToken;token!="SYNTHETIC_TEST_TOKEN" {t.Fatalf("wrong token %q",token)}
+ t.Log("MAX insecure mode sent token to server with untrusted certificate")
+}

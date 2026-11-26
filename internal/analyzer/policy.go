@@ -57,3 +57,9 @@ func sensitiveModelInputAllowed(text string, masked security.MaskResult) bool {
 	// remain; any external processing requires an explicit approved provider.
 	return os.Getenv("FLOWOPS_AI_ALLOW_SENSITIVE") == "true" || (masked.MaskedCount == 0 && !sensitiveTopic.MatchString(text))
 }
+
+// ExternalModelInputAllowed checks original input before masking loses the
+// evidence that personal data was present. Provider approval remains separate.
+func ExternalModelInputAllowed(text string) bool {
+	return sensitiveModelInputAllowed(text, security.MaskPII(text))
+}

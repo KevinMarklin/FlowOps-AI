@@ -86,3 +86,32 @@ CREATE TABLE IF NOT EXISTS workspaces (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO app_settings(tenant_id,id) VALUES ('default',TRUE) ON CONFLICT (tenant_id,id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS workspace_members (
+ id TEXT PRIMARY KEY,
+ tenant_id TEXT NOT NULL REFERENCES workspaces(tenant_id) ON DELETE CASCADE,
+ display_name TEXT NOT NULL,
+ email TEXT NOT NULL,
+ role TEXT NOT NULL CHECK (role IN ('admin','operator','analyst','employee')),
+ token_hash TEXT NOT NULL UNIQUE,
+ is_active BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ UNIQUE(tenant_id,email)
+);
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS requester_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS tickets_requester ON tickets(tenant_id,requester_id,created_at DESC);
+
+ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS workspace_members_login ON workspace_members(email) WHERE is_active=TRUE;
+CREATE TABLE IF NOT EXISTS auth_sessions (
+ token_hash TEXT PRIMARY KEY,
+ csrf_hash TEXT NOT NULL,
+ member_id TEXT NOT NULL REFERENCES workspace_members(id) ON DELETE CASCADE,
+ expires_at TIMESTAMPTZ NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_member ON auth_sessions(member_id);
+CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
+
+ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS auth_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS auth_version BIGINT NOT NULL DEFAULT 0;

@@ -1,0 +1,17 @@
+package analyzer
+
+import (
+ "context"
+ "testing"
+ "flowops-ai/internal/knowledge"
+)
+
+func TestAuditAnonymousBudgetExhaustsLocalAnalysis(t *testing.T) {
+ for _,key:=range []string{"GIGACHAT_AUTH_KEY","GEMINI_API_KEY","AI_API_KEY","GOOGLE_API_KEY","GOOGLE_AI_STUDIO_API_KEY"} {t.Setenv(key,"")}
+ base,err:=knowledge.Load(t.TempDir());if err!=nil {t.Fatal(err)}
+ a:=New(base)
+ for i:=0;i<60;i++ {a.Analyze(context.Background(),"Не работает VPN")}
+ result:=a.Analyze(context.Background(),"Не работает VPN")
+ if result.Department!="General" || result.ExtractedSummary!="Обращение требует ручной проверки оператором." {t.Fatalf("unexpected result %+v",result)}
+ t.Log("global budget diverts even local-only analysis to manual review")
+}

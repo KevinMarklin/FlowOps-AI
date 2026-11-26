@@ -1,0 +1,10 @@
+ok  	flowops-ai/cmd/server	4.130s
+ok  	flowops-ai/internal/analyzer	15.606s
+ok  	flowops-ai/internal/channels	4.343s
+?   	flowops-ai/internal/database	[no test files]
+ok  	flowops-ai/internal/delivery	3.498s
+ok  	flowops-ai/internal/handlers	97.837s
+ok  	flowops-ai/internal/knowledge	4.210s
+?   	flowops-ai/internal/models	[no test files]
+ok  	flowops-ai/internal/security	4.188s
+?   	flowops-ai/internal/settings	[no test files]

@@ -1,0 +1,7 @@
+{
+  "gigachat": {"success": true, "model_called": true, "valid_json": true, "duration_ms": 529, "synthetic_input_only": true},
+  "telegram": {"configured": true, "success": true, "http_status": 200, "operation": "getMe"},
+  "email": {"configured": true, "imap_smtp_auth_success": true, "messages_read_or_sent": false},
+  "max": {"configured": true, "success": false, "reason": "timeout", "timeout_seconds": 15, "dns_resolves": true},
+  "running_service": {"provider_policy": "compatible", "allow_sensitive": true, "configuration_changed": false}
+}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"flowops-ai/internal/analyzer"
 	"flowops-ai/internal/channels"
@@ -70,7 +71,11 @@ func (h *SmartHandler) SmartImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	masked := security.MaskPII(input.RawText)
-	articles, usedLLM, err := h.generateArticles(r.Context(), masked.MaskedText, input.DefaultDepartment)
+	articles := fallbackArticles(masked.MaskedText, input.DefaultDepartment)
+	usedLLM := false
+	if analyzer.ExternalModelInputAllowed(input.RawText) {
+		articles, usedLLM, err = h.generateArticles(r.Context(), masked.MaskedText, input.DefaultDepartment)
+	}
 	source := "gigachat"
 	if err != nil && usedLLM {
 		articles = fallbackArticles(masked.MaskedText, input.DefaultDepartment)
@@ -153,7 +158,11 @@ func fallbackArticles(text, department string) []importedArticle {
 			content = block
 		}
 		if len(title) > 240 {
-			title = string([]rune(title)[:240])
+			end := 240
+			for end > 0 && !utf8.ValidString(title[:end]) {
+				end--
+			}
+			title = title[:end]
 		}
 		articles = append(articles, importedArticle{Title: title, Department: department, Keywords: extractKeywords(title + " " + content), Content: content})
 		if len(articles) == 10 {

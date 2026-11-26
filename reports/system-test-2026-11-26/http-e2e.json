@@ -1,0 +1,696 @@
+{
+  "base_url": "http://127.0.0.1:18080",
+  "passed": 105,
+  "failed": 0,
+  "cases": [
+    {
+      "name": "home loads",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 12.9
+    },
+    {
+      "name": "application script loads",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 3.52
+    },
+    {
+      "name": "stylesheet loads",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 2.37
+    },
+    {
+      "name": "local font loads",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 2.42
+    },
+    {
+      "name": "anonymous tickets denied",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.99
+    },
+    {
+      "name": "anonymous analytics denied",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.11
+    },
+    {
+      "name": "register System QA A",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 10.88
+    },
+    {
+      "name": "activate owner System QA A",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 207.52
+    },
+    {
+      "name": "owner identity System QA A",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.66
+    },
+    {
+      "name": "register System QA B",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 31.73
+    },
+    {
+      "name": "activate owner System QA B",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 206.36
+    },
+    {
+      "name": "owner identity System QA B",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.0
+    },
+    {
+      "name": "invite employee Employee one",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 7.98
+    },
+    {
+      "name": "invitation at login Employee one",
+      "pass": true,
+      "status": 409,
+      "expected": 409,
+      "ms": 205.46
+    },
+    {
+      "name": "activation offered Employee one",
+      "pass": true
+    },
+    {
+      "name": "activate Employee one",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 216.07
+    },
+    {
+      "name": "one-use invitation Employee one",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 425.57
+    },
+    {
+      "name": "invite employee Employee two",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 22.45
+    },
+    {
+      "name": "invitation at login Employee two",
+      "pass": true,
+      "status": 409,
+      "expected": 409,
+      "ms": 213.37
+    },
+    {
+      "name": "activation offered Employee two",
+      "pass": true
+    },
+    {
+      "name": "activate Employee two",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 202.98
+    },
+    {
+      "name": "one-use invitation Employee two",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 405.32
+    },
+    {
+      "name": "invite operator Operator",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 5.91
+    },
+    {
+      "name": "invitation at login Operator",
+      "pass": true,
+      "status": 409,
+      "expected": 409,
+      "ms": 223.74
+    },
+    {
+      "name": "activation offered Operator",
+      "pass": true
+    },
+    {
+      "name": "activate Operator",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 222.28
+    },
+    {
+      "name": "one-use invitation Operator",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 399.41
+    },
+    {
+      "name": "invite analyst Analyst",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 7.57
+    },
+    {
+      "name": "invitation at login Analyst",
+      "pass": true,
+      "status": 409,
+      "expected": 409,
+      "ms": 200.32
+    },
+    {
+      "name": "activation offered Analyst",
+      "pass": true
+    },
+    {
+      "name": "activate Analyst",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 203.23
+    },
+    {
+      "name": "one-use invitation Analyst",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 392.52
+    },
+    {
+      "name": "session HttpOnly",
+      "pass": true
+    },
+    {
+      "name": "session Strict SameSite",
+      "pass": true
+    },
+    {
+      "name": "employee identity",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 3.77
+    },
+    {
+      "name": "session identifier not exposed in identity",
+      "pass": true
+    },
+    {
+      "name": "CSRF required for mutations",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 2.03
+    },
+    {
+      "name": "cross-origin writes denied",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 1.93
+    },
+    {
+      "name": "employee cannot create administrators",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 2.25
+    },
+    {
+      "name": "operator cannot manage settings",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 2.13
+    },
+    {
+      "name": "operator cannot see analytics",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 2.11
+    },
+    {
+      "name": "analyst cannot see raw tickets",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 2.1
+    },
+    {
+      "name": "analyst cannot read knowledge",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 1.86
+    },
+    {
+      "name": "analyst can read analytics",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 3.48
+    },
+    {
+      "name": "create VPN regulation",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 13.32
+    },
+    {
+      "name": "employee request with forged email",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 10.39
+    },
+    {
+      "name": "requester bound to profile",
+      "pass": true
+    },
+    {
+      "name": "knowledge answer requires confirmation",
+      "pass": true
+    },
+    {
+      "name": "other employee list",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 4.69
+    },
+    {
+      "name": "other employee list is empty",
+      "pass": true
+    },
+    {
+      "name": "other employee detail denied",
+      "pass": true,
+      "status": 404,
+      "expected": 404,
+      "ms": 2.9
+    },
+    {
+      "name": "other employee feedback denied",
+      "pass": true,
+      "status": 404,
+      "expected": 404,
+      "ms": 2.38
+    },
+    {
+      "name": "other company detail denied",
+      "pass": true,
+      "status": 404,
+      "expected": 404,
+      "ms": 2.6
+    },
+    {
+      "name": "own confirmation",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 6.85
+    },
+    {
+      "name": "confirmed statistics",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 3.35
+    },
+    {
+      "name": "deflection includes confirmation",
+      "pass": true
+    },
+    {
+      "name": "knowledge poisoning rejected",
+      "pass": true,
+      "status": 400,
+      "expected": 400,
+      "ms": 3.36
+    },
+    {
+      "name": "oversized ticket rejected",
+      "pass": true,
+      "status": 400,
+      "expected": 400,
+      "ms": 2.38
+    },
+    {
+      "name": "unsupported problem escalated",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 7.86
+    },
+    {
+      "name": "no invented answer",
+      "pass": true
+    },
+    {
+      "name": "operator assigns priority",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 7.59
+    },
+    {
+      "name": "operator answers",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 9.79
+    },
+    {
+      "name": "employee sees operator response",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 2.78
+    },
+    {
+      "name": "operator reply persisted",
+      "pass": true
+    },
+    {
+      "name": "operator cannot clear data",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 1.88
+    },
+    {
+      "name": "operator cannot delete regulation",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 27.54
+    },
+    {
+      "name": "issue integration key",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 6.09
+    },
+    {
+      "name": "scoped key ingest",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 12.79
+    },
+    {
+      "name": "scoped key cannot list tickets",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.53
+    },
+    {
+      "name": "callback outside allowlist rejected",
+      "pass": true,
+      "status": 400,
+      "expected": 400,
+      "ms": 5.16
+    },
+    {
+      "name": "revoke integration key",
+      "pass": true,
+      "status": 204,
+      "expected": 204,
+      "ms": 6.28
+    },
+    {
+      "name": "revoked integration key denied",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 3.26
+    },
+    {
+      "name": "issue website widget key",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 4.71
+    },
+    {
+      "name": "widget browser preflight",
+      "pass": true,
+      "status": 204,
+      "expected": 204,
+      "ms": 2.36
+    },
+    {
+      "name": "widget exact origin in CORS",
+      "pass": true
+    },
+    {
+      "name": "widget wrong preflight origin denied",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 1.93
+    },
+    {
+      "name": "widget config by scoped key",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 3.27
+    },
+    {
+      "name": "widget cannot impersonate another channel",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.33
+    },
+    {
+      "name": "widget creates ticket",
+      "pass": true,
+      "status": 201,
+      "expected": 201,
+      "ms": 17.03
+    },
+    {
+      "name": "company cannot mutate foreign member",
+      "pass": true,
+      "status": 404,
+      "expected": 404,
+      "ms": 3.32
+    },
+    {
+      "name": "administrator cannot change own role",
+      "pass": true,
+      "status": 400,
+      "expected": 400,
+      "ms": 2.24
+    },
+    {
+      "name": "role changes applied",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.06
+    },
+    {
+      "name": "existing session sees changed role",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 3.41
+    },
+    {
+      "name": "changed session loses ticket access",
+      "pass": true,
+      "status": 403,
+      "expected": 403,
+      "ms": 1.96
+    },
+    {
+      "name": "disable member",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.52
+    },
+    {
+      "name": "disabled session rejected",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.44
+    },
+    {
+      "name": "re-enable member",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 4.85
+    },
+    {
+      "name": "old session stays revoked after enable",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 1.84
+    },
+    {
+      "name": "administrator resets password",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.57
+    },
+    {
+      "name": "reset revokes open session",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.43
+    },
+    {
+      "name": "old password rejected",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 197.83
+    },
+    {
+      "name": "new code activates reset account",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 203.17
+    },
+    {
+      "name": "logout persists",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.38
+    },
+    {
+      "name": "logged out access denied",
+      "pass": true,
+      "status": 401,
+      "expected": 401,
+      "ms": 2.22
+    },
+    {
+      "name": "80 parallel analytics reads succeed",
+      "pass": true
+    },
+    {
+      "name": "20 concurrent ticket writes succeed",
+      "pass": true
+    },
+    {
+      "name": "concurrent writes have unique IDs",
+      "pass": true
+    },
+    {
+      "name": "read builder configuration",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 2.41
+    },
+    {
+      "name": "save custom department",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 17.94
+    },
+    {
+      "name": "custom department assignable to ticket",
+      "pass": true
+    },
+    {
+      "name": "final company ticket count",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 5.36
+    },
+    {
+      "name": "final statistics consistency",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 16.34
+    },
+    {
+      "name": "statistics total equals company ticket count",
+      "pass": true
+    },
+    {
+      "name": "other company remains empty",
+      "pass": true,
+      "status": 200,
+      "expected": 200,
+      "ms": 2.65
+    },
+    {
+      "name": "no cross-company load leakage",
+      "pass": true
+    }
+  ],
+  "performance": {
+    "analytics": {
+      "requests": 80,
+      "median_ms": 5.92,
+      "p95_ms": 8.52,
+      "max_ms": 27.74
+    },
+    "ticket_create": {
+      "requests": 20,
+      "median_ms": 19.73,
+      "p95_ms": 27.93,
+      "max_ms": 30.1
+    }
+  }
+}

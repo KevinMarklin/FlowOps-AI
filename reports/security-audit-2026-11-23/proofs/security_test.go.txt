@@ -1,0 +1,37 @@
+package security
+
+import (
+ "net/http"
+ "net/http/httptest"
+ "strings"
+ "testing"
+)
+
+// These tests document CURRENT weaknesses, not desired secure behavior.
+func TestAuditUnprotectedRoutes(t *testing.T) {
+ for _, tc := range []struct{method,path string}{
+  {"GET","/api/tickets"}, {"GET","/api/tickets/1"},
+  {"POST","/api/tickets/1/feedback"}, {"POST","/api/v1/ingest"},
+  {"GET","/api/audit"}, {"GET","/api/stats"},
+ } {
+  t.Run(tc.method+tc.path,func(t *testing.T){
+   reached:=false
+   next:=http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){reached=true;w.WriteHeader(204)})
+   w:=httptest.NewRecorder()
+   ProtectOperatorWrites(next,strings.Repeat("x",32)).ServeHTTP(w,httptest.NewRequest(tc.method,tc.path,nil))
+   if !reached || w.Code!=204 { t.Fatalf("expected current anonymous access; got %d",w.Code) }
+  })
+ }
+}
+
+func TestAuditPIILeakExamples(t *testing.T) {
+ for _, input:=range []string{
+  "Contact IVANOV@EXAMPLE.COM about VPN",
+  "Сотрудник Иван Петров, зарплата 250000 рублей, счёт 40702810900000000001",
+ } {
+  result:=MaskPII(input)
+  if result.MaskedText!=input { t.Fatalf("example no longer reproduces: %q",result.MaskedText) }
+  if reason:=CheckPromptInput(input,MaxTicketBytes); reason!="" {t.Fatalf("blocked before provider: %s",reason)}
+  t.Log("synthetic sensitive text remains eligible for provider submission")
+ }
+}

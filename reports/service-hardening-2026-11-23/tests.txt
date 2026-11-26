@@ -1,0 +1,9 @@
+	flowops-ai/cmd/server		coverage: 0.0% of statements
+ok  	flowops-ai/internal/analyzer	1.698s	coverage: 87.5% of statements
+ok  	flowops-ai/internal/channels	1.146s	coverage: 20.1% of statements
+	flowops-ai/internal/database		coverage: 0.0% of statements
+ok  	flowops-ai/internal/delivery	2.786s	coverage: 71.0% of statements
+ok  	flowops-ai/internal/handlers	2.279s	coverage: 37.8% of statements
+ok  	flowops-ai/internal/knowledge	1.391s	coverage: 64.2% of statements
+?   	flowops-ai/internal/models	[no test files]
+ok  	flowops-ai/internal/security	1.053s	coverage: 87.1% of statements

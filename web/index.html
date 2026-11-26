@@ -4,50 +4,74 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#102a43">
-  <title>FlowOps AI — Service Desk 2.0</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <title>FlowOps AI — Служба поддержки</title>
   <link rel="stylesheet" href="/styles.css?v=7">
   <link rel="stylesheet" href="/overrides.css?v=7">
+  <link rel="stylesheet" href="/workspace.css?v=7">
+  <link rel="stylesheet" href="/workflow.css?v=4">
+  <link rel="icon" type="image/png" href="/assets/flowops-mark.png">
 </head>
 <body class="auth-required">
+  <a class="skip-link" href="#employee">К содержимому</a>
   <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
     <div class="auth-card">
-      <div class="auth-brand"><span class="brand-mark">F</span><strong>FlowOps AI</strong></div>
-      <p class="eyebrow">БЕЗОПАСНЫЙ ДОСТУП</p><h1 id="auth-title">Вход в рабочее пространство</h1>
-      <form id="auth-form"><label for="operator-token">Токен оператора</label><div class="token-field"><input id="operator-token" type="password" autocomplete="current-password" required placeholder="op_…"><button type="button" id="toggle-token" aria-label="Показать токен">◉</button></div><p id="auth-error" class="auth-error" role="alert" hidden></p><button class="auth-submit" type="submit">Войти в кабинет</button></form>
-      <div class="auth-divider"><span>НОВЫЙ ЗАКАЗЧИК / ДЕМО-РЕЖИМ</span></div>
-      <form id="workspace-form"><label for="workspace-name">Название компании</label><input id="workspace-name" required maxlength="120" placeholder="Например, ООО Ромашка"><button id="workspace-submit" type="submit" class="workspace-create">Создать чистое пространство и получить токен</button></form>
+      <div class="auth-brand"><img class="brand-logo" src="/assets/flowops-mark.png" alt="" width="44" height="44"><strong>FlowOps AI</strong></div>
+      <h1 id="auth-title">Вход в рабочее пространство</h1>
+      <p id="auth-error" class="auth-error" role="alert" hidden></p>
+      <p id="auth-notice" class="auth-notice" role="status" hidden></p>
+      <form id="auth-form">
+        <label for="login-email">Рабочая почта</label><input id="login-email" type="email" autocomplete="username" required maxlength="254" placeholder="name@company.ru">
+        <label for="login-password">Пароль или код приглашения</label><div class="token-field"><input id="login-password" type="password" autocomplete="current-password" required><button type="button" data-toggle-password="login-password" aria-label="Показать пароль">◉</button></div>
+        <label id="login-company-label" for="login-company" hidden>Компания</label><select id="login-company" hidden></select>
+        <div id="login-workspace-manual" hidden><label for="login-workspace-id">Компания (если доступов несколько)</label><input id="login-workspace-id" autocomplete="off" placeholder="Идентификатор от администратора"><p class="password-hint">Обычно это поле можно оставить пустым.</p></div>
+        <button class="auth-submit" type="submit">Войти</button>
+      </form>
+      <details id="registration-details" class="auth-registration"><summary>Зарегистрировать компанию</summary>
+      <form id="workspace-form"><label for="workspace-name">Название новой компании</label><input id="workspace-name" required maxlength="120" placeholder="Например, ООО Ромашка"><button id="workspace-submit" type="submit" class="workspace-create">Создать компанию</button></form>
       <div id="workspace-result" class="workspace-result" hidden></div>
+      </details>
+      <details id="activation-details" class="activation-details"><summary id="activation-summary">Восстановить пароль</summary>
+        <p class="muted">Введите код от администратора и задайте пароль. После активации код больше не понадобится. Для сброса пароля запросите новый код.</p>
+        <form id="activation-form"><label for="operator-token">Код активации</label><div class="token-field"><input id="operator-token" type="password" autocomplete="off" required placeholder="Код от администратора"><button type="button" id="toggle-token" aria-label="Показать код">◉</button></div>
+        <label for="activation-email">Рабочая почта участника</label><input id="activation-email" type="email" autocomplete="username" required maxlength="254">
+        <label for="activation-password">Новый пароль</label><div class="token-field"><input id="activation-password" type="password" autocomplete="new-password" minlength="12" required><button type="button" data-toggle-password="activation-password" aria-label="Показать новый пароль">◉</button></div><p class="password-hint">Не меньше 12 символов. Подойдёт фраза из нескольких слов.</p>
+        <label for="activation-confirm">Повторите пароль</label><input id="activation-confirm" type="password" autocomplete="new-password" minlength="12" required>
+        <button class="auth-submit" type="submit">Активировать доступ</button></form>
+      </details>
+
     </div>
   </section>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">F</span><div><strong>FlowOps AI</strong><span>Service Desk 2.0</span></div></div>
-    <div class="topbar-right"><div id="channel-indicators" class="channel-indicators" aria-label="Подключённые каналы"></div><div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div><span id="workspace-name-label" class="workspace-label"></span><button id="logout" type="button" class="logout-button">Выйти</button></div>
+    <div class="brand"><img class="brand-logo" src="/assets/flowops-mark.png" alt="" width="44" height="44"><div><strong>FlowOps AI</strong><span>Служба поддержки</span></div></div>
+    <div class="topbar-right"><div id="channel-indicators" class="channel-indicators" aria-label="Подключённые каналы"></div><div class="api-status"><span id="api-dot" class="status-dot"></span><span id="api-status">Проверка API...</span></div><span id="user-name-label" class="workspace-label"></span><span id="role-label" class="role-label"></span><span id="workspace-name-label" class="workspace-label"></span><button id="logout" type="button" class="logout-button">Выйти</button></div>
   </header>
   <main class="shell">
     <nav class="tabs" aria-label="Разделы приложения">
-       <button type="button" class="tab active" data-tab="employee">Окно сотрудника <span>Подача обращения</span></button>
-       <button type="button" class="tab" data-tab="operator">Пульт оператора и Аналитика <span>Служба поддержки</span></button>
+       <button type="button" class="tab active" aria-current="page" data-tab="employee">Обращения <span>Подача обращения</span></button>
+       <button type="button" class="tab" data-tab="operator">Очередь обращений <span>Служба поддержки</span></button>
+       <button type="button" class="tab" data-tab="analytics">Аналитика <span>Эффект и нагрузка</span></button>
        <button type="button" class="tab" data-tab="knowledge">База знаний <span>Регламенты ИИ</span></button>
        <button type="button" class="tab" data-tab="channels">API и каналы <span>Интеграции</span></button>
-       <button type="button" class="tab" data-tab="builder">Конструктор <span>Каналы / стиль / AI</span></button>
+       <button type="button" class="tab" data-tab="builder">Настройки <span>Каналы / стиль / AI</span></button>
+       <button type="button" class="tab" data-tab="admin">Администрирование <span>Команда и доступы</span></button>
     </nav>
 
     <section id="employee" class="view active">
-      <div class="page-heading"><div><p class="eyebrow">КАБИНЕТ СОТРУДНИКА / 01</p><h1>Опишите проблему.<br><em>FlowOps разберется.</em></h1><p class="lede">Классификация ИИ, готовый регламент и передача специалисту в одном окне.</p></div><div class="heading-note"><span class="pulse"></span> Автоматический приём заявок</div></div>
-        <div id="employee-workspace-empty" class="workspace-empty employee-empty" hidden><span>✦</span><h3>Рабочее пространство ещё не заполнено. Настройте каналы и добавьте первые регламенты в Конструкторе</h3><button type="button" data-open-builder>Открыть Конструктор</button></div><div class="employee-grid">
+      <div class="page-heading"><div><h1>Чем помочь?</h1><p class="lede">Опишите проблему. Найдём инструкцию или передадим обращение нужному специалисту.</p></div></div>
+        <div id="employee-workspace-empty" class="workspace-empty employee-empty" hidden><h3>Здесь пока нет данных. Обращения и регламенты появятся после начала работы.</h3><button type="button" data-admin-only data-open-builder>Открыть Конструктор</button></div><div class="employee-grid">
         <div class="panel request-panel">
-           <div class="panel-title"><div><span class="step">01</span><h2>Новое обращение</h2></div><span class="live-label">● В СЕТИ</span></div>
+           <div class="panel-title"><div><h2>Новое обращение</h2></div></div>
           <form id="ticket-form">
-            <label for="email">Email сотрудника</label>
+            <label for="email">Рабочая почта</label><p id="identity-hint" class="muted" hidden>Ответ появится здесь. Обращение привязано к вашей учётной записи.</p>
             <input id="email" type="email" value="student.demo@example.org" required>
-            <label for="problem">Опишите вашу проблему обычным языком</label>
-            <textarea id="problem" rows="7" placeholder="Например: после обновления не могу подключиться к VPN..." required></textarea>
-            <button class="primary-button" type="submit"><span>Отправить обращение</span><b>↗</b></button>
+            <label for="problem">Что случилось?</label>
+            <textarea id="problem" rows="6" aria-describedby="problem-hint" placeholder="Например: после обновления не подключается VPN. Вижу ошибку 809, перезапуск не помог." required></textarea>
+            <p id="problem-hint" class="field-help">Укажите, что не работает, какую ошибку видите и что уже пробовали.</p>
+            <p id="ticket-error" class="form-error" role="alert" hidden></p>
+            <button class="primary-button" type="submit"><span>Отправить обращение</span></button>
+            <p id="ticket-progress" class="field-help" role="status" hidden>Анализируем проблему и проверяем базу регламентов…</p>
           </form>
-          <div class="demo-block"><div class="demo-heading"><span>Быстрые демо-сценарии</span><small>для защиты</small></div><div class="demo-grid">
+          <div class="demo-block"><div class="demo-heading"><span>Примеры обращений</span><small>Финансовый университет</small></div><div class="demo-grid">
             <button type="button" data-demo="Как получить справку об обучении по месту требования в МФЦ Финуниверситета?"><b>Справка об обучении</b><span>Студенческий офис / МФЦ</span></button>
             <button type="button" data-demo="Как заказать справку для военкомата в МФЦ Финуниверситета?"><b>Справка в военкомат</b><span>Маршрут в ответственное подразделение</span></button>
             <button type="button" data-demo="Как подключиться к сети кампуса FA-WiFi?"><b>Wi-Fi кампуса</b><span>Подключение к FA-WiFi</span></button>
@@ -56,35 +80,35 @@
             <button type="button" data-demo="Как оформить авансовый отчёт после командировки в Финуниверситете?"><b>Авансовый отчёт</b><span>Документы после командировки</span></button>
           </div></div>
         </div>
-        <div class="result-column"><div id="analysis-result" class="panel result-panel empty"><div class="empty-state"><div class="empty-icon">✦</div><h3>Результат разбора появится здесь</h3><p>Отправьте обращение, и AI выделит суть, приоритет и подходящий регламент.</p></div></div>
-           <div class="panel history-panel"><div class="panel-title"><div><span class="step">02</span><h2>Последние обращения</h2></div><button type="button" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><div id="history-list" class="history-list"><p class="muted">История пока пуста.</p></div></div>
+        <div class="result-column"><div id="analysis-result" class="panel result-panel empty" tabindex="-1" aria-label="Результат обращения"><div class="empty-state"><h2>Что будет после отправки</h2><ol class="request-steps"><li><strong>Разберём проблему</strong><span>Выделим суть, определим отдел и приоритет.</span></li><li><strong>Проверим регламенты</strong><span>Если есть готовая инструкция, покажем её здесь.</span></li><li><strong>Подключим специалиста</strong><span>Если регламента нет или он не помог.</span></li></ol></div></div>
+           <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="Номер или текст проблемы" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div></div>
          </div>
        </div>
       </section>
       <section id="builder" class="view">
-        <div class="page-heading"><div><p class="eyebrow">FLOWOPS BOT DESIGNER</p><h1>Настройте бота.<br><em>Проверьте до запуска.</em></h1><p class="lede">Каналы, стиль общения, умный импорт регламентов и живая песочница.</p></div><div class="heading-note"><span class="pulse"></span> Настройки доступны оператору</div></div>
+        <div class="page-heading"><div><h1>Настройка сервиса</h1><p class="lede">Каналы, стиль общения, умный импорт регламентов и живая песочница.</p></div><div class="heading-note"><span class="pulse"></span> Настройки компании</div></div>
         <div class="builder-layout">
-          <section class="panel builder-block"><div class="builder-block-title"><span class="step">01</span><div><h2>Каналы связи</h2><p>Укажите реквизиты подключения и проверьте их доступность.</p></div></div>
+          <section class="panel builder-block"><div class="builder-block-title"><div><h2>Каналы связи</h2><p>Укажите реквизиты подключения и проверьте их доступность.</p></div></div>
             <div class="channel-config-grid">
-              <article class="channel-config-card" data-channel-card="telegram"><header><h3>✈️ Telegram</h3><span class="channel-status">Не проверен</span></header><p class="channel-owner" data-channel-owner="telegram"></p><label for="builder-telegram-token">Токен бота</label><input id="builder-telegram-token" type="password" autocomplete="off" placeholder="123456:ABC…"><div class="channel-actions"><button type="button" data-check-channel="telegram" class="secondary-button">Проверить связь</button><button type="button" data-save-channel="telegram" class="secondary-button">Сохранить и перезапустить канал</button><button type="button" data-disable-channel="telegram" class="danger-button" hidden>Отключить канал</button></div></article>
-              <article class="channel-config-card" data-channel-card="max"><header><h3>💬 MAX</h3><span class="channel-status">Не проверен</span></header><p class="channel-owner" data-channel-owner="max"></p><label for="builder-max-token">Токен бота</label><input id="builder-max-token" type="password" autocomplete="off" placeholder="Токен MAX"><div class="channel-actions"><button type="button" data-check-channel="max" class="secondary-button">Проверить связь</button><button type="button" data-save-channel="max" class="secondary-button">Сохранить и перезапустить канал</button><button type="button" data-disable-channel="max" class="danger-button" hidden>Отключить канал</button></div></article>
-              <article class="channel-config-card" data-channel-card="email"><header><h3>✉️ Email</h3><span class="channel-status">Не проверен</span></header><p class="channel-owner" data-channel-owner="email"></p><label>IMAP / SMTP серверы<input id="builder-mail-hosts" placeholder="imap.example.ru / smtp.example.ru"></label><label>Почта<input id="builder-mail-user" type="email" placeholder="support@example.ru"></label><label>Пароль приложения<input id="builder-mail-password" type="password" autocomplete="off"></label><div class="channel-actions"><button type="button" data-check-channel="email" class="secondary-button">Проверить связь</button><button type="button" data-save-channel="email" class="secondary-button">Сохранить и перезапустить канал</button><button type="button" data-disable-channel="email" class="danger-button" hidden>Отключить канал</button></div></article>
+              <article class="channel-config-card" data-channel-card="telegram"><header><h3>Telegram</h3><span class="channel-status">Не проверен</span></header><p class="channel-owner" data-channel-owner="telegram"></p><label for="builder-telegram-token">Токен бота</label><input id="builder-telegram-token" type="password" autocomplete="off" placeholder="123456:ABC…"><div class="channel-actions"><button type="button" data-check-channel="telegram" class="secondary-button">Проверить связь</button><button type="button" data-save-channel="telegram" class="secondary-button">Сохранить и перезапустить канал</button><button type="button" data-disable-channel="telegram" class="danger-button" hidden>Отключить канал</button></div></article>
+              <article class="channel-config-card" data-channel-card="max"><header><h3>MAX</h3><span class="channel-status">Не проверен</span></header><p class="channel-owner" data-channel-owner="max"></p><label for="builder-max-token">Токен бота</label><input id="builder-max-token" type="password" autocomplete="off" placeholder="Токен MAX"><div class="channel-actions"><button type="button" data-check-channel="max" class="secondary-button">Проверить связь</button><button type="button" data-save-channel="max" class="secondary-button">Сохранить и перезапустить канал</button><button type="button" data-disable-channel="max" class="danger-button" hidden>Отключить канал</button></div></article>
+              <article class="channel-config-card" data-channel-card="email"><header><h3>Email</h3><span class="channel-status">Не проверен</span></header><p class="channel-owner" data-channel-owner="email"></p><label>IMAP / SMTP серверы<input id="builder-mail-hosts" placeholder="imap.example.ru / smtp.example.ru"></label><label>Почта<input id="builder-mail-user" type="email" placeholder="support@example.ru"></label><label>Пароль приложения<input id="builder-mail-password" type="password" autocomplete="off"></label><div class="channel-actions"><button type="button" data-check-channel="email" class="secondary-button">Проверить связь</button><button type="button" data-save-channel="email" class="secondary-button">Сохранить и перезапустить канал</button><button type="button" data-disable-channel="email" class="danger-button" hidden>Отключить канал</button></div></article>
             </div><p class="muted">Учётные данные каналов передаются только операторским API; сервер применит сохранённые настройки после перезапуска.</p>
           </section>
-          <section class="panel builder-block"><div class="builder-block-title"><span class="step">02</span><div><h2>Отделы и стиль общения</h2><p>Управляйте маршрутизацией и шаблонами сообщений.</p></div></div>
+          <section class="panel builder-block"><div class="builder-block-title"><div><h2>Отделы и стиль общения</h2><p>Управляйте маршрутизацией и шаблонами сообщений.</p></div></div>
             <div id="builder-departments" class="department-editor"></div><button id="add-builder-department" type="button" class="secondary-button">＋ Добавить отдел</button>
             <div class="style-grid"><label>Тональность бота<select id="builder-tone"><option value="friendly">Дружелюбная и профессиональная</option><option value="formal">Официальная</option><option value="concise">Краткая</option><option value="warm">Заботливая</option></select></label><label>Шаблон /start<textarea id="builder-start-template" rows="2">Здравствуйте! Опишите ваш вопрос — я постараюсь помочь.</textarea></label><label>Передача оператору<textarea id="builder-handoff-template" rows="2">Заявка #{ticket_id} направлена в отдел {department}.</textarea></label><label>Подпись<textarea id="builder-signature" rows="2">Служба поддержки FlowOps</textarea></label></div>
-            <div class="variable-hints">Переменные: <button type="button" data-insert-variable="{ticket_id}"><code>{ticket_id}</code></button> <button type="button" data-insert-variable="{department}"><code>{department}</code></button></div><button id="save-builder-style" type="button" class="primary-button"><span>Сохранить настройки общения</span><b>↗</b></button>
+            <div class="variable-hints">Переменные: <button type="button" data-insert-variable="{ticket_id}"><code>{ticket_id}</code></button> <button type="button" data-insert-variable="{department}"><code>{department}</code></button></div><button id="save-builder-style" type="button" class="primary-button"><span>Сохранить настройки общения</span></button>
           </section>
-          <section class="panel builder-block"><div class="builder-block-title"><span class="step">03</span><div><h2>Умный импорт регламентов</h2><p>ПДн будут замаскированы до обработки текста моделью.</p></div></div>
-            <label for="smart-import-text">Вставьте текст инструкции, приказа или FAQ</label><textarea id="smart-import-text" rows="11" placeholder="Вставьте исходный текст регламента, инструкции или часто задаваемых вопросов…"></textarea><div class="smart-import-controls"><label>Отдел по умолчанию<select id="smart-import-department"><option>General</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option></select></label><button id="smart-import-submit" type="button" class="primary-button"><span>Сгенерировать статьи через ИИ</span><b>✦</b></button></div><div id="smart-import-results" class="smart-import-results" aria-live="polite"></div>
+          <section class="panel builder-block"><div class="builder-block-title"><div><h2>Умный импорт регламентов</h2><p>ПДн будут замаскированы до обработки текста моделью.</p></div></div>
+            <label for="smart-import-text">Вставьте текст инструкции, приказа или FAQ</label><textarea id="smart-import-text" rows="11" placeholder="Вставьте исходный текст регламента, инструкции или часто задаваемых вопросов…"></textarea><div class="smart-import-controls"><label>Отдел по умолчанию<select id="smart-import-department"><option>General</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option></select></label><button id="smart-import-submit" type="button" class="primary-button"><span>Сгенерировать статьи через ИИ</span></button></div><div id="smart-import-results" class="smart-import-results" aria-live="polite"></div>
           </section>
-          <section class="panel builder-block"><div class="builder-block-title"><span class="step">04</span><div><h2>Живая песочница · Live Preview</h2><p>Dry-run без создания тикета и отправки сообщения в канал.</p></div></div>
-            <div class="preview-controls"><label for="sandbox-message">Тестовый вопрос клиента</label><textarea id="sandbox-message" rows="4" placeholder="Например: Не могу подключиться к VPN, ошибка 809"></textarea><div class="sandbox-toolbar"><label>Канал<select id="sandbox-channel"><option value="telegram">Telegram</option><option value="max">MAX</option><option value="email">Email</option></select></label><button id="sandbox-run" type="button" class="primary-button"><span>Проверить ответ</span><b>↗</b></button></div></div>
+          <section class="panel builder-block"><div class="builder-block-title"><div><h2>Проверка ответа</h2><p>Посмотрите ответ без создания обращения и отправки в канал.</p></div></div>
+            <div class="preview-controls"><label for="sandbox-message">Тестовый вопрос клиента</label><textarea id="sandbox-message" rows="4" placeholder="Например: Не могу подключиться к VPN, ошибка 809"></textarea><div class="sandbox-toolbar"><label>Канал<select id="sandbox-channel"><option value="telegram">Telegram</option><option value="max">MAX</option><option value="email">Email</option></select></label><button id="sandbox-run" type="button" class="primary-button"><span>Проверить ответ</span></button></div></div>
             <div class="sandbox-result"><div class="sandbox-meta" id="sandbox-meta">Введите вопрос для тестового прогона.</div><pre id="sandbox-text-preview" hidden></pre><iframe id="sandbox-email-preview" title="Предпросмотр письма FlowOps" sandbox="" hidden></iframe></div>
           </section>
           <section class="panel builder-block">
-            <div class="builder-block-title"><span class="step">05</span><div><h2>Виджет на сайт и API</h2><p>Настройте внешний вид чата, выпустите ключ и подключите сайт или CRM.</p></div></div>
+            <div class="builder-block-title"><div><h2>Виджет на сайт и API</h2><p>Настройте внешний вид чата, выпустите ключ и подключите сайт или CRM.</p></div></div>
             <section class="integration-section">
               <div class="integration-grid">
                 <div class="panel widget-settings">
@@ -97,12 +121,12 @@
                 <div class="panel widget-preview-panel"><h2>Предпросмотр</h2><div class="widget-preview"><div class="preview-window"><b id="preview-title">Онлайн-поддержка</b><p id="preview-greeting">Здравствуйте! Чем мы можем помочь?</p><span>Введите вопрос…</span></div><button id="preview-launcher" type="button" aria-label="Предпросмотр кнопки">✦</button></div><p class="muted">Так виджет будет выглядеть на сайте заказчика.</p></div>
               </div>
               <div class="panel integration-keys">
-                <div class="panel-title"><div><span class="step">01</span><h2>Ключ для виджета</h2></div></div>
-                <div class="key-create-row"><label for="widget-origin">Origin сайта (например, https://example.ru)</label><input id="widget-origin" placeholder="https://example.ru"><button id="create-widget-key" class="primary-button" type="button"><span>Создать ключ для виджета</span><b>↗</b></button></div>
+                <div class="panel-title"><div><h2>Ключ для виджета</h2></div></div>
+                <div class="key-create-row"><label for="widget-origin">Origin сайта (например, https://example.ru)</label><input id="widget-origin" placeholder="https://example.ru"><button id="create-widget-key" class="primary-button" type="button"><span>Создать ключ для виджета</span></button></div>
                 <div id="widget-snippet-box" class="snippet-box" hidden><label for="widget-snippet">Сниппет для вставки перед &lt;/body&gt;</label><textarea id="widget-snippet" readonly rows="3"></textarea><button id="copy-widget-snippet" type="button" class="secondary-button">Копировать сниппет</button><p class="muted">Полный ключ показан только при выпуске. Сохраните его в сниппете.</p></div>
               </div>
               <div class="panel integration-keys">
-                <div class="panel-title"><div><span class="step">02</span><h2>API-ключи 1С / CRM</h2></div><button id="refresh-api-keys" class="icon-button" type="button" title="Обновить">↻</button></div>
+                <div class="panel-title"><div><h2>API-ключи 1С / CRM</h2></div><button id="refresh-api-keys" class="icon-button" type="button" title="Обновить">↻</button></div>
                 <div class="key-create-row crm-key-row"><label for="crm-key-name">Название интеграции</label><input id="crm-key-name" value="1С / CRM"><button id="create-ingest-key" type="button" class="secondary-button">Выпустить ingest-ключ</button></div>
                 <div id="issued-key-notice" class="issued-key-notice" hidden></div>
                 <div class="table-wrap"><table class="keys-table"><thead><tr><th>Название</th><th>Префикс</th><th>Scope / Origin</th><th>Создан</th><th>Использован</th><th></th></tr></thead><tbody id="api-keys-list"><tr><td colspan="6">Загрузка ключей…</td></tr></tbody></table></div>
@@ -112,27 +136,37 @@
         </div>
       </section>
 
-    <section id="operator" class="view">
-      <div class="page-heading operator-heading"><div><p class="eyebrow">ПУЛЬТ УПРАВЛЕНИЯ</p><h1>Пульт оператора<br><em>и аналитика.</em></h1></div><div class="heading-note"><span class="pulse"></span> Живая очередь</div></div>
-      <section class="leader-dashboard" aria-labelledby="leader-title">
-        <div class="leader-heading"><div><p class="eyebrow">ОБЗОР ДЛЯ РУКОВОДИТЕЛЯ</p><h2 id="leader-title">Эффект и нагрузка поддержки</h2></div><p id="metrics-status" role="status">Загрузка статистики PostgreSQL…</p></div>
+<section id="analytics" class="view"><div class="page-heading"><div><h1>Аналитика поддержки</h1><p class="lede">Эффективность автоматизации и распределение нагрузки без доступа к текстам обращений.</p></div></div>      <section class="leader-dashboard" aria-labelledby="leader-title">
+        <div class="leader-heading"><div><h2 id="leader-title">Эффект и нагрузка поддержки</h2></div><p id="metrics-status" role="status">Загрузка статистики PostgreSQL…</p></div>
         <div id="metrics" class="metrics" aria-label="Показатели сервиса"></div>
         <p class="metrics-method">Deflection Rate — подтверждённые автоответы без ответа оператора / все обращения. Ожидающие подтверждения не учитываются. Часы — расчётная оценка, не измеренное рабочее время.</p>
-      </section>
-       <div class="queue-toolbar"><div><h2>Очередь обращений</h2><p id="queue-count">Загрузка тикетов...</p></div><div class="filters"><select id="department-filter"><option value="">Все отделы</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option><option>Unassigned</option></select><select id="status-filter"><option value="">Все статусы</option><option value="new">Новый</option><option value="awaiting_confirmation">Ожидает подтверждения</option><option value="assigned_to_operator">У оператора</option><option value="auto_resolved">Решен ИИ</option><option value="resolved">Решено специалистом</option><option value="closed">Решено специалистом</option></select><button id="refresh-queue" class="secondary-button">↻ Обновить</button><button id="reset-data" class="danger-button">Очистить базу</button></div></div>
-       <div id="operator-empty" class="workspace-empty" hidden><span>✦</span><h3>Рабочее пространство ещё не заполнено. Настройте каналы и добавьте первые регламенты в Конструкторе</h3><button type="button" data-open-builder>Открыть Конструктор</button></div><div id="ticket-list" class="ticket-list"></div>
+      </section></section>
+    <section id="operator" class="view">
+      <div class="page-heading operator-heading"><div><h1>Очередь обращений</h1></div><div class="heading-note"><span class="pulse"></span> Живая очередь</div></div>
+
+       <div class="queue-search-row"><label class="search-field" for="queue-search">Поиск в очереди<input id="queue-search" type="search" placeholder="Номер, текст или почта сотрудника" autocomplete="off"></label><label for="priority-filter">Приоритет<select id="priority-filter"><option value="">Любой приоритет</option><option value="high">Высокий</option><option value="medium">Средний</option><option value="low">Низкий</option></select></label></div><div class="queue-toolbar"><div><h2>Обращения команды</h2><p id="queue-count" role="status">Загрузка тикетов...</p></div><div class="filters"><select id="department-filter" aria-label="Фильтр по отделу"><option value="">Все отделы</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option><option>Unassigned</option></select><select id="status-filter" aria-label="Фильтр по статусу"><option value="">Все статусы</option><option value="new">Новый</option><option value="awaiting_confirmation">Ожидает подтверждения</option><option value="assigned_to_operator">У оператора</option><option value="auto_resolved">Решен ИИ</option><option value="resolved">Решено специалистом</option><option value="closed">Закрыто</option></select><button id="refresh-queue" class="secondary-button">↻ Обновить</button><button data-admin-only id="reset-data" class="danger-button">Очистить базу</button></div></div>
+       <div id="operator-empty" class="workspace-empty" hidden><h3>Здесь пока нет данных. Обращения и регламенты появятся после начала работы.</h3><button type="button" data-admin-only data-open-builder>Открыть Конструктор</button></div><div id="ticket-list" class="ticket-list"></div>
     </section>
 
     <section id="knowledge" class="view">
-      <div class="page-heading"><div><p class="eyebrow">БАЗА ЗНАНИЙ / РЕГЛАМЕНТЫ</p><h1>Регламенты, которые<br><em>учатся вместе с командой.</em></h1><p class="lede">Добавляйте решения операторов в общую базу, чтобы повторяющиеся вопросы закрывались автоматически.</p></div><div class="heading-note"><span class="pulse"></span> Обучение на лету</div></div>
-       <div class="knowledge-layout"><div class="panel knowledge-form-panel"><div class="panel-title"><div><span class="step">01</span><h2>Добавить новый регламент</h2></div></div><form id="knowledge-form"><label for="knowledge-department">Отдел</label><select id="knowledge-department" required><option value="IT">IT</option><option value="HR">HR</option><option value="Accounting">Accounting</option><option value="Facilities">Facilities</option></select><label for="knowledge-title">Заголовок</label><input id="knowledge-title" required placeholder="Например: Локальная ИИ не запускается"><label for="knowledge-keywords">Ключевые слова через запятую</label><input id="knowledge-keywords" placeholder="локальная ии, нейросеть, модель"><label for="knowledge-content">Текст инструкции</label><textarea id="knowledge-content" rows="10" required placeholder="Опишите последовательность действий для сотрудника..."></textarea><button class="primary-button" type="submit"><span>Сохранить регламент</span><b>↗</b></button></form></div><div><div class="knowledge-list-heading"><h2>Действующие регламенты</h2><button id="refresh-knowledge" class="icon-button">↻</button></div><div id="knowledge-empty" class="workspace-empty" hidden><span>✦</span><h3>Рабочее пространство ещё не заполнено. Настройте каналы и добавьте первые регламенты в Конструкторе</h3><button type="button" data-open-builder>Открыть Конструктор</button></div><div id="knowledge-list" class="knowledge-list"></div></div></div>
+      <div class="page-heading"><div><h1>База знаний</h1><p class="lede">Добавляйте решения операторов в общую базу, чтобы повторяющиеся вопросы закрывались автоматически.</p></div><div class="heading-note"><span class="pulse"></span> Обучение на лету</div></div>
+       <div class="knowledge-layout"><div class="panel knowledge-form-panel"><div class="panel-title"><div><h2>Добавить новый регламент</h2></div></div><form id="knowledge-form"><label for="knowledge-department">Отдел</label><select id="knowledge-department" required><option value="IT">IT</option><option value="HR">HR</option><option value="Accounting">Accounting</option><option value="Facilities">Facilities</option></select><label for="knowledge-title">Заголовок</label><input id="knowledge-title" required placeholder="Например: Локальная ИИ не запускается"><label for="knowledge-keywords">Ключевые слова через запятую</label><input id="knowledge-keywords" placeholder="локальная ии, нейросеть, модель"><label for="knowledge-content">Текст инструкции</label><textarea id="knowledge-content" rows="10" required placeholder="Опишите последовательность действий для сотрудника..."></textarea><button class="primary-button" type="submit"><span>Сохранить регламент</span></button></form></div><div><div class="knowledge-list-heading"><h2>Действующие регламенты</h2><button aria-label="Обновить базу знаний" id="refresh-knowledge" class="icon-button">↻</button></div><div id="knowledge-empty" class="workspace-empty" hidden><h3>Здесь пока нет данных. Обращения и регламенты появятся после начала работы.</h3><button type="button" data-admin-only data-open-builder>Открыть Конструктор</button></div><div id="knowledge-list" class="knowledge-list"></div></div></div>
      </section>
      <section id="channels" class="view">
-       <div class="page-heading"><div><p class="eyebrow">OMNICHANNEL INGEST API / DEMO</p><h1>Все каналы.<br><em>Один поток поддержки.</em></h1><p class="lede">Подключайте сайт, почту и ботов к единому API.</p></div></div>
-        <div class="employee-grid"><div class="panel request-panel"><div class="panel-title"><h2>Симулятор внешнего канала</h2></div><label>Канал</label><select id="ingest-channel"><option value="email">✉️ Входящая почта</option><option value="bot">🤖 Telegram / MAX бот</option><option value="web">🌐 Виджет сайта</option></select><label>Отправитель</label><input id="ingest-sender" value="client@company.ru"><label>Тема</label><input id="ingest-subject" value="Лежит сервер!"><label>Сообщение</label><textarea id="ingest-message" rows="7">Здравствуйте! У нас перестал отвечать VPS-сервер в кластере NL-1, сайты выдают 502.</textarea><div class="demo-grid"><button type="button" data-ingest-demo="hoster">🔥 Авария хостера</button><button type="button" data-ingest-demo="bot">🤖 Тот же вопрос из бота</button><button type="button" data-ingest-demo="billing">💳 Денежный вопрос</button></div><button id="ingest-submit" class="primary-button" type="button"><span>Отправить через Ingest API</span><b>↗</b></button></div><div class="panel result-panel"><h2>Ответ интеграции</h2><pre id="ingest-result">Выберите сценарий.</pre></div></div>
+       <div class="page-heading"><div><h1>Проверка интеграций</h1><p class="lede">Подключайте сайт, почту и ботов к единому API.</p></div></div>
+        <div class="employee-grid"><div class="panel request-panel"><div class="panel-title"><h2>Симулятор внешнего канала</h2></div><label for="ingest-channel">Канал</label><select id="ingest-channel"><option value="email">Входящая почта</option><option value="bot">Telegram / MAX бот</option><option value="web">Виджет сайта</option></select><label for="ingest-sender">Отправитель</label><input id="ingest-sender" value="client@company.ru"><label for="ingest-subject">Тема</label><input id="ingest-subject" value="Лежит сервер!"><label for="ingest-message">Сообщение</label><textarea id="ingest-message" rows="7">Здравствуйте! У нас перестал отвечать VPS-сервер в кластере NL-1, сайты выдают 502.</textarea><div class="demo-grid"><button type="button" data-ingest-demo="hoster">Авария хостера</button><button type="button" data-ingest-demo="bot">Тот же вопрос из бота</button><button type="button" data-ingest-demo="billing">Денежный вопрос</button></div><button id="ingest-submit" class="primary-button" type="button"><span>Отправить через Ingest API</span></button></div><div class="panel result-panel"><h2>Ответ интеграции</h2><pre id="ingest-result">Выберите сценарий.</pre></div></div>
       </section>
+
+    <section id="admin" class="view">
+      <details class="workspace-identification"><summary>Идентификатор компании для входа</summary><code id="workspace-id-display"></code><p class="muted">Может понадобиться участникам с доступом ко многим компаниям.</p></details>
+      <div class="page-heading"><div><h1>Администрирование</h1><p class="lede">Персональные доступы к рабочему пространству компании. Роль проверяется сервером при каждом запросе.</p></div></div>
+      <section class="panel builder-block"><h2>Пригласить участника</h2><p class="muted">Создайте профиль и передайте участнику код первого входа. Пароль он задаст самостоятельно. Код показывается только один раз.</p>
+      <form id="member-form" class="member-form"><label>Имя<input id="member-name" required maxlength="120" autocomplete="name"></label><label>Рабочий email<input id="member-email" type="email" required maxlength="254" autocomplete="email"></label><label>Роль<select id="member-role"><option value="employee">Сотрудник — свои обращения</option><option value="operator">Оператор — очередь и регламенты</option><option value="analyst">Аналитик — агрегированные отчёты</option><option value="admin">Администратор — управление компанией</option></select></label><button class="primary-button" type="submit">Выдать доступ</button></form><div id="member-issued" class="workspace-result" role="status" hidden></div></section>
+      <section class="panel builder-block team-panel"><div class="panel-title"><h2>Команда</h2><button id="refresh-members" type="button" class="secondary-button">Обновить</button></div><p class="muted">Доступ владельца хранится отдельно. Собственную роль менять нельзя. Отключение доступа действует со следующего запроса.</p><div class="table-wrap"><table class="keys-table"><thead><tr><th>Участник</th><th>Роль</th><th>Доступ</th><th>Действия</th></tr></thead><tbody id="members-list"></tbody></table></div></section>
+      <section class="panel builder-block team-panel"><h2>Журнал действий</h2><div id="audit-list" class="audit-list"></div></section>
+    </section>
    </main>
-  <div id="toast" class="toast"></div>
-    <script src="/app.js?v=8"></script>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js?v=17"></script>
 </body>
 </html>
