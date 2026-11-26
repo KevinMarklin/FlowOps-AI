@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"flowops-ai/internal/security"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -61,18 +62,18 @@ func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	err = tx.QueryRow(r.Context(), `SELECT COUNT(*),
 	 COUNT(*) FILTER (WHERE status='auto_resolved' AND NULLIF(BTRIM(rag_answer),'') IS NOT NULL AND NULLIF(BTRIM(operator_reply),'') IS NULL
-	 AND NOT EXISTS(SELECT 1 FROM audit_logs a WHERE a.ticket_id=tickets.id AND a.event_type='OPERATOR_REPLY' AND a.created_at>=tickets.created_at)),
+	 AND NOT EXISTS(SELECT 1 FROM audit_logs a WHERE a.ticket_id=tickets.id AND a.tenant_id=tickets.tenant_id AND a.event_type='OPERATOR_REPLY' AND a.created_at>=tickets.created_at)),
 	 COUNT(*) FILTER (WHERE status='assigned_to_operator'),
 	 COUNT(*) FILTER (WHERE status='closed'),
 	 COUNT(*) FILTER (WHERE status IN ('new','awaiting_confirmation','assigned_to_operator','resolved')),
 	 COUNT(*) FILTER (WHERE status='awaiting_confirmation'),
-	 COALESCE(SUM(pii_masked_count),0),CURRENT_TIMESTAMP FROM tickets`).Scan(&stats.Total, &stats.AutoResolved, &stats.Assigned, &stats.Closed, &stats.Open, &stats.AwaitingConfirmation, &stats.TotalPIIMasked, &stats.ObservedAt)
+	 COALESCE(SUM(pii_masked_count),0),CURRENT_TIMESTAMP FROM tickets WHERE tenant_id=$1`, security.TenantID(r.Context())).Scan(&stats.Total, &stats.AutoResolved, &stats.Assigned, &stats.Closed, &stats.Open, &stats.AwaitingConfirmation, &stats.TotalPIIMasked, &stats.ObservedAt)
 	if err != nil {
 		writeError(w, 500, "failed to load stats")
 		return
 	}
 	rows, err := tx.Query(r.Context(), `SELECT COALESCE(NULLIF(department,''),'Unassigned'),COUNT(*),
-	 COUNT(*) FILTER (WHERE status IN ('new','awaiting_confirmation','assigned_to_operator','resolved')) FROM tickets GROUP BY 1`)
+	 COUNT(*) FILTER (WHERE status IN ('new','awaiting_confirmation','assigned_to_operator','resolved')) FROM tickets WHERE tenant_id=$1 GROUP BY 1`, security.TenantID(r.Context()))
 	if err != nil {
 		writeError(w, 500, "failed to load department stats")
 		return
@@ -92,7 +93,7 @@ func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to read department stats")
 		return
 	}
-	rows, err = tx.Query(r.Context(), `SELECT COALESCE(NULLIF(channel,''),'web'),COUNT(*) FROM tickets GROUP BY 1`)
+	rows, err = tx.Query(r.Context(), `SELECT COALESCE(NULLIF(channel,''),'web'),COUNT(*) FROM tickets WHERE tenant_id=$1 GROUP BY 1`, security.TenantID(r.Context()))
 	if err != nil {
 		writeError(w, 500, "failed to load channel stats")
 		return

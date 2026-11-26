@@ -45,6 +45,11 @@ type importedArticle struct {
 const smartImportPrompt = `Ты аккуратный редактор корпоративной базы знаний. Разбей входной текст на 1–10 атомарных, самодостаточных статей: вопрос-ответ или пошаговая инструкция. Пиши строго на русском языке. Не добавляй фактов, которых нет в исходнике. Верни только JSON-массив объектов со строковыми полями title, department, content_markdown и массивом keywords. Не включай персональные данные или плейсхолдеры маскирования как реальные данные.`
 
 func (h *SmartHandler) SmartImport(w http.ResponseWriter, r *http.Request) {
+	base, err := h.base.TenantBase(security.TenantID(r.Context()))
+	if err != nil {
+		writeError(w, 500, "failed to load tenant knowledge base")
+		return
+	}
 	var input struct {
 		RawText           string `json:"raw_text"`
 		DefaultDepartment string `json:"default_department"`
@@ -96,7 +101,7 @@ func (h *SmartHandler) SmartImport(w http.ResponseWriter, r *http.Request) {
 		if len(article.Keywords) == 0 {
 			article.Keywords = extractKeywords(article.Title + " " + article.Content)
 		}
-		doc, addErr := h.base.Add(article.Department, article.Title, article.Keywords, article.Content)
+		doc, addErr := base.Add(article.Department, article.Title, article.Keywords, article.Content)
 		if addErr != nil {
 			continue
 		}
@@ -171,6 +176,11 @@ func firstSentence(text string, max int) string {
 }
 
 func (h *SmartHandler) Preview(w http.ResponseWriter, r *http.Request) {
+	base, err := h.base.TenantBase(security.TenantID(r.Context()))
+	if err != nil {
+		writeError(w, 500, "failed to load tenant knowledge base")
+		return
+	}
 	var input struct {
 		Message string `json:"message"`
 		Channel string `json:"channel"`
@@ -210,7 +220,7 @@ func (h *SmartHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	}
 	matched := ""
 	if analysis.RAGAnswer != nil {
-		if doc := h.base.FindRelevant(input.Message, analysis.Department); doc != nil {
+		if doc := base.FindRelevant(input.Message, analysis.Department); doc != nil {
 			matched = doc.Title
 		}
 	}

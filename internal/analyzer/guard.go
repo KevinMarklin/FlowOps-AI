@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -166,12 +167,16 @@ func reviewResult(reason string) Result {
 
 // Attach only a server-selected, validated document. Never return model prose,
 // model citations or PII from the knowledge base to a different employee.
-func (a *Analyzer) attachSafeAnswer(result Result, rawText string) Result {
+func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText string) Result {
 	result.RAGAnswer = nil
 	if security.CheckPromptInput(rawText, security.MaxTicketBytes) != "" {
 		return reviewResult("unsafe_ticket")
 	}
-	doc := a.base.FindRelevant(rawText, result.Department)
+	base, err := a.base.TenantBase(security.TenantID(ctx))
+	if err != nil {
+		return result
+	}
+	doc := base.FindRelevant(rawText, result.Department)
 	if doc == nil {
 		slog.Info("[RAG] Knowledge base MISS -> escalating to operator")
 		return result

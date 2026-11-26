@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS tickets (
     id SERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     user_email VARCHAR(255),
     channel VARCHAR(50) DEFAULT 'web',
     subject TEXT,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id SERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     event_type VARCHAR(64) NOT NULL,
     actor VARCHAR(128) NOT NULL,
@@ -48,6 +50,7 @@ CREATE INDEX IF NOT EXISTS ticket_deliveries_ready ON ticket_deliveries(next_att
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id SERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL,
     key_prefix TEXT NOT NULL,
     key_hash TEXT NOT NULL UNIQUE,
@@ -59,11 +62,27 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
-    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    id BOOLEAN NOT NULL DEFAULT TRUE CHECK (id),
     widget_title TEXT NOT NULL DEFAULT 'Онлайн-поддержка',
     widget_color TEXT NOT NULL DEFAULT '#2563eb',
     widget_greeting TEXT NOT NULL DEFAULT 'Здравствуйте! Чем мы можем помочь?',
     builder_config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    channel_config JSONB NOT NULL DEFAULT '{}'::jsonb
+    channel_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    channel_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (tenant_id,id)
 );
-INSERT INTO app_settings(id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS channel_bindings (
+    identity TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS workspaces (
+    tenant_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO app_settings(tenant_id,id) VALUES ('default',TRUE) ON CONFLICT (tenant_id,id) DO NOTHING;

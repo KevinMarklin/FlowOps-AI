@@ -7,11 +7,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -45,6 +45,10 @@ func main() {
 		logger.Error("failed to initialize database", "error", err)
 		os.Exit(1)
 	}
+	if err := database.SyncDefaultWorkspace(context.Background(), pool, os.Getenv("FLOWOPS_OPERATOR_TOKEN")); err != nil {
+		logger.Error("failed to synchronize default workspace", "error", err)
+		os.Exit(1)
+	}
 	integrationsHandler := handlers.NewIntegrationsHandler(pool)
 	loadBuilderConfig := func(ctx context.Context) (settings.BuilderConfig, error) {
 		return integrationsHandler.LoadBuilderConfig(ctx)
@@ -55,7 +59,11 @@ func main() {
 		port = "8080"
 	}
 
-	knowledgeBase, err := knowledge.Load("knowledge_base")
+	if err := knowledge.MigrateRootMarkdown("knowledge_base"); err != nil {
+		logger.Error("failed to migrate default knowledge base", "error", err)
+		os.Exit(1)
+	}
+	knowledgeBase, err := knowledge.Load("knowledge_base/default")
 	if err != nil {
 		logger.Error("failed to load knowledge base", "error", err)
 		os.Exit(1)
@@ -73,7 +81,7 @@ func main() {
 			}
 		}
 	}()
-	channelConfig := channels.Config{
+	envChannelConfig := channels.Config{
 		TelegramToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
 		MaxToken:       os.Getenv("MAX_BOT_TOKEN"),
 		MaxAPIURL:      os.Getenv("MAX_API_URL"),
@@ -82,15 +90,6 @@ func main() {
 		MailUser: os.Getenv("MAIL_USER"), MailPassword: os.Getenv("MAIL_PASSWORD"),
 		BuilderConfig: loadBuilderConfig,
 	}
-	var savedChannelConfigJSON []byte
-	if err := pool.QueryRow(context.Background(), `SELECT channel_config FROM app_settings WHERE id=TRUE`).Scan(&savedChannelConfigJSON); err == nil {
-		savedChannelConfig := map[string]string{}
-		if json.Unmarshal(savedChannelConfigJSON, &savedChannelConfig) == nil {
-			channelConfig = applyChannelConfig(channelConfig, savedChannelConfig)
-		}
-	}
-	var channelConfigMu sync.RWMutex
-	dispatcher := channels.NewDispatcher(channelConfig)
 	callbacks, err := security.NewCallbacks(os.Getenv("FLOWOPS_CALLBACK_URLS"))
 	if err != nil {
 		logger.Error("invalid callback allowlist")
@@ -108,34 +107,92 @@ func main() {
 		"anonymized_data_to_external_llm", externalLLMAllowed,
 		"sensitive_data_to_external_llm", envBool("FLOWOPS_AI_ALLOW_SENSITIVE", false),
 	)
-	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer, dispatcher).WithCallbacks(callbacks).WithBuilderConfig(loadBuilderConfig)
+	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer).WithCallbacks(callbacks).WithBuilderConfig(loadBuilderConfig)
 	smartHandler := handlers.NewSmartHandler(knowledgeBase, ticketAnalyzer).WithBuilderConfig(loadBuilderConfig)
 	channelContext, stopChannels := context.WithCancel(context.Background())
 	defer stopChannels()
 	go delivery.New(pool, ticketsHandler.Deliver).Run(channelContext, logger)
-	var channelMu sync.Mutex
-	var activeChannelCancel context.CancelFunc
-	startChannels := func(config channels.Config) {
-		channelMu.Lock()
-		defer channelMu.Unlock()
-		if activeChannelCancel != nil {
-			activeChannelCancel()
-		}
-		ctx, cancel := context.WithCancel(channelContext)
-		activeChannelCancel = cancel
-		channels.Start(ctx, config, ticketsHandler.IngestMessage, logger)
+	channelStatusUpdate := func(tenant, channel, status, lastError string) {
+		entry := map[string]string{"status": status, "last_error": lastError}
+		_, _ = pool.Exec(context.Background(), `UPDATE app_settings SET channel_metadata=jsonb_set(channel_metadata,ARRAY[$1],COALESCE(channel_metadata->$1,'{}'::jsonb)||$2::jsonb,TRUE) WHERE tenant_id=$3 AND id=TRUE`, channel, mustJSON(entry), tenant)
 	}
-	startChannels(channelConfig)
-	integrationsHandler.WithChannelRestart(func(values map[string]string) {
-		channelConfigMu.RLock()
-		config := applyChannelConfig(channelConfig, values)
-		channelConfigMu.RUnlock()
-		channelConfigMu.Lock()
-		channelConfig = config
-		channelConfigMu.Unlock()
-		startChannels(config)
+	channelManager := channels.NewManager(channelContext, ticketsHandler.IngestMessage, logger, channelStatusUpdate)
+	loadTenantChannels := func(ctx context.Context, tenant string) (channels.Config, error) {
+		base := channels.Config{TenantID: tenant, MaxAPIURL: os.Getenv("MAX_API_URL"), MaxInsecureTLS: envBool("MAX_INSECURE_TLS", false), BuilderConfig: func(ctx context.Context) (settings.BuilderConfig, error) {
+			return integrationsHandler.LoadBuilderConfig(security.WithTenantID(ctx, tenant))
+		}}
+		var raw []byte
+		if err := pool.QueryRow(ctx, `SELECT channel_config FROM app_settings WHERE tenant_id=$1 AND id=TRUE`, tenant).Scan(&raw); err != nil && tenant != "default" {
+			return base, nil
+		}
+		values := map[string]string{}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &values)
+		}
+		return channels.ForTenant(tenant, envChannelConfig, base, values), nil
+	}
+	tenantDispatcher := channels.NewTenantDispatcher(loadTenantChannels)
+	ticketsHandler.WithTenantDispatcher(tenantDispatcher)
+	rows, err := pool.Query(context.Background(), `SELECT tenant_id FROM workspaces ORDER BY tenant_id`)
+	if err != nil {
+		logger.Error("failed to load workspaces for channel workers", "error", err)
+		os.Exit(1)
+	}
+	var tenants []string
+	for rows.Next() {
+		var tenant string
+		if rows.Scan(&tenant) == nil {
+			tenants = append(tenants, tenant)
+		}
+	}
+	rows.Close()
+	for _, tenant := range tenants {
+		config, loadErr := loadTenantChannels(context.Background(), tenant)
+		if loadErr == nil {
+			channelManager.Configure(tenant, config)
+		}
+	}
+	// Seed uniqueness reservations for legacy/default environment credentials so
+	// the same account cannot be connected from another tenant.
+	defaultConfig, _ := loadTenantChannels(context.Background(), "default")
+	for _, entry := range []struct{ channel, token string }{{"telegram", defaultConfig.TelegramToken}, {"max", defaultConfig.MaxToken}} {
+		if strings.TrimSpace(entry.token) == "" {
+			continue
+		}
+		identity := channels.ChannelTokenIdentity(entry.channel, entry.token)
+		if _, err := pool.Exec(context.Background(), `INSERT INTO channel_bindings(identity,tenant_id,channel) VALUES($1,'default',$2) ON CONFLICT(identity) DO NOTHING`, identity, entry.channel); err != nil {
+			logger.Error("failed to reserve default channel identity", "channel", entry.channel, "error", err)
+		}
+	}
+	if parsed, parseErr := mail.ParseAddress(defaultConfig.MailUser); parseErr == nil && strings.TrimSpace(defaultConfig.MailIMAPHost) != "" {
+		identity := "mail:" + strings.ToLower(parsed.Address) + "@" + strings.ToLower(strings.TrimSpace(defaultConfig.MailIMAPHost))
+		if _, err := pool.Exec(context.Background(), `INSERT INTO channel_bindings(identity,tenant_id,channel) VALUES($1,'default','email') ON CONFLICT(identity) DO NOTHING`, identity); err != nil {
+			logger.Error("failed to reserve default email identity", "error", err)
+		}
+	}
+	integrationsHandler.WithChannelRestart(func(tenant string, values map[string]string) {
+		config, loadErr := loadTenantChannels(context.Background(), tenant)
+		if loadErr == nil {
+			// A settings update changes only the channel represented by this save.
+			changed := ""
+			for _, channel := range []string{"telegram", "max", "email"} {
+				keys := map[string][]string{"telegram": {"telegram_token"}, "max": {"max_token"}, "email": {"mail_user"}}
+				for _, key := range keys[channel] {
+					if _, exists := values[key]; exists {
+						changed = channel
+						break
+					}
+				}
+			}
+			if changed != "" {
+				channelManager.ConfigureChannel(tenant, changed, config)
+			}
+		}
 	})
 	mux := http.NewServeMux()
+	workspaceHandler := security.NewWorkspaceHandler(pool)
+	mux.HandleFunc("GET /api/v1/auth/me", workspaceHandler.Me)
+	mux.HandleFunc("POST /api/v1/workspaces", workspaceHandler.Create)
 	mux.HandleFunc("GET /api/tickets", ticketsHandler.List)
 	mux.HandleFunc("GET /api/tickets/{id}", ticketsHandler.Detail)
 	mux.HandleFunc("POST /api/tickets", ticketsHandler.Create)
@@ -153,10 +210,11 @@ func main() {
 	mux.HandleFunc("PUT /api/v1/settings/builder", integrationsHandler.BuilderSettings)
 	mux.HandleFunc("GET /api/v1/settings/channels", integrationsHandler.ChannelSettings)
 	mux.HandleFunc("PUT /api/v1/settings/channels", integrationsHandler.ChannelSettings)
+	mux.HandleFunc("DELETE /api/v1/settings/channels/{channel}", integrationsHandler.DeleteChannel)
 	mux.HandleFunc("POST /api/v1/settings/channels/{channel}/check", integrationsHandler.CheckChannel)
 	mux.Handle("GET /widget.js", noStoreFileServer(http.Dir("web")))
 	mux.Handle("GET /", noStoreFileServer(http.Dir("web")))
-	mux.HandleFunc("POST /api/tickets/{id}/feedback", ticketsHandler.Feedback)
+	mux.Handle("POST /api/tickets/{id}/feedback", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Feedback), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
 	mux.HandleFunc("POST /api/tickets/{id}/reply", ticketsHandler.Reply)
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)
 	mux.HandleFunc("DELETE /api/tickets/reset", ticketsHandler.Reset)
@@ -169,7 +227,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           loggingMiddleware(logger, security.ProtectOperatorWrites(mux, os.Getenv("FLOWOPS_OPERATOR_TOKEN"))),
+		Handler:           loggingMiddleware(logger, security.ProtectOperatorTenants(mux, pool)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -233,6 +291,8 @@ func applyChannelConfig(config channels.Config, values map[string]string) channe
 	}
 	return config
 }
+
+func mustJSON(value any) string { data, _ := json.Marshal(value); return string(data) }
 
 func loadDotEnv(path string) {
 	file, err := os.Open(path)

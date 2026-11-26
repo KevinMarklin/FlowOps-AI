@@ -26,10 +26,12 @@ type Document struct {
 }
 
 type Base struct {
-	mu        sync.RWMutex
-	directory string
-	documents []Document
-	auditTTL  func(string)
+	mu         sync.RWMutex
+	directory  string
+	tenantRoot string
+	tenants    map[string]*Base
+	documents  []Document
+	auditTTL   func(string)
 }
 
 func (b *Base) SetAuditTTLCallback(callback func(string)) {
@@ -55,7 +57,7 @@ func Load(dir string) (*Base, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read knowledge base: %w", err)
 	}
-	base := &Base{directory: dir}
+	base := &Base{directory: dir, tenantRoot: filepath.Dir(dir), tenants: make(map[string]*Base)}
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), "____") && strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
 			_ = os.Remove(filepath.Join(dir, entry.Name()))
@@ -71,7 +73,71 @@ func Load(dir string) (*Base, error) {
 		base.documents = append(base.documents, document)
 	}
 	sort.Slice(base.documents, func(i, j int) bool { return base.documents[i].Path < base.documents[j].Path })
+	base.tenants[filepath.Base(filepath.Clean(dir))] = base
 	return base, nil
+}
+
+// TenantBase returns the isolated file-backed KB for a tenant. Tenant IDs are
+// constrained before being used as path components.
+func (b *Base) TenantBase(tenant string) (*Base, error) {
+	if tenant == "" {
+		tenant = "default"
+	}
+	if tenant == "default" && filepath.Base(filepath.Clean(b.directory)) != "default" {
+		return b, nil
+	}
+	for _, r := range tenant {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return nil, fmt.Errorf("invalid tenant id")
+		}
+	}
+	b.mu.RLock()
+	existing := b.tenants[tenant]
+	b.mu.RUnlock()
+	if existing != nil {
+		return existing, nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if existing = b.tenants[tenant]; existing != nil {
+		return existing, nil
+	}
+	dir := filepath.Join(b.tenantRoot, tenant)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		return nil, err
+	}
+	loaded.tenantRoot = b.tenantRoot
+	loaded.tenants = b.tenants
+	b.tenants[tenant] = loaded
+	return loaded, nil
+}
+
+// MigrateRootMarkdown moves legacy root-level articles into default tenant.
+func MigrateRootMarkdown(root string) error {
+	if err := os.MkdirAll(filepath.Join(root, "default"), 0700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+			continue
+		}
+		source, target := filepath.Join(root, entry.Name()), filepath.Join(root, "default", entry.Name())
+		if _, statErr := os.Stat(target); statErr == nil {
+			continue
+		}
+		if err := os.Rename(source, target); err != nil {
+			return fmt.Errorf("move legacy knowledge article %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 func (b *Base) Documents() []Document {

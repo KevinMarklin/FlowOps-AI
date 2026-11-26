@@ -12,7 +12,7 @@ import (
 
 func TestUniversityDemoScenariosReturnCorrectBundledGuide(t *testing.T) {
 	t.Setenv("FLOWOPS_AI_PROVIDERS", "")
-	source := filepath.Join("..", "..", "knowledge_base")
+	source := filepath.Join("..", "..", "knowledge_base", "default")
 	dir := t.TempDir()
 	entries, err := os.ReadDir(source)
 	if err != nil {

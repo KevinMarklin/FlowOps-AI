@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/security"
 	"flowops-ai/internal/settings"
 )
 
@@ -66,10 +67,11 @@ func sendTelegramMessage(ctx context.Context, token string, chatID int64, text s
 	return nil
 }
 
-func runTelegram(ctx context.Context, token string, builderConfig settings.Loader, ingest IngestFunc, logger interface {
+func runTelegram(ctx context.Context, tenantID, token string, builderConfig settings.Loader, statusUpdate func(string, string, string), ingest IngestFunc, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
 }) {
+	ctx = security.WithTenantID(ctx, tenantID)
 	var offset int64
 	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}
 	for ctx.Err() == nil {
@@ -78,20 +80,40 @@ func runTelegram(ctx context.Context, token string, builderConfig settings.Loade
 			values.Set("offset", strconv.FormatInt(offset, 10))
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.telegram.org/bot"+token+"/getUpdates?"+values.Encode(), nil)
+		if statusUpdate != nil {
+			statusUpdate("telegram", "starting", "")
+		}
 		if err == nil {
 			var resp *http.Response
 			resp, err = client.Do(req)
 			if err == nil {
 				var payload struct {
-					OK     bool             `json:"ok"`
-					Result []telegramUpdate `json:"result"`
+					OK          bool             `json:"ok"`
+					Result      []telegramUpdate `json:"result"`
+					ErrorCode   int              `json:"error_code"`
+					Description string           `json:"description"`
 				}
 				err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
 				resp.Body.Close()
 				if err == nil && !payload.OK {
-					err = fmt.Errorf("Telegram getUpdates returned ok=false")
+					if payload.ErrorCode == http.StatusConflict {
+						err = fmt.Errorf("Telegram 409 Conflict: %s", payload.Description)
+					} else {
+						err = fmt.Errorf("Telegram getUpdates returned ok=false: %s", payload.Description)
+					}
+				}
+				if err != nil {
+					if resp.StatusCode == http.StatusConflict {
+						err = fmt.Errorf("Telegram 409 Conflict: another polling worker or webhook is active")
+					}
+					if strings.Contains(strings.ToLower(err.Error()), "conflict") {
+						logger.Error("Telegram polling conflict", "tenant_id", tenantID, "channel", "telegram", "error", err.Error())
+					}
 				}
 				if err == nil {
+					if statusUpdate != nil {
+						statusUpdate("telegram", "connected", "")
+					}
 					for _, update := range payload.Result {
 						if update.UpdateID >= offset {
 							offset = update.UpdateID + 1
@@ -128,6 +150,9 @@ func runTelegram(ctx context.Context, token string, builderConfig settings.Loade
 		}
 		if err != nil && ctx.Err() == nil {
 			logger.Error("Telegram polling failed", "error", "operation failed")
+			if statusUpdate != nil {
+				statusUpdate("telegram", "error", err.Error())
+			}
 			waitContext(ctx, 3*time.Second)
 		}
 	}

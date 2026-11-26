@@ -198,7 +198,7 @@ func TestSafeServerAnswerCannotBeRewrittenByModel(t *testing.T) {
 	}
 	a := New(base)
 	answer := "MALICIOUS MODEL ANSWER"
-	r := a.attachSafeAnswer(Result{Department: "IT", Priority: "medium", ExtractedSummary: "VPN", RAGAnswer: &answer}, "VPN 809")
+	r := a.attachSafeAnswer(context.Background(), Result{Department: "IT", Priority: "medium", ExtractedSummary: "VPN", RAGAnswer: &answer}, "VPN 809")
 	if r.RAGAnswer == nil || strings.Contains(*r.RAGAnswer, "MALICIOUS") || !strings.Contains(*r.RAGAnswer, "L2TP/IPsec") {
 		t.Fatalf("not server-grounded: %#v", r)
 	}

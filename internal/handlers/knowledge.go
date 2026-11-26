@@ -27,7 +27,7 @@ func NewKnowledgeHandler(base *knowledge.Base, db ...*pgxpool.Pool) *KnowledgeHa
 	if len(db) > 0 {
 		handler.db = db[0]
 		base.SetAuditTTLCallback(func(_ string) {
-			handler.audit("TTL_PURGED", "system", nil, "Автоматически удалён временный регламент")
+			handler.audit(context.Background(), "TTL_PURGED", "system", nil, "Автоматически удалён временный регламент")
 		})
 	}
 	return handler
@@ -58,8 +58,13 @@ type createKnowledgeRequest struct {
 }
 
 func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
-	_ = h.base.PurgeExpired()
-	documents := h.base.Documents()
+	base, err := h.tenantBase(r)
+	if err != nil {
+		writeError(w, 500, "failed to load tenant knowledge base")
+		return
+	}
+	_ = base.PurgeExpired()
+	documents := base.Documents()
 	result := make([]knowledgeDocument, 0, len(documents))
 	department := r.URL.Query().Get("department")
 	if department != "" {
@@ -76,6 +81,11 @@ func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
+	base, err := h.tenantBase(r)
+	if err != nil {
+		writeError(w, 500, "failed to load tenant knowledge base")
+		return
+	}
 	var request createKnowledgeRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
 	decoder.DisallowUnknownFields()
@@ -85,7 +95,7 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(request.Keywords) == 0 && h.db != nil && r.URL.Query().Get("ticket_id") != "" {
 		var summary string
-		_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(extracted_summary, '') FROM tickets WHERE id = $1`, r.URL.Query().Get("ticket_id")).Scan(&summary)
+		_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(extracted_summary, '') FROM tickets WHERE id = $1 AND tenant_id=$2`, r.URL.Query().Get("ticket_id"), security.TenantID(r.Context())).Scan(&summary)
 		request.Keywords = extractKeywords(summary)
 	}
 	if len(request.Keywords) == 0 {
@@ -100,17 +110,22 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		value := time.Now().Add(time.Duration(ttl) * time.Second)
 		expiresAt = &value
 	}
-	document, err := h.base.AddWithOptions(request.Department, request.Title, request.Keywords, request.Content, request.Kind, request.IncidentState, expiresAt)
+	document, err := base.AddWithOptions(request.Department, request.Title, request.Keywords, request.Content, request.Kind, request.IncidentState, expiresAt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	slog.Info("knowledge document accepted through API", "filename", document.Filename, "department", document.Department)
-	h.audit("KB_CREATED", "operator", auditTicketID(r.URL.Query().Get("ticket_id")), "Добавлен регламент базы знаний")
+	h.audit(r.Context(), "KB_CREATED", "operator", auditTicketID(r.URL.Query().Get("ticket_id")), "Добавлен регламент базы знаний")
 	writeJSON(w, http.StatusCreated, knowledgeDocument{Filename: document.Filename, Department: document.Department, Title: document.Title, Keywords: document.Keywords, Content: document.Content, Kind: document.Kind, IncidentState: document.IncidentState, ExpiresAt: document.ExpiresAt})
 }
 
 func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
+	base, err := h.tenantBase(r)
+	if err != nil {
+		writeError(w, 500, "failed to load tenant knowledge base")
+		return
+	}
 	filename := filepath.Base(r.PathValue("filename"))
 	var request createKnowledgeRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -119,7 +134,7 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	for _, doc := range h.base.Documents() {
+	for _, doc := range base.Documents() {
 		if doc.Filename != filename {
 			continue
 		}
@@ -156,14 +171,14 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if request.TTLSeconds > 0 || request.TTLMinutes > 0 {
 			expiresAt = ttlTime(request.TTLSeconds, request.TTLMinutes)
 		}
-		created, err := h.base.ReplaceWithOptions(filename, request.Department, request.Title, request.Keywords, request.Content, kind, state, expiresAt)
+		created, err := base.ReplaceWithOptions(filename, request.Department, request.Title, request.Keywords, request.Content, kind, state, expiresAt)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		h.audit("KB_CREATED", "operator", nil, "Обновлён регламент базы знаний")
+		h.audit(r.Context(), "KB_CREATED", "operator", nil, "Обновлён регламент базы знаний")
 		if resolvedIncident {
-			h.audit("INCIDENT_RESOLVED", "operator", nil, "Оператор подтвердил устранение сбоя")
+			h.audit(r.Context(), "INCIDENT_RESOLVED", "operator", nil, "Оператор подтвердил устранение сбоя")
 		}
 		writeJSON(w, http.StatusOK, knowledgeDocument{Filename: created.Filename, Department: created.Department, Title: created.Title, Keywords: created.Keywords, Content: created.Content, Kind: created.Kind, IncidentState: created.IncidentState, ExpiresAt: created.ExpiresAt})
 		return
@@ -172,18 +187,27 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.base.Delete(filepath.Base(r.PathValue("filename"))); err != nil {
+	base, err := h.tenantBase(r)
+	if err != nil {
+		writeError(w, 500, "failed to load tenant knowledge base")
+		return
+	}
+	if err := base.Delete(filepath.Base(r.PathValue("filename"))); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
-func (h *KnowledgeHandler) audit(eventType, actor string, ticketID *int, details string) {
+func (h *KnowledgeHandler) audit(ctx context.Context, eventType, actor string, ticketID *int, details string) {
 	if h.db == nil {
 		return
 	}
-	_, _ = h.db.Exec(context.Background(), `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ($1, $2, $3, $4)`, eventType, actor, ticketID, details)
+	_, _ = h.db.Exec(ctx, `INSERT INTO audit_logs (tenant_id,event_type, actor, ticket_id, details) VALUES ($1,$2, $3, $4, $5)`, security.TenantID(ctx), eventType, actor, ticketID, details)
+}
+
+func (h *KnowledgeHandler) tenantBase(r *http.Request) (*knowledge.Base, error) {
+	return h.base.TenantBase(security.TenantID(r.Context()))
 }
 
 func auditTicketID(value string) *int {

@@ -13,6 +13,8 @@ import (
 )
 
 type Config struct {
+	TenantID       string
+	StatusUpdate   func(string, string, string)
 	TelegramToken  string
 	MaxToken       string
 	MaxAPIURL      string
@@ -22,6 +24,41 @@ type Config struct {
 	MailUser       string
 	MailPassword   string
 	BuilderConfig  settings.Loader
+}
+
+// ForTenant applies saved workspace settings on top of defaults, allowing
+// process environment credentials only for the legacy default workspace.
+func ForTenant(tenant string, envConfig, emptyConfig Config, saved map[string]string) Config {
+	config := emptyConfig
+	if tenant == "default" {
+		config = envConfig
+	}
+	config.TenantID = tenant
+	if value, ok := saved["telegram_token"]; ok {
+		config.TelegramToken = value
+	}
+	if value, ok := saved["max_token"]; ok {
+		config.MaxToken = value
+	}
+	if value, ok := saved["mail_imap_host"]; ok {
+		config.MailIMAPHost = value
+	}
+	if value, ok := saved["mail_smtp_host"]; ok {
+		config.MailSMTPHost = value
+	}
+	if value, ok := saved["mail_user"]; ok {
+		config.MailUser = value
+	}
+	if value, ok := saved["mail_password"]; ok {
+		config.MailPassword = value
+	}
+	return config
+}
+
+func (c Config) updateStatus(channel, status, lastError string) {
+	if c.StatusUpdate != nil {
+		c.StatusUpdate(channel, status, lastError)
+	}
 }
 
 func (c Config) builderConfig(ctx context.Context) settings.BuilderConfig {
@@ -82,6 +119,9 @@ func Start(ctx context.Context, cfg Config, ingest IngestFunc, logger interface 
 	Info(string, ...any)
 	Error(string, ...any)
 }) {
+	if cfg.TenantID == "" {
+		cfg.TenantID = "default"
+	}
 	if cfg.BuilderConfig == nil {
 		cfg.BuilderConfig = func(context.Context) (settings.BuilderConfig, error) { return settings.DefaultBuilderConfig(), nil }
 	}
@@ -89,7 +129,7 @@ func Start(ctx context.Context, cfg Config, ingest IngestFunc, logger interface 
 		logger.Info("channel status", "channel", "Telegram", "status", "disabled")
 	} else {
 		logger.Info("channel status", "channel", "Telegram", "status", "starting")
-		go runTelegram(ctx, cfg.TelegramToken, cfg.BuilderConfig, ingest, logger)
+		go runTelegram(ctx, cfg.TenantID, cfg.TelegramToken, cfg.BuilderConfig, cfg.StatusUpdate, ingest, logger)
 	}
 	if strings.TrimSpace(cfg.MaxToken) == "" {
 		logger.Info("channel status", "channel", "MAX", "status", "disabled")

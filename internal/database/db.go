@@ -2,7 +2,10 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,6 +37,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	const query = `
 CREATE TABLE IF NOT EXISTS tickets (
     id SERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     user_email VARCHAR(255),
     channel VARCHAR(50) DEFAULT 'web',
     subject TEXT,
@@ -54,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 	}
 	for _, statement := range []string{
 		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
 		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS reply_version INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS reply_hash TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS ticket_deliveries (
@@ -77,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 		`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pii_masked_types TEXT[] NOT NULL DEFAULT '{}'`,
 		`CREATE TABLE IF NOT EXISTS audit_logs (
 			id SERIAL PRIMARY KEY,
+			tenant_id TEXT NOT NULL DEFAULT 'default',
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			event_type VARCHAR(64) NOT NULL,
 			actor VARCHAR(128) NOT NULL,
@@ -85,6 +91,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id SERIAL PRIMARY KEY,
+			tenant_id TEXT NOT NULL DEFAULT 'default',
 			name TEXT NOT NULL,
 			key_prefix TEXT NOT NULL,
 			key_hash TEXT NOT NULL UNIQUE,
@@ -95,19 +102,31 @@ CREATE TABLE IF NOT EXISTS tickets (
 			last_used_at TIMESTAMPTZ
 		)`,
 		`CREATE TABLE IF NOT EXISTS app_settings (
-			id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+			tenant_id TEXT NOT NULL DEFAULT 'default',
+			id BOOLEAN NOT NULL DEFAULT TRUE CHECK (id),
 			widget_title TEXT NOT NULL DEFAULT 'Онлайн-поддержка',
 			widget_color TEXT NOT NULL DEFAULT '#2563eb',
 			widget_greeting TEXT NOT NULL DEFAULT 'Здравствуйте! Чем мы можем помочь?',
 			builder_config JSONB NOT NULL DEFAULT '{}'::jsonb,
-			channel_config JSONB NOT NULL DEFAULT '{}'::jsonb
+			channel_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+			channel_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			PRIMARY KEY (tenant_id,id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS workspaces (tenant_id TEXT PRIMARY KEY, name TEXT NOT NULL, token_prefix TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+		`DO $$ DECLARE old_pk TEXT; old_size INT; BEGIN SELECT conname,array_length(conkey,1) INTO old_pk,old_size FROM pg_constraint WHERE conrelid='app_settings'::regclass AND contype='p'; IF old_pk IS NOT NULL AND old_size = 1 THEN EXECUTE format('ALTER TABLE app_settings DROP CONSTRAINT %I',old_pk); END IF; END $$`,
+		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app_settings'::regclass AND contype='p') THEN ALTER TABLE app_settings ADD CONSTRAINT app_settings_pkey PRIMARY KEY (tenant_id,id); END IF; END $$`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS builder_config JSONB NOT NULL DEFAULT '{}'::jsonb`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS channel_config JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS channel_metadata JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		`CREATE TABLE IF NOT EXISTS channel_bindings (identity TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, channel TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`DO $$ DECLARE c TEXT; BEGIN SELECT conname INTO c FROM pg_constraint WHERE conrelid='channel_bindings'::regclass AND contype='u' AND pg_get_constraintdef(oid)='UNIQUE (tenant_id, channel)'; IF c IS NOT NULL THEN EXECUTE format('ALTER TABLE channel_bindings DROP CONSTRAINT %I',c); END IF; END $$`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS widget_title TEXT NOT NULL DEFAULT 'Онлайн-поддержка'`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS widget_color TEXT NOT NULL DEFAULT '#2563eb'`,
 		`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS widget_greeting TEXT NOT NULL DEFAULT 'Здравствуйте! Чем мы можем помочь?'`,
-		`INSERT INTO app_settings(id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING`,
+		`INSERT INTO app_settings(tenant_id,id) VALUES ('default',TRUE) ON CONFLICT (tenant_id,id) DO NOTHING`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("apply security migration: %w", err)
@@ -129,4 +148,26 @@ CREATE TABLE IF NOT EXISTS tickets (
 		}
 	}
 	return nil
+}
+
+// SyncDefaultWorkspace makes the configured legacy operator token an ordinary
+// workspace credential while retaining its stable "default" tenant identity.
+func SyncDefaultWorkspace(ctx context.Context, pool *pgxpool.Pool, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return nil
+	}
+	hash := sha256.Sum256([]byte(token))
+	_, err := pool.Exec(ctx, `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES('default','FlowOps AI', $1, $2)
+	ON CONFLICT (tenant_id) DO UPDATE SET token_prefix=EXCLUDED.token_prefix,token_hash=EXCLUDED.token_hash,name=EXCLUDED.name`, tokenPrefix(token), hex.EncodeToString(hash[:]))
+	if err != nil {
+		return fmt.Errorf("synchronize default workspace: %w", err)
+	}
+	return nil
+}
+
+func tokenPrefix(token string) string {
+	if len(token) > 8 {
+		return token[:8]
+	}
+	return token
 }

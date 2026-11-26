@@ -24,12 +24,13 @@ import (
 )
 
 type TicketsHandler struct {
-	db            *pgxpool.Pool
-	logger        *slog.Logger
-	analyzer      *analyzer.Analyzer
-	dispatcher    *channels.Dispatcher
-	builderConfig settings.Loader
-	callbacks     *security.Callbacks
+	db               *pgxpool.Pool
+	logger           *slog.Logger
+	analyzer         *analyzer.Analyzer
+	dispatcher       *channels.Dispatcher
+	tenantDispatcher *channels.TenantDispatcher
+	builderConfig    settings.Loader
+	callbacks        *security.Callbacks
 }
 
 func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
@@ -51,7 +52,18 @@ func (h *TicketsHandler) WithBuilderConfig(loader settings.Loader) *TicketsHandl
 	return h
 }
 
+func (h *TicketsHandler) WithTenantDispatcher(dispatcher *channels.TenantDispatcher) *TicketsHandler {
+	h.tenantDispatcher = dispatcher
+	return h
+}
+
+func (h *TicketsHandler) analyzerBase(ctx context.Context) (*knowledge.Base, error) {
+	return h.analyzer.TenantKnowledge(ctx)
+}
+
 func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
+	// The router supplies tenant context for operator sessions; direct legacy
+	// handler calls continue to default to the compatible default workspace.
 	var request models.CreateTicketRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -68,12 +80,12 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
 	status := initialTicketStatus(analysis)
 
-	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
-VALUES ($1, 'web', NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
+VALUES ($1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
+	err := h.db.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
 		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
@@ -120,11 +132,12 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	status := initialTicketStatus(analysis)
 	autoReplied := analysis.RAGAnswer != nil
 	builderConfig := settings.LoadOrDefault(ctx, h.builderConfig)
-	const query = `INSERT INTO tickets (user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	tenant := security.TenantID(ctx)
+	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 	var ticket models.Ticket
-	err := h.db.QueryRow(ctx, query, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
+	err := h.db.QueryRow(ctx, query, tenant, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus)
 	if err != nil {
 		return channels.IngestResult{}, err
@@ -164,6 +177,10 @@ func departmentLabel(value string) string {
 }
 
 func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
+	if !security.IsOperatorAuthenticated(r.Context()) && r.Header.Get("Origin") == "" {
+		writeError(w, http.StatusUnauthorized, "integration authorization required")
+		return
+	}
 	id, ok := ticketID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid ticket id")
@@ -181,7 +198,7 @@ func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
 		status = "auto_resolved"
 	}
 	h.logger.Info("ticket feedback received", "id", id, "resolved", request.Resolved, "status", status)
-	if tag, err := h.db.Exec(r.Context(), `UPDATE tickets SET status = $1 WHERE id = $2`, status, id); err != nil || tag.RowsAffected() == 0 {
+	if tag, err := h.db.Exec(r.Context(), `UPDATE tickets SET status = $1 WHERE id = $2 AND tenant_id=$3`, status, id, security.TenantID(r.Context())); err != nil || tag.RowsAffected() == 0 {
 		if err != nil {
 			h.logger.Error("failed to update ticket feedback")
 		}
@@ -239,8 +256,8 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "at least one field is required")
 		return
 	}
-	args = append(args, id)
-	query := "UPDATE tickets SET " + strings.Join(fields, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
+	args = append(args, id, security.TenantID(r.Context()))
+	query := "UPDATE tickets SET " + strings.Join(fields, ", ") + " WHERE id = $" + strconv.Itoa(len(args)-1) + " AND tenant_id=$" + strconv.Itoa(len(args))
 	if request.OperatorReply != nil && (strings.TrimSpace(*request.OperatorReply) == "" || len(*request.OperatorReply) > security.MaxDocumentBytes) {
 		writeError(w, 400, "operator reply exceeds limits or is empty")
 		return
@@ -274,8 +291,8 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "operator reply exceeds limits")
 		return
 	}
-	query := "UPDATE tickets SET operator_reply=$1 WHERE id=$2"
-	if err := h.applyUpdate(r.Context(), id, query, []any{strings.TrimSpace(request.Reply), id}, &request.Reply); err != nil {
+	query := "UPDATE tickets SET operator_reply=$1 WHERE id=$2 AND tenant_id=$3"
+	if err := h.applyUpdate(r.Context(), id, query, []any{strings.TrimSpace(request.Reply), id, security.TenantID(r.Context())}, &request.Reply); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "ticket not found")
 		} else {
@@ -294,7 +311,7 @@ func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, 
 	defer tx.Rollback(ctx)
 	// Lock first to serialize reply revisions with queue acknowledgements.
 	var channel, sender, callback string
-	if err = tx.QueryRow(ctx, `SELECT COALESCE(channel,'web'),COALESCE(user_email,''),COALESCE(callback_url,'') FROM tickets WHERE id=$1 FOR UPDATE`, id).Scan(&channel, &sender, &callback); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(channel,'web'),COALESCE(user_email,''),COALESCE(callback_url,'') FROM tickets WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, id, security.TenantID(ctx)).Scan(&channel, &sender, &callback); err != nil {
 		return err
 	}
 	if reply != nil {
@@ -306,13 +323,13 @@ func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, 
 		return err
 	}
 	if reply != nil {
-		if _, err = tx.Exec(ctx, `UPDATE tickets SET status='resolved' WHERE id=$1`, id); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE tickets SET status='resolved' WHERE id=$1 AND tenant_id=$2`, id, security.TenantID(ctx)); err != nil {
 			return err
 		}
 		if err = delivery.EnqueueReply(ctx, tx, id, channel, sender, callback, strings.TrimSpace(*reply)); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(event_type,actor,ticket_id,details) VALUES('OPERATOR_REPLY','operator',$1,'Reply saved with durable delivery events')`, id); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) VALUES($1,'OPERATOR_REPLY','operator',$2,'Reply saved with durable delivery events')`, security.TenantID(ctx), id); err != nil {
 			return err
 		}
 	}
@@ -332,17 +349,22 @@ func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error 
 		}
 		return err
 	case "channel":
-		if h.dispatcher == nil {
+		if h.dispatcher == nil && h.tenantDispatcher == nil {
 			return fmt.Errorf("channel dispatcher unavailable")
 		}
 		var originalMessage string
 		var originalSubject string
 		if m.Channel == "email" {
-			if err := h.db.QueryRow(ctx, `SELECT raw_text,COALESCE(subject,'') FROM tickets WHERE id=$1`, m.TicketID).Scan(&originalMessage, &originalSubject); err != nil {
+			if err := h.db.QueryRow(ctx, `SELECT raw_text,COALESCE(subject,'') FROM tickets WHERE id=$1 AND tenant_id=$2`, m.TicketID, m.TenantID).Scan(&originalMessage, &originalSubject); err != nil {
 				return fmt.Errorf("load original ticket message: %w", err)
 			}
 		}
-		err := h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
+		var err error
+		if h.tenantDispatcher != nil {
+			err = h.tenantDispatcher.Dispatch(ctx, m.TenantID, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
+		} else {
+			err = h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
+		}
 		channels.LogOutgoing(h.logger, m.Channel, m.Recipient, m.TicketID, "Operator", err)
 		return err
 	default:
@@ -374,12 +396,21 @@ func (h *TicketsHandler) validateIngest(r models.IngestRequest) error {
 }
 
 func (h *TicketsHandler) Reset(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.db.Exec(r.Context(), `TRUNCATE TABLE ticket_deliveries, tickets RESTART IDENTITY`); err != nil {
+	if _, err := h.db.Exec(r.Context(), `DELETE FROM ticket_deliveries WHERE ticket_id IN (SELECT id FROM tickets WHERE tenant_id=$1)`, security.TenantID(r.Context())); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
+		return
+	}
+	if _, err := h.db.Exec(r.Context(), `DELETE FROM tickets WHERE tenant_id=$1`, security.TenantID(r.Context())); err != nil {
 		h.logger.Error("failed to reset tickets", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
 		return
 	}
-	if err := h.analyzer.ResetKnowledge(); err != nil {
+	base, err := h.analyzerBase(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reset knowledge base")
+		return
+	}
+	if err := base.Reset(); err != nil {
 		h.logger.Error("failed to reset knowledge base", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to reset knowledge base")
 		return
@@ -388,7 +419,7 @@ func (h *TicketsHandler) Reset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketsHandler) Audit(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query(r.Context(), `SELECT id, created_at, event_type, actor, ticket_id, COALESCE(details, '') FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 30`)
+	rows, err := h.db.Query(r.Context(), `SELECT id, created_at, event_type, actor, ticket_id, COALESCE(details, '') FROM audit_logs WHERE tenant_id=$1 ORDER BY created_at DESC, id DESC LIMIT 30`, security.TenantID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load audit log")
 		return
@@ -423,7 +454,7 @@ func (h *TicketsHandler) auditPII(ctx context.Context, ticketID, count int, type
 		return
 	}
 	details := fmt.Sprintf("Обезличено объектов: %d; типы: %s", count, strings.Join(types, ", "))
-	if _, err := h.db.Exec(ctx, `INSERT INTO audit_logs (event_type, actor, ticket_id, details) VALUES ('PII_MASKED', 'system-pii-filter', $1, $2)`, ticketID, details); err != nil {
+	if _, err := h.db.Exec(ctx, `INSERT INTO audit_logs (tenant_id,event_type, actor, ticket_id, details) VALUES ($1,'PII_MASKED', 'system-pii-filter', $2, $3)`, security.TenantID(ctx), ticketID, details); err != nil {
 		h.logger.Error("failed to record PII audit event", "ticket_id", ticketID)
 	}
 }
@@ -452,10 +483,10 @@ func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets
+FROM tickets WHERE tenant_id=$1
 ORDER BY created_at DESC, id DESC`
 
-	rows, err := h.db.Query(r.Context(), query)
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()))
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
@@ -494,9 +525,9 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE id = $1`
+FROM tickets WHERE id = $1 AND tenant_id=$2`
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, id).Scan(
+	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
 	)

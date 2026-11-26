@@ -2,6 +2,8 @@ package channels
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"html"
 	"net/mail"
@@ -12,7 +14,30 @@ import (
 // Dispatcher routes operator replies back to the originating channel.
 type Dispatcher struct{ config Config }
 
+type TenantConfigLoader func(context.Context, string) (Config, error)
+type TenantDispatcher struct{ load TenantConfigLoader }
+
 func NewDispatcher(config Config) *Dispatcher { return &Dispatcher{config: config} }
+
+func NewTenantDispatcher(load TenantConfigLoader) *TenantDispatcher {
+	return &TenantDispatcher{load: load}
+}
+
+func ChannelTokenIdentity(channel, token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return channel + ":sha256:" + hex.EncodeToString(sum[:])
+}
+
+func (d *TenantDispatcher) Dispatch(ctx context.Context, tenant, channel, sender string, ticketID int, originalSubject, originalMessage, reply string) error {
+	if d == nil || d.load == nil {
+		return fmt.Errorf("channel dispatcher unavailable")
+	}
+	config, err := d.load(ctx, tenant)
+	if err != nil {
+		return fmt.Errorf("load tenant channel configuration: %w", err)
+	}
+	return NewDispatcher(config).Dispatch(ctx, channel, sender, ticketID, originalSubject, originalMessage, reply)
+}
 
 func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticketID int, originalSubject, originalMessage, reply string) error {
 	reply = OperatorReplyText(ticketID, reply)

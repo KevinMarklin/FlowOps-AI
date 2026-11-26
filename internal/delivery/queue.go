@@ -17,6 +17,7 @@ type Message struct {
 	TicketID                       int
 	Kind, Channel, Recipient, Body string
 	Attempt                        int
+	TenantID                       string
 }
 
 // EnqueueReply runs in the same transaction as the ticket update. Each destination
@@ -91,6 +92,9 @@ func (q *Queue) ProcessOnce(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	if err = q.db.QueryRow(ctx, `SELECT tenant_id FROM tickets WHERE id=$1`, m.TicketID).Scan(&m.TenantID); err != nil {
+		return true, err
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	sendErr := q.send(sendCtx, m)

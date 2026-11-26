@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/security"
 )
 
 type maxUpdate struct {
@@ -83,6 +84,8 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 	Info(string, ...any)
 	Error(string, ...any)
 }) {
+	ctx = security.WithTenantID(ctx, cfg.TenantID)
+	cfg.updateStatus("max", "starting", "")
 	var marker int64
 	for ctx.Err() == nil {
 		query := url.Values{"timeout": {"30"}, "types": {"message_created,bot_started"}}
@@ -191,8 +194,11 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 			}
 		}
 		if err != nil && ctx.Err() == nil {
+			cfg.updateStatus("max", "error", err.Error())
 			logger.Error("MAX polling failed", "error", err.Error())
 			waitContext(ctx, 3*time.Second)
+		} else if err == nil {
+			cfg.updateStatus("max", "connected", "")
 		}
 	}
 }

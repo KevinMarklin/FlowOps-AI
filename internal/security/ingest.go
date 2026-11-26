@@ -2,6 +2,7 @@ package security
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -41,7 +42,7 @@ func ProtectIngest(next http.Handler, token string) http.Handler {
 	})
 }
 
-type ingestKey struct{ scope, origin string }
+type ingestKey struct{ scope, origin, tenant string }
 type rateWindow struct {
 	started time.Time
 	count   int
@@ -65,8 +66,14 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Vary", "Origin")
 			if r.Header.Get("Origin") != "" {
+				value, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+				if !hasBearer || value == "" {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
 				var allowed bool
-				err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM api_keys WHERE is_active=TRUE AND scope='widget' AND allowed_origin=$1)`, r.Header.Get("Origin")).Scan(&allowed)
+				credentialHash := sha256.Sum256([]byte(value))
+				err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM api_keys WHERE is_active=TRUE AND scope='widget' AND allowed_origin=$1 AND key_hash=$2)`, r.Header.Get("Origin"), hex.EncodeToString(credentialHash[:])).Scan(&allowed)
 				if err != nil || !allowed {
 					w.WriteHeader(http.StatusForbidden)
 					return
@@ -83,55 +90,66 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 		}
 		credentialHash := sha256.Sum256([]byte(value))
 		identity := ""
+		tenantID := "default"
 		widgetKey := false
 		authorized := false
 		if len(token) >= 32 && subtle.ConstantTimeCompare(expected[:], credentialHash[:]) == 1 {
 			authorized, identity = true, "global"
 		} else {
-			var key ingestKey
-			err := db.QueryRow(r.Context(), `SELECT scope,allowed_origin FROM api_keys WHERE key_hash=$1 AND is_active=TRUE`, hex.EncodeToString(credentialHash[:])).Scan(&key.scope, &key.origin)
-			if err != nil {
-				if err != pgx.ErrNoRows {
-					ingestError(w, http.StatusServiceUnavailable, "Integration credential store unavailable")
-					return
-				}
-				ingestUnauthorized(w)
-				return
+			var operatorTenant string
+			if err := db.QueryRow(r.Context(), `SELECT tenant_id FROM workspaces WHERE token_hash=$1`, hex.EncodeToString(credentialHash[:])).Scan(&operatorTenant); err == nil {
+				authorized, identity, tenantID = true, "operator:"+hex.EncodeToString(credentialHash[:]), operatorTenant
 			}
-			origin := r.Header.Get("Origin")
-			if key.scope == "widget" && (origin == "" || origin != key.origin) {
-				ingestUnauthorized(w)
-				return
-			}
-			if key.scope != "widget" && key.scope != "ingest" {
-				ingestUnauthorized(w)
-				return
-			}
-			if key.scope == "widget" {
-				widgetKey = true
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-				w.Header().Set("Vary", "Origin")
-				body, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
-				if readErr != nil {
-					ingestError(w, http.StatusBadRequest, "invalid ingest body")
-					return
-				}
-				var payload struct {
-					Channel string `json:"channel"`
-				}
-				if json.Unmarshal(body, &payload) != nil || payload.Channel != "widget" {
+			if authorized {
+				// The authenticated dashboard uses the same ingest pipeline as
+				// external integrations while retaining its workspace boundary.
+			} else {
+				var key ingestKey
+				err := db.QueryRow(r.Context(), `SELECT scope,allowed_origin,tenant_id FROM api_keys WHERE key_hash=$1 AND is_active=TRUE`, hex.EncodeToString(credentialHash[:])).Scan(&key.scope, &key.origin, &key.tenant)
+				if err != nil {
+					if err != pgx.ErrNoRows {
+						ingestError(w, http.StatusServiceUnavailable, "Integration credential store unavailable")
+						return
+					}
 					ingestUnauthorized(w)
 					return
 				}
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				widgetKey = true
-			}
-			authorized, identity = true, hex.EncodeToString(credentialHash[:])
-			if _, err := db.Exec(r.Context(), `UPDATE api_keys SET last_used_at=NOW() WHERE key_hash=$1 AND is_active=TRUE`, identity); err != nil {
-				ingestError(w, http.StatusServiceUnavailable, "Integration credential store unavailable")
-				return
+				origin := r.Header.Get("Origin")
+				if key.scope == "widget" && (origin == "" || origin != key.origin) {
+					ingestUnauthorized(w)
+					return
+				}
+				if key.scope != "widget" && key.scope != "ingest" {
+					ingestUnauthorized(w)
+					return
+				}
+				if key.scope == "widget" {
+					widgetKey = true
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+					w.Header().Set("Vary", "Origin")
+					body, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
+					if readErr != nil {
+						ingestError(w, http.StatusBadRequest, "invalid ingest body")
+						return
+					}
+					var payload struct {
+						Channel string `json:"channel"`
+					}
+					if json.Unmarshal(body, &payload) != nil || payload.Channel != "widget" {
+						ingestUnauthorized(w)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					widgetKey = true
+				}
+				tenantID = key.tenant
+				authorized, identity = true, hex.EncodeToString(credentialHash[:])
+				if _, err := db.Exec(r.Context(), `UPDATE api_keys SET last_used_at=NOW() WHERE key_hash=$1 AND tenant_id=$2 AND is_active=TRUE`, identity, tenantID); err != nil {
+					ingestError(w, http.StatusServiceUnavailable, "Integration credential store unavailable")
+					return
+				}
 			}
 		}
 		if !authorized {
@@ -146,6 +164,8 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 		if widgetKey {
 			w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 		}
+		ctx := context.WithValue(r.Context(), tenantContextKey{}, tenantID)
+		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
 	})
 }

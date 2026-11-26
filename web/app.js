@@ -1,101 +1,341 @@
 (() => {
   'use strict';
-  const state = { tickets: [], currentTicketId: null, employeePoll: null, operatorLoading: false };
-  const $ = (selector, root = document) => root && root.querySelector ? root.querySelector(selector) : null;
-  const $$ = (selector, root = document) => root && root.querySelectorAll ? [...root.querySelectorAll(selector)] : [];
-  const on = (element, event, handler) => { if (element) element.addEventListener(event, handler); };
 
-  let operatorToken = ''; // Memory only: never put credentials in localStorage, URLs or logs.
-  let operatorTokenPrompt = null;
-  function requestOperatorToken() {
-    if (operatorTokenPrompt) return operatorTokenPrompt;
-    operatorTokenPrompt = new Promise(resolve => {
-      const dialog = document.createElement('dialog');
-      const form = document.createElement('form');
-      const label = document.createElement('label');
-      const input = document.createElement('input');
-      const submit = document.createElement('button');
-      const cancel = document.createElement('button');
-      dialog.setAttribute('aria-label', 'Доступ оператора');
-      label.textContent = 'Токен оператора: ';
-      input.type = 'password'; input.required = true; input.minLength = 32;
-      input.maxLength = 256; input.autocomplete = 'off'; input.spellcheck = false;
-      submit.type = 'submit'; submit.textContent = 'Войти';
-      cancel.type = 'button'; cancel.textContent = 'Отмена';
-      const finish = value => { input.value = ''; dialog.close(); dialog.remove(); resolve(value); };
-      form.addEventListener('submit', event => { event.preventDefault(); finish(input.value.trim()); });
-      cancel.addEventListener('click', () => finish(''));
-      dialog.addEventListener('cancel', event => { event.preventDefault(); finish(''); });
-      label.append(input); form.append(label, submit, cancel); dialog.append(form);
-      document.body.append(dialog); dialog.showModal(); input.focus();
-    }).finally(() => { operatorTokenPrompt = null; });
-    return operatorTokenPrompt;
-  }
-  async function api(path, options = {}) {
-    const send = () => fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}), ...(operatorToken ? { Authorization: `Bearer ${operatorToken}` } : {}) } });
-    let response = await send();
-    if (response.status === 401) {
-      operatorToken = '';
-      const entered = await requestOperatorToken();
-      if (entered) { operatorToken = entered.trim(); response = await send(); }
-      if (response.status === 401) operatorToken = '';
+  const state = {
+    tickets: [],
+    currentTicketId: null,
+    employeePoll: null,
+    operatorLoading: false
+  };
+
+  const $ = (selector, root = document) => (root && root.querySelector ? root.querySelector(selector) : null);
+  const $$ = (selector, root = document) => (root && root.querySelectorAll ? [...root.querySelectorAll(selector)] : []);
+  const on = (element, event, handler) => {
+    if (element) element.addEventListener(event, handler);
+  };
+
+  let operatorToken = localStorage.getItem('flowops_operator_token') || '';
+  let authReady = false;
+
+  function showAuth(error = '') {
+    authReady = false;
+    const gate = $('#auth-gate');
+    const message = $('#auth-error');
+    if (gate) gate.hidden = false;
+    document.body.classList.add('auth-required');
+    if (message) {
+      message.textContent = error;
+      message.hidden = !error;
     }
+    $('#operator-token')?.focus();
+  }
+
+  function hideAuth(me) {
+    authReady = true;
+    const gate = $('#auth-gate');
+    const label = $('#workspace-name-label');
+    if (gate) gate.hidden = true;
+    document.body.classList.remove('auth-required');
+    if (label) label.textContent = me?.name || '';
+  }
+
+  function logout() {
+    authReady = false;
+    operatorToken = '';
+    localStorage.removeItem('flowops_operator_token');
+    const field = $('#operator-token');
+    if (field) field.value = '';
+    showAuth();
+  }
+
+  async function authenticate(token) {
+    const candidate = String(token || '').trim();
+    const field = $('#operator-token');
+    if (!candidate) {
+      showAuth('Введите токен рабочего пространства.');
+      return false;
+    }
+    try {
+      const response = await fetch('/api/v1/auth/me', {
+        headers: { Authorization: `Bearer ${candidate}` },
+        cache: 'no-store'
+      });
+      if (!response.ok) {
+        throw new Error(
+          response.status === 401
+            ? 'Токен не распознан. Проверьте его и попробуйте ещё раз.'
+            : 'Не удалось проверить токен. Повторите попытку.'
+        );
+      }
+      const me = await response.json();
+      operatorToken = candidate;
+      localStorage.setItem('flowops_operator_token', operatorToken);
+      hideAuth(me);
+      await Promise.all([loadHistory(), loadKnowledge(), loadOperator(), checkAPI()]);
+      return true;
+    } catch (error) {
+      operatorToken = '';
+      localStorage.removeItem('flowops_operator_token');
+      if (field) field.value = candidate;
+      showAuth(error.message);
+      return false;
+    }
+  }
+
+  async function createWorkspace(event) {
+    event.preventDefault();
+    const name = $('#workspace-name')?.value.trim() || '';
+    const result = $('#workspace-result');
+    if (!name || !result) return;
+    result.hidden = false;
+    result.textContent = 'Создаём рабочее пространство…';
+    try {
+      const response = await fetch('/api/v1/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Не удалось создать пространство. Повторите попытку.');
+      }
+      const token = data.token || data.key || data.operator_token;
+      if (!token) {
+        throw new Error('Пространство создано, но сервер не вернул токен.');
+      }
+      const tokenField = $('#operator-token');
+      if (tokenField) tokenField.value = token;
+      result.innerHTML = `<p>Пространство создано. Сохраните токен доступа:</p><code>${escapeHTML(token)}</code><button type="button" data-copy-workspace-token>Скопировать</button>`;
+      on($('[data-copy-workspace-token]', result), 'click', async () => {
+        try {
+          await navigator.clipboard.writeText(token);
+          toast('Токен скопирован');
+        } catch {
+          const range = document.createRange();
+          range.selectNodeContents($('code', result));
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          document.execCommand('copy');
+          toast('Токен скопирован');
+        }
+      });
+      const error = $('#auth-error');
+      if (error) error.hidden = true;
+    } catch (error) {
+      result.textContent = error.message;
+    }
+  }
+
+  function hasSession() {
+    return authReady;
+  }
+
+  async function api(path, options = {}) {
+    if (!hasSession()) throw new Error('Сначала войдите в рабочее пространство.');
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+        ...(operatorToken ? { Authorization: `Bearer ${operatorToken}` } : {})
+      }
+    });
+    if (response.status === 401) logout();
     const data = response.status === 204 ? null : await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Ошибка API: ${response.status}`);
+    if (!response.ok) throw new Error(data?.error || `Ошибка API: ${response.status}`);
     return data;
   }
-  function escapeHTML(value = '') { const element = document.createElement('div'); element.textContent = value; return element.innerHTML; }
-  const departments = { Unassigned: 'Не назначен', General: 'Общее', IT: 'ИТ-поддержка', Billing: 'Финансы и биллинг', HR: 'HR и кадры', Accounting: 'Бухгалтерия', Facilities: 'АХО и офис' };
-   const channels = { web: '🌐 Сайт', email: '✉️ Почта', bot: '🤖 Бот', api: '🔌 API' };
-   function channelTag(value) { return `<span class="tag channel">${escapeHTML(channels[value] || value || '🌐 Сайт')}</span>`; }
-  const priorities = { high: 'Высокий', medium: 'Средний', low: 'Низкий' };
-  function priorityTag(value) { return `<span class="tag priority-${escapeHTML(value)}">${escapeHTML(priorities[value] || value)}</span>`; }
-  function departmentTag(value) { return `<span class="tag department">${escapeHTML(departments[value] || value || 'Общее')}</span>`; }
-  function statusLabel(value) { return ({ new: 'Новый', awaiting_confirmation: 'Ожидает подтверждения', assigned_to_operator: 'У оператора', auto_resolved: 'Решен ИИ', resolved: 'Решено специалистом', closed: 'Решено специалистом' })[value] || value; }
-  function statusClass(value) { return ['auto_resolved', 'closed', 'resolved'].includes(value) ? 'status-success' : value === 'assigned_to_operator' ? 'status-pending' : ''; }
-  function toast(message) { const element = $('#toast'); if (!element) return; element.textContent = message; element.classList.add('show'); setTimeout(() => element.classList.remove('show'), 3500); }
-  function setAPIStatus(ok) { const dot = $('#api-dot'); const label = $('#api-status'); if (dot) dot.className = `status-dot ${ok ? 'ok' : 'bad'}`; if (label) label.textContent = ok ? 'API подключен (Online)' : 'Ошибка соединения с API'; }
-  function renderChannels(active = []) { const element = $('#channel-indicators'); if (!element) return; const labels = { Web: 'Сайт', Telegram: 'Telegram', MAX: 'MAX', Email: 'Почта' }; element.innerHTML = active.map(channel => `<span class="channel-indicator" title="Канал подключён"><i></i>${escapeHTML(labels[channel] || channel)}</span>`).join(''); }
-  async function checkAPI() { try { const stats = await api('/api/stats'); setAPIStatus(true); renderChannels(stats.active_channels || ['Web']); const label = $('#api-status'); if (label) label.textContent = stats.ai_mode === 'llm' ? `API подключен · ИИ: ${stats.ai_provider || 'Нейросеть'} (${stats.ai_model})` : `API подключен · ИИ: ${stats.ai_provider || 'Локальный анализатор'}`; } catch { setAPIStatus(false); } }
+
+  function escapeHTML(value = '') {
+    const element = document.createElement('div');
+    element.textContent = value;
+    return element.innerHTML;
+  }
+
+  const departments = {
+    Unassigned: 'Не назначен',
+    General: 'Общее',
+    IT: 'ИТ-поддержка',
+    Billing: 'Финансы и биллинг',
+    HR: 'HR и кадры',
+    Accounting: 'Бухгалтерия',
+    Facilities: 'АХО и офис'
+  };
+
+  const channels = {
+    web: '🌐 Сайт',
+    email: '✉️ Почта',
+    bot: '🤖 Бот',
+    api: '🔌 API'
+  };
+
+  function channelTag(value) {
+    return `<span class="tag channel">${escapeHTML(channels[value] || value || '🌐 Сайт')}</span>`;
+  }
+
+  const priorities = {
+    high: 'Высокий',
+    medium: 'Средний',
+    low: 'Низкий'
+  };
+
+  function priorityTag(value) {
+    return `<span class="tag priority-${escapeHTML(value)}">${escapeHTML(priorities[value] || value)}</span>`;
+  }
+
+  function departmentTag(value) {
+    return `<span class="tag department">${escapeHTML(departments[value] || value || 'Общее')}</span>`;
+  }
+
+  function statusLabel(value) {
+    return (
+      {
+        new: 'Новый',
+        awaiting_confirmation: 'Ожидает подтверждения',
+        assigned_to_operator: 'В работе',
+        auto_resolved: 'Решен ИИ',
+        resolved: 'Решено специалистом',
+        closed: 'Закрыт'
+      }[value] || value
+    );
+  }
+
+  function statusClass(value) {
+    return ['auto_resolved', 'closed', 'resolved'].includes(value)
+      ? 'status-success'
+      : value === 'assigned_to_operator'
+        ? 'status-pending'
+        : '';
+  }
+
+  function toast(message) {
+    const element = $('#toast');
+    if (!element) return;
+    element.textContent = message;
+    element.classList.add('show');
+    setTimeout(() => element.classList.remove('show'), 3500);
+  }
+
+  function setAPIStatus(ok) {
+    const dot = $('#api-dot');
+    const label = $('#api-status');
+    if (dot) dot.className = `status-dot ${ok ? 'ok' : 'bad'}`;
+    if (label) label.textContent = ok ? 'API подключен (Online)' : 'Ошибка соединения с API';
+  }
+
+  function renderChannels(active = []) {
+    const element = $('#channel-indicators');
+    if (!element) return;
+    const labels = { Web: 'Сайт', Telegram: 'Telegram', MAX: 'MAX', Email: 'Почта' };
+    element.innerHTML = active
+      .map(
+        channel =>
+          `<span class="channel-indicator" title="Канал подключён"><i></i>${escapeHTML(labels[channel] || channel)}</span>`
+      )
+      .join('');
+  }
+
+  async function checkAPI() {
+    if (!hasSession()) return;
+    try {
+      const stats = await api('/api/stats');
+      setAPIStatus(true);
+      renderChannels(stats.active_channels || ['Web']);
+      const label = $('#api-status');
+      if (label) {
+        label.textContent =
+          stats.ai_mode === 'llm'
+            ? `API подключен · ИИ: ${stats.ai_provider || 'Нейросеть'} (${stats.ai_model})`
+            : `API подключен · ИИ: ${stats.ai_provider || 'Локальный анализатор'}`;
+      }
+    } catch {
+      setAPIStatus(false);
+    }
+  }
 
   async function loadHistory() {
+    if (!hasSession()) return;
     try {
-      const email = $('#email'); const tickets = await api('/api/tickets'); state.tickets = tickets;
+      const email = $('#email');
+      const tickets = await api('/api/tickets');
+      state.tickets = tickets;
       const value = email ? email.value.trim() : '';
       renderHistory(tickets.filter(ticket => !value || ticket.user_email === value).slice(0, 5));
+      const emptyWorkspace = $('#employee-workspace-empty');
+      if (emptyWorkspace) emptyWorkspace.hidden = tickets.length !== 0;
+      const employeeGrid = $('.employee-grid');
+      if (employeeGrid) employeeGrid.hidden = tickets.length === 0;
       if (state.currentTicketId !== null) {
         const current = tickets.find(ticket => String(ticket.id) === String(state.currentTicketId));
         if (current) renderAnalysis(current);
       }
-    } catch { renderHistory([]); }
+    } catch {
+      renderHistory([]);
+    }
   }
+
   function renderHistory(tickets) {
-    const list = $('#history-list'); if (!list) return;
-    list.innerHTML = tickets.length ? tickets.map(ticket => `<details class="history-row" data-ticket-id="${ticket.id}"><summary><div><strong>#${ticket.id} · ${escapeHTML(ticket.extracted_summary || ticket.raw_text)}</strong><p>${channelTag(ticket.channel)} <span class="history-status">${escapeHTML(statusLabel(ticket.status))}</span></p></div>${priorityTag(ticket.priority)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${escapeHTML(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">✅ ${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">✅ Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`).join('') : '<p class="muted">История пока пуста.</p>';
-    $$('.history-row', list).forEach(row => on(row, 'click', event => {
-      if (event.target.closest('button, a')) return;
-      const ticket = state.tickets.find(item => String(item.id) === String(row.dataset.ticketId));
-      if (!ticket) return;
-      state.currentTicketId = ticket.id;
-      renderAnalysis(ticket);
-    }));
+    const list = $('#history-list');
+    if (!list) return;
+    list.innerHTML = tickets.length
+      ? tickets
+          .map(
+            ticket =>
+              `<details class="history-row" data-ticket-id="${ticket.id}"><summary><div><strong>#${ticket.id} · ${escapeHTML(ticket.extracted_summary || ticket.raw_text)}</strong><p>${channelTag(ticket.channel)} <span class="history-status">${escapeHTML(statusLabel(ticket.status))}</span></p></div>${priorityTag(ticket.priority)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${escapeHTML(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">✅ ${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">✅ Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
+          )
+          .join('')
+      : '<p class="muted">История пока пуста.</p>';
+
+    $$('.history-row', list).forEach(row =>
+      on(row, 'click', event => {
+        if (event.target.closest('button, a')) return;
+        const ticket = state.tickets.find(item => String(item.id) === String(row.dataset.ticketId));
+        if (!ticket) return;
+        state.currentTicketId = ticket.id;
+        renderAnalysis(ticket);
+      })
+    );
   }
+
   function renderAnalysis(ticket) {
-    const result = $('#analysis-result'); if (!result) return;
+    const result = $('#analysis-result');
+    if (!result) return;
     const operatorReply = String(ticket.operator_reply || '').trim();
     const feedbackGiven = ['auto_resolved', 'assigned_to_operator', 'closed', 'resolved'].includes(ticket.status);
-    const statusNotice = ticket.status === 'auto_resolved' ? '<div class="feedback-notice feedback-success">✅ Вопрос решён автоматически. Спасибо за обратную связь! Обращение закрыто.</div>' : ticket.status === 'assigned_to_operator' ? '<div class="feedback-notice feedback-pending">⏳ Заявка передана специалисту поддержки. Как только оператор ответит, решение появится здесь.</div>' : ['closed', 'resolved'].includes(ticket.status) ? '<div class="feedback-notice feedback-success">✅ Обращение закрыто специалистом поддержки.</div>' : '';
-    const answer = operatorReply ? `<section class="operator-solution"><div class="analysis-label">РЕШЕНИЕ СПЕЦИАЛИСТА</div><h3>Решение специалиста поддержки</h3><p>${escapeHTML(operatorReply)}</p><strong>Заявка решена оператором</strong></section>` : ticket.rag_answer && !feedbackGiven ? `<div class="rag-box">${escapeHTML(ticket.rag_answer)}</div><div class="result-actions"><button type="button" class="resolve" data-feedback="true">✅ Помогло, закрыть вопрос</button><button type="button" class="escalate" data-feedback="false">❌ Не помогло, позвать специалиста</button></div>` : statusNotice || `<div class="notice">В базе знаний нет готового регламента по этой проблеме. Заявка направлена в отдел <b>${escapeHTML(ticket.department)}</b> с приоритетом <b>${escapeHTML(ticket.priority)}</b>.</div>`;
-    result.classList.remove('empty'); result.innerHTML = `<div class="analysis-label">ИИ-РАЗБОР ЗАЯВКИ #${ticket.id}</div><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || 'Суть не выделена')}</div><div class="enrichment"><div><span>Отдел</span>${departmentTag(ticket.department)}</div><div><span>Приоритет</span>${priorityTag(ticket.priority)}</div><div><span>Статус</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div></div>${ticket.rag_answer && !operatorReply ? '<div class="analysis-label">РЕГЛАМЕНТ / ОТВЕТ ИЗ БАЗЫ ЗНАНИЙ</div>' : ''}${answer}`;
+    const statusNotice =
+      ticket.status === 'auto_resolved'
+        ? '<div class="feedback-notice feedback-success">✅ Вопрос решён автоматически. Спасибо за обратную связь! Обращение закрыто.</div>'
+        : ticket.status === 'assigned_to_operator'
+          ? '<div class="feedback-notice feedback-pending">⏳ Заявка передана специалисту поддержки. Как только оператор ответит, решение появится здесь.</div>'
+          : ['closed', 'resolved'].includes(ticket.status)
+            ? '<div class="feedback-notice feedback-success">✅ Обращение закрыто специалистом поддержки.</div>'
+            : '';
+
+    const answer = operatorReply
+      ? `<section class="operator-solution"><div class="analysis-label">РЕШЕНИЕ СПЕЦИАЛИСТА</div><h3>Решение специалиста поддержки</h3><p>${escapeHTML(operatorReply)}</p><strong>Заявка решена оператором</strong></section>`
+      : ticket.rag_answer && !feedbackGiven
+        ? `<div class="rag-box">${escapeHTML(ticket.rag_answer)}</div><div class="result-actions"><button type="button" class="resolve" data-feedback="true">✅ Помогло, закрыть вопрос</button><button type="button" class="escalate" data-feedback="false">❌ Не помогло, позвать специалиста</button></div>`
+        : statusNotice ||
+          `<div class="notice">В базе знаний нет готового регламента по этой проблеме. Заявка направлена в отдел <b>${escapeHTML(ticket.department)}</b> с приоритетом <b>${escapeHTML(ticket.priority)}</b>.</div>`;
+
+    result.classList.remove('empty');
+    result.innerHTML = `<div class="analysis-label">ИИ-РАЗБОР ЗАЯВКИ #${ticket.id}</div><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || 'Суть не выделена')}</div><div class="enrichment"><div><span>Отдел</span>${departmentTag(ticket.department)}</div><div><span>Приоритет</span>${priorityTag(ticket.priority)}</div><div><span>Статус</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div></div>${ticket.rag_answer && !operatorReply ? '<div class="analysis-label">РЕГЛАМЕНТ / ОТВЕТ ИЗ БАЗЫ ЗНАНИЙ</div>' : ''}${answer}`;
     $$('[data-feedback]', result).forEach(button => on(button, 'click', () => handleFeedback(ticket, result, button)));
   }
+
   async function handleFeedback(ticket, result, clickedButton) {
     const buttons = $$('[data-feedback]', result);
     if (!buttons.length || buttons.some(button => button.disabled)) return;
-    buttons.forEach(button => { button.disabled = true; });
+    buttons.forEach(button => {
+      button.disabled = true;
+    });
     const isResolved = clickedButton.dataset.feedback === 'true';
     try {
-      const response = await api(`/api/tickets/${ticket.id}/feedback`, { method: 'POST', body: JSON.stringify({ resolved: isResolved }) });
+      const response = await api(`/api/tickets/${ticket.id}/feedback`, {
+        method: 'POST',
+        body: JSON.stringify({ resolved: isResolved })
+      });
       ticket.status = response.status || (isResolved ? 'auto_resolved' : 'assigned_to_operator');
       const current = state.tickets.find(item => String(item.id) === String(ticket.id));
       if (current) current.status = ticket.status;
@@ -103,81 +343,899 @@
       const email = $('#email')?.value.trim() || '';
       renderHistory(state.tickets.filter(item => !email || item.user_email === email).slice(0, 5));
     } catch (error) {
-      buttons.forEach(button => { button.disabled = false; });
+      buttons.forEach(button => {
+        button.disabled = false;
+      });
       toast(error.message);
     }
   }
+
   async function submitTicket(event) {
-    event.preventDefault(); const form = event.currentTarget; const email = $('#email'); const problem = $('#problem'); const button = $('.primary-button', form); if (!email || !problem) return;
-    if (button) { button.disabled = true; const label = $('span', button); if (label) label.textContent = 'ИИ анализирует...'; }
-    try { const ticket = await api('/api/tickets', { method: 'POST', body: JSON.stringify({ user_email: email.value.trim(), raw_text: problem.value.trim() }) }); state.currentTicketId = ticket.id; renderAnalysis(ticket); await loadHistory(); toast(`Обращение #${ticket.id} принято`); } catch (error) { toast(error.message); } finally { if (button) { button.disabled = false; const label = $('span', button); if (label) label.textContent = 'Отправить обращение'; } }
+    event.preventDefault();
+    const form = event.currentTarget;
+    const email = $('#email');
+    const problem = $('#problem');
+    const button = $('.primary-button', form);
+    if (!email || !problem) return;
+    if (button) {
+      button.disabled = true;
+      const label = $('span', button);
+      if (label) label.textContent = 'ИИ анализирует...';
+    }
+    try {
+      const ticket = await api('/api/tickets', {
+        method: 'POST',
+        body: JSON.stringify({ user_email: email.value.trim(), raw_text: problem.value.trim() })
+      });
+      state.currentTicketId = ticket.id;
+      renderAnalysis(ticket);
+      await loadHistory();
+      toast(`Обращение #${ticket.id} принято`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        const label = $('span', button);
+        if (label) label.textContent = 'Отправить обращение';
+      }
+    }
   }
+
   async function loadOperator() {
-    if (state.operatorLoading) return;
+    if (!hasSession() || state.operatorLoading) return;
     state.operatorLoading = true;
     try {
       const [stats, tickets] = await Promise.all([api('/api/stats', { cache: 'no-store' }), api('/api/tickets')]);
-      state.tickets = tickets; renderChannels(stats.active_channels || ['Web']); renderMetrics(stats); renderTickets();
+      state.tickets = tickets;
+      renderChannels(stats.active_channels || ['Web']);
+      renderMetrics(stats);
+      renderTickets();
+      const emptyOperator = $('#operator-empty');
+      if (emptyOperator) emptyOperator.hidden = tickets.length !== 0;
       const status = $('#metrics-status');
-      if (status) { status.textContent = `PostgreSQL · обновлено ${new Date(stats.observed_at).toLocaleTimeString('ru-RU')} · каждые 5 с`; status.classList.remove('stale'); }
-      await loadAudit(); setAPIStatus(true);
+      if (status) {
+        status.textContent = `PostgreSQL · обновлено ${new Date(stats.observed_at).toLocaleTimeString('ru-RU')} · каждые 5 с`;
+        status.classList.remove('stale');
+      }
+      await loadAudit();
+      setAPIStatus(true);
     } catch (error) {
       setAPIStatus(false);
       const status = $('#metrics-status');
-      if (status) { status.textContent = 'Нет обновления: показаны последние загруженные данные, если они есть'; status.classList.add('stale'); }
+      if (status) {
+        status.textContent = 'Нет обновления: показаны последние загруженные данные, если они есть';
+        status.classList.add('stale');
+      }
       toast(error.message);
-    } finally { state.operatorLoading = false; }
+    } finally {
+      state.operatorLoading = false;
+    }
   }
 
-  async function loadAudit() { const list = $('#audit-list'); if (!list) return; try { const entries = await api('/api/audit'); list.innerHTML = entries.length ? entries.map(entry => `<article class="audit-entry"><time>${new Date(entry.created_at).toLocaleString('ru-RU')}</time><b>${escapeHTML(entry.event_type)}</b><span>${escapeHTML(entry.details || '')}</span>${entry.ticket_id ? `<small>Тикет #${entry.ticket_id}</small>` : ''}</article>`).join('') : '<p class="muted">Записей пока нет.</p>'; } catch (error) { list.innerHTML = `<p class="muted">${escapeHTML(error.message)}</p>`; } }
+  async function loadAudit() {
+    const list = $('#audit-list');
+    if (!list) return;
+    try {
+      const entries = await api('/api/audit');
+      list.innerHTML = entries.length
+        ? entries
+            .map(
+              entry =>
+                `<article class="audit-entry"><time>${new Date(entry.created_at).toLocaleString('ru-RU')}</time><b>${escapeHTML(entry.event_type)}</b><span>${escapeHTML(entry.details || '')}</span>${entry.ticket_id ? `<small>Тикет #${entry.ticket_id}</small>` : ''}</article>`
+            )
+            .join('')
+        : '<p class="muted">Записей пока нет.</p>';
+    } catch (error) {
+      list.innerHTML = `<p class="muted">${escapeHTML(error.message)}</p>`;
+    }
+  }
+
   function renderMetrics(stats) {
-    const element = $('#metrics'); if (!element) return;
-    const number = value => Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0;
+    const element = $('#metrics');
+    if (!element) return;
+    const number = value => (Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0);
     const format = (value, digits = 0) => number(value).toLocaleString('ru-RU', { maximumFractionDigits: digits });
-    const codes = [...new Set(['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General', 'Unassigned', ...Object.keys(stats.by_department || {}), ...Object.keys(stats.active_by_department || {})])];
-    const total = number(stats.total), open = number(stats.open);
+    const codes = [
+      ...new Set([
+        'IT',
+        'Billing',
+        'HR',
+        'Accounting',
+        'Facilities',
+        'General',
+        'Unassigned',
+        ...Object.keys(stats.by_department || {}),
+        ...Object.keys(stats.active_by_department || {})
+      ])
+    ];
+    const total = number(stats.total);
+    const open = number(stats.open);
     element.innerHTML = `
       <article class="metric"><div class="metric-label">ВСЕГО ОБРАЩЕНИЙ</div><div class="metric-value">${format(total)}</div><div class="metric-detail">за всё время · все каналы</div></article>
       <article class="metric metric-accent"><div class="metric-label">DEFLECTION RATE</div><div class="metric-value">${format(stats.deflection_rate_percent, 1)}<small>%</small></div><div class="metric-detail">${format(stats.auto_resolved)} из ${format(total)} подтверждены без ответа оператора</div></article>
       <article class="metric"><div class="metric-label">СЭКОНОМЛЕНО ЧАСОВ · ОЦЕНКА</div><div class="metric-value">${format(stats.estimated_saved_hours, 2)}<small>ч</small></div><div class="metric-detail">${format(stats.auto_resolved)} × ${format(stats.baseline_minutes_per_ticket, 1)} мин / 60</div></article>
       <article class="metric"><div class="metric-label">ОТКРЫТЫЕ ОБРАЩЕНИЯ</div><div class="metric-value">${format(open)}</div><div class="metric-detail">из них ${format(stats.awaiting_confirmation)} ожидают подтверждения</div></article>
-      <article class="metric load-panel"><div class="load-heading"><h3>Распределение нагрузки по отделам</h3><span>Открытые / всего · доля открытой очереди</span></div><div class="department-load">${codes.map(code => {
-        const count = number(stats.active_by_department?.[code]);
-        const share = open ? Math.min(100, count * 100 / open) : 0;
-        return `<div class="load-item"><div class="load-label"><span>${escapeHTML(departments[code] || code)}</span><strong>${format(count)} <small>/ ${format(stats.by_department?.[code])}</small></strong></div><div class="load-track" role="meter" aria-label="${escapeHTML(departments[code] || code).replace(/"/g, '&quot;')}: доля открытой очереди" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${share.toFixed(1)}"><span style="width:${share}%"></span></div></div>`;
-      }).join('')}</div>${open ? '' : '<p class="muted">Открытых обращений нет.</p>'}</article>`;
+      <article class="metric load-panel"><div class="load-heading"><h3>Распределение нагрузки по отделам</h3><span>Открытые / всего · доля открытой очереди</span></div><div class="department-load">${codes
+        .map(code => {
+          const count = number(stats.active_by_department?.[code]);
+          const share = open ? Math.min(100, (count * 100) / open) : 0;
+          return `<div class="load-item"><div class="load-label"><span>${escapeHTML(departments[code] || code)}</span><strong>${format(count)} <small>/ ${format(stats.by_department?.[code])}</small></strong></div><div class="load-track" role="meter" aria-label="${escapeHTML(departments[code] || code).replace(/"/g, '&quot;')}: доля открытой очереди" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${share.toFixed(1)}"><span style="width:${share}%"></span></div></div>`;
+        })
+        .join('')}</div>${open ? '' : '<p class="muted">Открытых обращений нет.</p>'}</article>`;
   }
 
-  function renderTickets() { const list = $('#ticket-list'); if (!list) return; const department = $('#department-filter'); const status = $('#status-filter'); const tickets = state.tickets.filter(ticket => (!department || !department.value || ticket.department === department.value) && (!status || !status.value || ticket.status === status.value)); const count = $('#queue-count'); if (count) count.textContent = `${tickets.length} обращений в отображаемой очереди`; list.innerHTML = tickets.length ? tickets.map(ticketCard).join('') : '<div class="panel empty-state" style="padding:50px;text-align:center"><div class="empty-icon">✓</div><h3>Очередь пуста</h3><p>По выбранным фильтрам обращений нет.</p></div>'; $$('.ticket-card', list).forEach(bindTicketControls); }
-  function ticketCard(ticket) { const departmentCodes = ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General']; const priorityCodes = ['high', 'medium', 'low']; const piiBadge = Number(ticket.pii_masked_count) > 0 ? `<div class="pii-badge">🛡️ ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>` : ''; return `<article class="ticket-card" data-id="${ticket.id}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p><div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Что уже предложил ИИ</b><br>${escapeHTML(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Ответ сотруднику</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<div class="operator-reply"><b>Ответ сотруднику</b><textarea data-reply placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes.slice(0, 4).map(item => `<option value="${item}">${departments[item]}</option>`).join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">⏱ Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes.map(item => `<option value="${item}" ${item === ticket.department ? 'selected' : ''}>${departments[item]}</option>`).join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes.map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`).join('')}</select><button type="button" data-action="take">Взять в работу</button><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article>`; }
-  function bindTicketControls(card) { const id = card.dataset.id; card.querySelectorAll('select').forEach(select => on(select, 'change', () => updateTicket(id, { [select.dataset.field]: select.value }))); on(card.querySelector('[data-action="take"]'), 'click', () => updateTicket(id, { status: 'assigned_to_operator' })); on(card.querySelector('[data-action="close"]'), 'click', () => updateTicket(id, { status: 'closed' })); const toggle = card.querySelector('[data-rag-toggle]'); on(toggle, 'change', () => { card.querySelectorAll('[data-rag-keywords], [data-rag-title], [data-rag-ttl]').forEach(input => input.hidden = !toggle.checked); }); on(card.querySelector('[data-action="reply"]'), 'click', () => sendOperatorReply(id, card)); }
-  async function sendOperatorReply(id, card) { const reply = card.querySelector('[data-reply]'); if (!reply || !reply.value.trim()) { toast('Введите ответ сотруднику'); return; } try { await api(`/api/tickets/${id}/reply`, { method: 'POST', body: JSON.stringify({ operator_reply: reply.value.trim() }) }); const toggle = card.querySelector('[data-rag-toggle]'); if (toggle && toggle.checked) { const ticket = state.tickets.find(item => String(item.id) === String(id)); const keywords = card.querySelector('[data-rag-keywords]'); const department = card.querySelector('[data-rag-department]'); const supplied = (keywords ? keywords.value : '').split(',').map(item => item.trim()).filter(Boolean); const titleInput = card.querySelector('[data-rag-title]'); const ttlInput = card.querySelector('[data-rag-ttl]'); const suffix = supplied.length ? '' : `?ticket_id=${encodeURIComponent(id)}`; await api(`/api/knowledge${suffix}`, { method: 'POST', body: JSON.stringify({ department: department ? department.value : 'General', title: titleInput && titleInput.value.trim() ? titleInput.value.trim() : (ticket.extracted_summary || 'Решение оператора'), keywords: supplied, ttl_seconds: Number(ttlInput ? ttlInput.value : 0), kind: Number(ttlInput ? ttlInput.value : 0) > 0 ? 'incident' : 'permanent', content: reply.value.trim() }) }); toast('Ответ отправлен, регламент добавлен в базу знаний'); } else toast('Ответ отправлен сотруднику'); await loadOperator(); } catch (error) { toast(error.message); } }
-  async function submitIngest() { const result = $('#ingest-result'); try { const data = await api('/api/v1/ingest', { method: 'POST', body: JSON.stringify({ channel: $('#ingest-channel').value, sender: $('#ingest-sender').value, subject: $('#ingest-subject').value, message: $('#ingest-message').value }) }); result.textContent = JSON.stringify(data, null, 2); } catch (error) { result.textContent = error.message; } }
+  function renderTickets() {
+    const list = $('#ticket-list');
+    if (!list) return;
+    const department = $('#department-filter');
+    const status = $('#status-filter');
+    const tickets = state.tickets.filter(
+      ticket =>
+        (!department || !department.value || ticket.department === department.value) &&
+        (!status || !status.value || ticket.status === status.value)
+    );
+    const count = $('#queue-count');
+    if (count) count.textContent = `${tickets.length} обращений в отображаемой очереди`;
+    list.innerHTML = tickets.length
+      ? tickets.map(ticketCard).join('')
+      : state.tickets.length
+        ? '<div class="panel empty-state" style="padding:50px;text-align:center"><div class="empty-icon">✓</div><h3>Очередь пуста</h3><p>По выбранным фильтрам обращений нет.</p></div>'
+        : '';
+    $$('.ticket-card', list).forEach(bindTicketControls);
+  }
+
+  function ticketCard(ticket) {
+    const departmentCodes = ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General'];
+    const priorityCodes = ['high', 'medium', 'low'];
+    const piiBadge =
+      Number(ticket.pii_masked_count) > 0
+        ? `<div class="pii-badge">🛡️ ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
+        : '';
+    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p><div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Что уже предложил ИИ</b><br>${escapeHTML(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<div class="operator-reply"><b>Новый ответ</b><textarea data-reply placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+      .slice(0, 4)
+      .map(item => `<option value="${item}">${departments[item]}</option>`)
+      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">⏱ Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
+      .map(
+        item => `<option value="${item}" ${item === ticket.department ? 'selected' : ''}>${departments[item]}</option>`
+      )
+      .join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes
+      .map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`)
+      .join('')}</select><button type="button" data-action="take">Взять в работу</button><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article>`;
+  }
+
+  function bindTicketControls(card) {
+    const id = card.dataset.id;
+    const take = card.querySelector('[data-action="take"]');
+    const close = card.querySelector('[data-action="close"]');
+    const status = card.dataset.status;
+    if (status === 'assigned_to_operator' && take) {
+      take.disabled = true;
+      take.textContent = 'В работе';
+    }
+    if (status === 'closed') {
+      if (take) take.disabled = true;
+      if (close) {
+        close.disabled = true;
+        close.textContent = 'Закрыт';
+      }
+    }
+    card.querySelectorAll('select[data-field]').forEach(select =>
+      on(select, 'change', () => updateTicket(id, { [select.dataset.field]: select.value }))
+    );
+    on(take, 'click', event => updateTicket(id, { status: 'assigned_to_operator' }, event.currentTarget));
+    on(close, 'click', event => updateTicket(id, { status: 'closed' }, event.currentTarget));
+    const toggle = card.querySelector('[data-rag-toggle]');
+    on(toggle, 'change', () => {
+      card
+        .querySelectorAll('[data-rag-keywords], [data-rag-title], [data-rag-ttl]')
+        .forEach(input => (input.hidden = !toggle.checked));
+    });
+    on(card.querySelector('[data-action="reply"]'), 'click', () => sendOperatorReply(id, card));
+  }
+
+  async function sendOperatorReply(id, card) {
+    const reply = card.querySelector('[data-reply]');
+    if (!reply || !reply.value.trim()) {
+      toast('Введите ответ сотруднику');
+      return;
+    }
+    try {
+      await api(`/api/tickets/${id}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ operator_reply: reply.value.trim() })
+      });
+      const toggle = card.querySelector('[data-rag-toggle]');
+      if (toggle && toggle.checked) {
+        const ticket = state.tickets.find(item => String(item.id) === String(id));
+        const keywords = card.querySelector('[data-rag-keywords]');
+        const department = card.querySelector('[data-rag-department]');
+        const supplied = (keywords ? keywords.value : '')
+          .split(',')
+          .map(item => item.trim())
+          .filter(Boolean);
+        const titleInput = card.querySelector('[data-rag-title]');
+        const ttlInput = card.querySelector('[data-rag-ttl]');
+        const suffix = supplied.length ? '' : `?ticket_id=${encodeURIComponent(id)}`;
+        await api(`/api/knowledge${suffix}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            department: department ? department.value : 'General',
+            title:
+              titleInput && titleInput.value.trim()
+                ? titleInput.value.trim()
+                : ticket?.extracted_summary || 'Решение оператора',
+            keywords: supplied,
+            ttl_seconds: Number(ttlInput ? ttlInput.value : 0),
+            kind: Number(ttlInput ? ttlInput.value : 0) > 0 ? 'incident' : 'permanent',
+            content: reply.value.trim()
+          })
+        });
+        toast('Ответ отправлен, регламент добавлен в базу знаний');
+      } else {
+        toast('Ответ отправлен сотруднику');
+      }
+      await loadOperator();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function submitIngest() {
+    const result = $('#ingest-result');
+    try {
+      const data = await api('/api/v1/ingest', {
+        method: 'POST',
+        body: JSON.stringify({
+          channel: $('#ingest-channel')?.value,
+          sender: $('#ingest-sender')?.value,
+          subject: $('#ingest-subject')?.value,
+          message: $('#ingest-message')?.value
+        })
+      });
+      if (result) result.textContent = JSON.stringify(data, null, 2);
+    } catch (error) {
+      if (result) result.textContent = error.message;
+    }
+  }
+
   const integrationOrigin = () => window.location.origin;
-  function updateWidgetPreview() { const title=$('#widget-title')?.value.trim() || 'Онлайн-поддержка'; const greeting=$('#widget-greeting')?.value.trim() || 'Здравствуйте! Чем мы можем помочь?'; let color=$('#widget-color-text')?.value.trim() || '#2563eb'; if(!/^#[0-9a-f]{6}$/i.test(color)) color=$('#widget-color')?.value || '#2563eb'; $('#preview-title').textContent=title; $('#preview-title').style.backgroundColor=color; $('#preview-greeting').textContent=greeting; $('#preview-launcher').style.backgroundColor=color; }
-  async function saveWidgetConfig() { try { const result=await api('/api/v1/widget/config',{method:'PUT',body:JSON.stringify({title:$('#widget-title').value.trim(),greeting:$('#widget-greeting').value.trim(),color:$('#widget-color-text').value.trim()})}); $('#widget-title').value=result.title; $('#widget-greeting').value=result.greeting; $('#widget-color-text').value=result.color; $('#widget-color').value=result.color; updateWidgetPreview(); toast('Настройки виджета сохранены'); } catch(error) { toast(error.message); } }
-  async function loadWidgetConfig() { try { const response=await fetch('/api/v1/widget/config'); if(!response.ok) throw new Error('config unavailable'); const config=await response.json(); $('#widget-title').value=config.title; $('#widget-greeting').value=config.greeting; $('#widget-color-text').value=config.color; $('#widget-color').value=config.color; updateWidgetPreview(); } catch { /* Keep defaults visible until API is available. */ } }
-  async function loadAPIKeys() { const body=$('#api-keys-list'); if(!body)return; try { const keys=await api('/api/v1/keys'); body.innerHTML=keys.length?keys.map(key=>`<tr><td>${escapeHTML(key.name)}</td><td><code>${escapeHTML(key.key_prefix)}…</code></td><td>${escapeHTML(key.scope)}${key.allowed_origin?`<small>${escapeHTML(key.allowed_origin)}</small>`:''}</td><td>${new Date(key.created_at).toLocaleString('ru-RU')}</td><td>${key.last_used_at?new Date(key.last_used_at).toLocaleString('ru-RU'):'—'}</td><td>${key.is_active?`<button type="button" class="danger-button" data-revoke-key="${key.id}">Отозвать</button>`:'<span class="muted">Отозван</span>'}</td></tr>`).join(''):'<tr><td colspan="6">Ключи пока не выпущены.</td></tr>'; $$('[data-revoke-key]',body).forEach(button=>on(button,'click',()=>revokeAPIKey(button.dataset.revokeKey))); } catch(error) { body.innerHTML=`<tr><td colspan="6">${escapeHTML(error.message)}</td></tr>`; } }
-  async function createAPIKey(scope) { const payload={name:scope==='widget'?'Виджет сайта':($('#crm-key-name').value.trim()||'1С / CRM'),scope,allowed_origin:scope==='widget'?$('#widget-origin').value.trim():''}; try { const result=await api('/api/v1/keys',{method:'POST',body:JSON.stringify(payload)}); if(scope==='widget') { $('#widget-snippet').value=`<script src="${integrationOrigin()}/widget.js" data-token="${result.key}" data-api-url="${integrationOrigin()}"></script>`; $('#widget-snippet-box').hidden=false; $('#issued-key-notice').hidden=true; } else { const notice=$('#issued-key-notice'); notice.textContent=`Новый ключ (сохраните сейчас, повторно показать его нельзя): ${result.key}`; notice.hidden=false; $('#crm-curl').textContent=`curl -X POST ${integrationOrigin()}/api/v1/ingest -H "Authorization: Bearer ${result.key}" -H "Content-Type: application/json" -d '{"channel":"api","sender":"crm","message":"Вопрос клиента"}'`; } await loadAPIKeys(); toast('API-ключ создан. Скопируйте его сейчас.'); } catch(error) { toast(error.message); } }
-  async function revokeAPIKey(id) { if(!confirm('Отозвать этот API-ключ?'))return; try { await api(`/api/v1/keys/${encodeURIComponent(id)}`,{method:'DELETE'}); await loadAPIKeys(); toast('API-ключ отозван'); } catch(error) { toast(error.message); } }
-  async function copyWidgetSnippet() { const field=$('#widget-snippet'); try { await navigator.clipboard.writeText(field.value); toast('Сниппет скопирован'); } catch { field.select(); document.execCommand('copy'); toast('Сниппет скопирован'); } }
-  let builderDepartments=[];
-  function renderBuilderDepartments() { const root=$('#builder-departments'); if(!root)return; root.innerHTML=builderDepartments.map((department,index)=>`<div class="department-row" data-department-index="${index}"><label>Название<input data-dept-name value="${escapeHTML(department.name)}" maxlength="80"></label><label>За какие вопросы отвечает<input data-dept-description value="${escapeHTML(department.description)}" maxlength="500"></label><button type="button" class="danger-button" data-remove-department="${index}">Удалить</button></div>`).join(''); $$('[data-remove-department]',root).forEach(button=>on(button,'click',()=>{builderDepartments.splice(Number(button.dataset.removeDepartment),1);renderBuilderDepartments();})); }
-  async function loadBuilderSettings() { try { const config=await api('/api/v1/settings/builder'); builderDepartments=config.departments||[]; renderBuilderDepartments(); $('#builder-tone').value=config.tone||'friendly'; $('#builder-start-template').value=config.start_template||''; $('#builder-handoff-template').value=config.handoff_template||''; $('#builder-signature').value=config.signature||''; const channels=await api('/api/v1/settings/channels'); $$('[data-channel-card]').forEach(card=>{ const configured=channels.configured||{}; const name=card.dataset.channelCard; const active=name==='telegram'?configured.telegram_token:name==='max'?configured.max_token:configured.mail_user&&configured.mail_imap_host&&configured.mail_smtp_host; $('.channel-status',card).textContent=active?'Настроен':'Не настроен'; $('.channel-status',card).classList.toggle('configured',!!active); }); } catch(error) { toast(error.message); } }
-  async function saveBuilderSettings() { const departments=$$('[data-department-index]').map(row=>({name:$('[data-dept-name]',row).value.trim(),description:$('[data-dept-description]',row).value.trim()})); try { await api('/api/v1/settings/builder',{method:'PUT',body:JSON.stringify({departments,tone:$('#builder-tone').value,start_template:$('#builder-start-template').value,handoff_template:$('#builder-handoff-template').value,signature:$('#builder-signature').value})}); builderDepartments=departments; renderBuilderDepartments(); toast('Настройки конструктора сохранены'); } catch(error) { toast(error.message); } }
-  function channelConfigPayload(name) { if(name==='telegram')return {telegram_token:$('#builder-telegram-token').value.trim()}; if(name==='max')return {max_token:$('#builder-max-token').value.trim()}; const [imap,smtp]=($('#builder-mail-hosts').value||'').split('/').map(value=>value.trim()); return {mail_imap_host:imap||'',mail_smtp_host:smtp||'',mail_user:$('#builder-mail-user').value.trim(),mail_password:$('#builder-mail-password').value}; }
-  async function saveBuilderChannel(name) { try { const result=await api('/api/v1/settings/channels',{method:'PUT',body:JSON.stringify(channelConfigPayload(name))}); toast(result.restart_required?'Канал сохранён и перезапущен':'Настройки канала сохранены'); await loadBuilderSettings(); } catch(error) { toast(error.message); } }
-  async function checkBuilderChannel(name) { if(name==='email'){const config=channelConfigPayload(name);const ok=!!(config.mail_imap_host&&config.mail_smtp_host&&config.mail_user&&$('#builder-mail-password').value);const status=$('.channel-status',$(`[data-channel-card="${name}"]`));status.textContent=ok?'Поля подключения заполнены':'Заполните все поля';status.classList.toggle('configured',ok);return;} if($(`#builder-${name}-token`).value.trim())await saveBuilderChannel(name);const status=$('.channel-status',$(`[data-channel-card="${name}"]`));status.textContent='Проверяем…'; try { const result=await api(`/api/v1/settings/channels/${name}/check`,{method:'POST',body:'{}'}); status.textContent=result.ok?'Связь установлена':`Ошибка: ${result.message}`; status.classList.toggle('configured',!!result.ok); } catch(error) { status.textContent=error.message; } }
-  async function runSmartImport() { const text=$('#smart-import-text').value.trim(); if(!text){toast('Вставьте текст регламента');return;} const button=$('#smart-import-submit'); button.disabled=true; try { const result=await api('/api/v1/kb/smart-import',{method:'POST',body:JSON.stringify({raw_text:text,default_department:$('#smart-import-department').value})}); const list=$('#smart-import-results'); list.innerHTML=`<p class="import-summary">Добавлено статей: ${Number(result.count)} · источник: ${escapeHTML(result.source)} · замаскировано ПДн: ${Number(result.pii_masked_count||0)}</p>${(result.articles||[]).map(article=>`<article class="imported-article"><b>${escapeHTML(article.title)}</b><span>${escapeHTML(article.department)} · ${escapeHTML((article.keywords||[]).join(', '))}</span><p>${escapeHTML(article.content)}</p></article>`).join('')}`; toast(`Импортировано статей: ${result.count}`); } catch(error) { toast(error.message); } finally { button.disabled=false; } }
-  async function runSandboxPreview() { const message=$('#sandbox-message').value.trim(); if(!message){toast('Введите вопрос для тестирования');return;} const button=$('#sandbox-run'); button.disabled=true; try { const result=await api('/api/v1/settings/preview',{method:'POST',body:JSON.stringify({message,channel:$('#sandbox-channel').value})}); $('#sandbox-meta').textContent=`${result.matched_kb_title?`База знаний: ${result.matched_kb_title}`:'Совпадений в базе знаний нет'} · ${result.department} · приоритет: ${result.priority} · ${result.auto_replied?'автоответ':'передача оператору'} · ПДн скрыто: ${result.pii_masked_count||0}`; const email=$('#sandbox-email-preview'); const text=$('#sandbox-text-preview'); if($('#sandbox-channel').value==='email'){text.hidden=true;email.hidden=false;email.srcdoc=result.rendered_preview;}else{email.hidden=true;text.hidden=false;text.textContent=result.rendered_preview;} } catch(error) { $('#sandbox-meta').textContent=error.message; } finally { button.disabled=false; } }
-  function insertBuilderVariable(value) { const target=$('#builder-handoff-template'); target.focus(); const start=target.selectionStart??target.value.length; const end=target.selectionEnd??start; target.setRangeText(value,start,end,'end'); target.focus(); }
-  function setIngestDemo(type) { const channel = $('#ingest-channel'); const sender = $('#ingest-sender'); const subject = $('#ingest-subject'); const message = $('#ingest-message'); if (type === 'billing') { channel.value = 'bot'; sender.value = '@maria_fin'; subject.value = ''; message.value = 'С корпоративной карты дважды списалась оплата за подписку по тарифу Pro, верните переплату на баланс.'; } else if (type === 'bot') { channel.value = 'bot'; sender.value = '@alex_dev'; subject.value = ''; message.value = 'Привет, почему не работает сервер в кластере NL-1? Всё упало!'; } else { channel.value = 'email'; sender.value = 'client@company.ru'; subject.value = 'Лежит сервер!'; message.value = 'Здравствуйте! У нас перестал отвечать VPS-сервер в кластере NL-1, сайты выдают 502.'; } }
-  async function updateTicket(id, changes) { try { await api(`/api/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }); await loadOperator(); toast(`Тикет #${id} обновлен`); } catch (error) { toast(error.message); } }
-  async function resetData() { if (!confirm('Удалить все тикеты и сбросить нумерацию?')) return; try { await api('/api/tickets/reset', { method: 'DELETE' }); await loadOperator(); await loadHistory(); toast('База тикетов очищена'); } catch (error) { toast(error.message); } }
-  async function loadKnowledge() { const list = $('#knowledge-list'); if (!list) return; try { const documents = await api('/api/knowledge'); list.innerHTML = documents.length ? documents.map(document => `<article class="knowledge-card" data-filename="${escapeHTML(document.filename)}"><div class="knowledge-card-top">${departmentTag(document.department || 'Не назначен')}<span class="ticket-id">${escapeHTML(document.filename)}</span></div><h3>${escapeHTML(document.title)}</h3><p class="knowledge-keywords">${(document.keywords || []).map(keyword => `<span>${escapeHTML(keyword)}</span>`).join('')}</p>${document.expires_at ? `<p class="muted">Автоудаление: ${new Date(document.expires_at).toLocaleString('ru-RU')}</p>` : '<p class="muted">Бессрочный регламент</p>'}<div class="knowledge-content">${escapeHTML(document.content)}</div><div class="knowledge-actions"><button type="button" data-knowledge-action="resolve">✅ Сбой устранён</button><button type="button" data-knowledge-action="edit">✏️ Изменить ответ</button><button type="button" data-knowledge-action="delete">🗑 Удалить регламент</button></div></article>`).join('') : '<div class="panel empty-state" style="padding:40px;text-align:center">Регламентов пока нет.</div>'; $$('[data-knowledge-action]', list).forEach(button => on(button, 'click', () => manageKnowledge(button))); } catch (error) { toast(error.message); } }
-  async function manageKnowledge(button) { const card = button.closest('[data-filename]'); const filename = card?.dataset.filename; if (!filename) return; try { if (button.dataset.knowledgeAction === 'delete') await api(`/api/knowledge/${encodeURIComponent(filename)}`, { method: 'DELETE' }); else if (button.dataset.knowledgeAction === 'resolve') await api(`/api/knowledge/${encodeURIComponent(filename)}`, { method: 'PATCH', body: JSON.stringify({ action: 'resolve_incident', resolution_note: 'Оператор подтвердил восстановление.' }) }); else { const content = prompt('Новый текст ответа', card.querySelector('.knowledge-content')?.textContent || ''); if (content === null) return; await api(`/api/knowledge/${encodeURIComponent(filename)}`, { method: 'PATCH', body: JSON.stringify({ content }) }); } await loadKnowledge(); } catch (error) { toast(error.message); } }
-  async function submitKnowledge(event) { event.preventDefault(); const form = event.currentTarget; try { await api('/api/knowledge', { method: 'POST', body: JSON.stringify({ department: $('#knowledge-department')?.value, title: $('#knowledge-title')?.value.trim(), keywords: ($('#knowledge-keywords')?.value || '').split(',').map(item => item.trim()).filter(Boolean), content: $('#knowledge-content')?.value.trim() }) }); if (form) form.reset(); await loadKnowledge(); toast('Регламент сохранен и доступен ИИ'); } catch (error) { toast(error.message); } }
-  function startEmployeePolling() { if (state.employeePoll) return; state.employeePoll = setInterval(() => { if ($('#employee')?.classList.contains('active')) loadHistory(); }, 4000); }
-  function init() { $$('.tab').forEach(tab => on(tab, 'click', () => { $$('.tab, .view').forEach(element => element.classList.remove('active')); tab.classList.add('active'); const view = $(`#${tab.dataset.tab}`); if (view) view.classList.add('active'); if (tab.dataset.tab === 'operator') loadOperator(); if (tab.dataset.tab === 'knowledge') loadKnowledge(); if (tab.dataset.tab === 'channels') { loadWidgetConfig(); loadAPIKeys(); } if(tab.dataset.tab==='builder'){loadBuilderSettings();loadWidgetConfig();loadAPIKeys();} })); on($('#ingest-submit'),'click',submitIngest); $$('[data-ingest-demo]').forEach(button => on(button, 'click', () => setIngestDemo(button.dataset.ingestDemo))); $$('[data-demo]').forEach(button => on(button, 'click', () => { const problem = $('#problem'); if (problem) { problem.value = button.dataset.demo || ''; problem.focus(); } })); on($('#ticket-form'), 'submit', submitTicket); on($('#email'), 'change', loadHistory); on($('#refresh-history'), 'click', loadHistory); on($('#refresh-queue'), 'click', loadOperator); on($('#reset-data'), 'click', resetData); on($('#department-filter'), 'change', renderTickets); on($('#status-filter'), 'change', renderTickets); on($('#knowledge-form'), 'submit', submitKnowledge); on($('#refresh-knowledge'), 'click', loadKnowledge); on($('#widget-save'),'click',saveWidgetConfig); ['#widget-title','#widget-greeting','#widget-color-text'].forEach(selector=>on($(selector),'input',updateWidgetPreview)); on($('#widget-color'),'input',event=>{ $('#widget-color-text').value=event.currentTarget.value; updateWidgetPreview(); }); on($('#create-widget-key'),'click',()=>createAPIKey('widget')); on($('#create-ingest-key'),'click',()=>createAPIKey('ingest')); on($('#refresh-api-keys'),'click',loadAPIKeys); on($('#copy-widget-snippet'),'click',copyWidgetSnippet); on($('#add-builder-department'),'click',()=>{builderDepartments.push({name:'',description:''});renderBuilderDepartments();}); on($('#save-builder-style'),'click',saveBuilderSettings); $$('[data-insert-variable]').forEach(button=>on(button,'click',()=>insertBuilderVariable(button.dataset.insertVariable))); $$('[data-check-channel]').forEach(button=>on(button,'click',()=>checkBuilderChannel(button.dataset.checkChannel))); $$('[data-save-channel]').forEach(button=>on(button,'click',()=>saveBuilderChannel(button.dataset.saveChannel))); on($('#smart-import-submit'),'click',runSmartImport); on($('#sandbox-run'),'click',runSandboxPreview); checkAPI(); loadHistory(); startEmployeePolling();  setInterval(() => { if (!document.hidden && $('#operator')?.classList.contains('active')) loadOperator(); }, 5000); }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+
+  function updateWidgetPreview() {
+    const title = $('#widget-title')?.value.trim() || 'Онлайн-поддержка';
+    const greeting = $('#widget-greeting')?.value.trim() || 'Здравствуйте! Чем мы можем помочь?';
+    let color = $('#widget-color-text')?.value.trim() || '#0f766e';
+    if (!/^#[0-9a-f]{6}$/i.test(color)) color = $('#widget-color')?.value || '#0f766e';
+    const previewTitle = $('#preview-title');
+    const previewGreeting = $('#preview-greeting');
+    const previewLauncher = $('#preview-launcher');
+    if (previewTitle) {
+      previewTitle.textContent = title;
+      previewTitle.style.backgroundColor = color;
+    }
+    if (previewGreeting) previewGreeting.textContent = greeting;
+    if (previewLauncher) previewLauncher.style.backgroundColor = color;
+  }
+
+  async function saveWidgetConfig() {
+    try {
+      const result = await api('/api/v1/widget/config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: $('#widget-title')?.value.trim(),
+          greeting: $('#widget-greeting')?.value.trim(),
+          color: $('#widget-color-text')?.value.trim()
+        })
+      });
+      if ($('#widget-title')) $('#widget-title').value = result.title;
+      if ($('#widget-greeting')) $('#widget-greeting').value = result.greeting;
+      if ($('#widget-color-text')) $('#widget-color-text').value = result.color;
+      if ($('#widget-color')) $('#widget-color').value = result.color;
+      updateWidgetPreview();
+      toast('Настройки виджета сохранены');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function loadWidgetConfig() {
+    if (!hasSession()) return;
+    try {
+      const config = await api('/api/v1/widget/config');
+      if ($('#widget-title')) $('#widget-title').value = config.title;
+      if ($('#widget-greeting')) $('#widget-greeting').value = config.greeting;
+      if ($('#widget-color-text')) $('#widget-color-text').value = config.color;
+      if ($('#widget-color')) $('#widget-color').value = config.color;
+      updateWidgetPreview();
+    } catch {
+      /* Keep defaults visible until API is available. */
+    }
+  }
+
+  async function loadAPIKeys() {
+    const body = $('#api-keys-list');
+    if (!body) return;
+    try {
+      const keys = await api('/api/v1/keys');
+      body.innerHTML = keys.length
+        ? keys
+            .map(
+              key =>
+                `<tr><td>${escapeHTML(key.name)}</td><td><code>${escapeHTML(key.key_prefix)}…</code></td><td>${escapeHTML(key.scope)}${key.allowed_origin ? `<small>${escapeHTML(key.allowed_origin)}</small>` : ''}</td><td>${new Date(key.created_at).toLocaleString('ru-RU')}</td><td>${key.last_used_at ? new Date(key.last_used_at).toLocaleString('ru-RU') : '—'}</td><td>${key.is_active ? `<button type="button" class="danger-button" data-revoke-key="${key.id}">Отозвать</button>` : '<span class="muted">Отозван</span>'}</td></tr>`
+            )
+            .join('')
+        : '<tr><td colspan="6">Ключи пока не выпущены.</td></tr>';
+      $$('[data-revoke-key]', body).forEach(button => on(button, 'click', () => revokeAPIKey(button.dataset.revokeKey)));
+    } catch (error) {
+      body.innerHTML = `<tr><td colspan="6">${escapeHTML(error.message)}</td></tr>`;
+    }
+  }
+
+  async function createAPIKey(scope) {
+    const payload = {
+      name: scope === 'widget' ? 'Виджет сайта' : $('#crm-key-name')?.value.trim() || '1С / CRM',
+      scope,
+      allowed_origin: scope === 'widget' ? $('#widget-origin')?.value.trim() || '' : ''
+    };
+    try {
+      const result = await api('/api/v1/keys', { method: 'POST', body: JSON.stringify(payload) });
+      if (scope === 'widget') {
+        if ($('#widget-snippet')) {
+          $('#widget-snippet').value = `<script src="${integrationOrigin()}/widget.js" data-token="${result.key}" data-api-url="${integrationOrigin()}"></script>`;
+        }
+        if ($('#widget-snippet-box')) $('#widget-snippet-box').hidden = false;
+        if ($('#issued-key-notice')) $('#issued-key-notice').hidden = true;
+      } else {
+        const notice = $('#issued-key-notice');
+        if (notice) {
+          notice.textContent = `Новый ключ (сохраните сейчас, повторно показать его нельзя): ${result.key}`;
+          notice.hidden = false;
+        }
+        if ($('#crm-curl')) {
+          $('#crm-curl').textContent = `curl -X POST ${integrationOrigin()}/api/v1/ingest -H "Authorization: Bearer ${result.key}" -H "Content-Type: application/json" -d '{"channel":"api","sender":"crm","message":"Вопрос клиента"}'`;
+        }
+      }
+      await loadAPIKeys();
+      toast('API-ключ создан. Скопируйте его сейчас.');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function revokeAPIKey(id) {
+    if (!confirm('Отозвать этот API-ключ?')) return;
+    try {
+      await api(`/api/v1/keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await loadAPIKeys();
+      toast('API-ключ отозван');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function copyWidgetSnippet() {
+    const field = $('#widget-snippet');
+    if (!field) return;
+    try {
+      await navigator.clipboard.writeText(field.value);
+      toast('Сниппет скопирован');
+    } catch {
+      field.select();
+      document.execCommand('copy');
+      toast('Сниппет скопирован');
+    }
+  }
+
+  let builderDepartments = [];
+
+  function renderBuilderDepartments() {
+    const root = $('#builder-departments');
+    if (!root) return;
+    root.innerHTML = builderDepartments
+      .map(
+        (department, index) =>
+          `<div class="department-row" data-department-index="${index}"><label>Название<input data-dept-name value="${escapeHTML(department.name)}" maxlength="80"></label><label>За какие вопросы отвечает<input data-dept-description value="${escapeHTML(department.description)}" maxlength="500"></label><button type="button" class="danger-button" data-remove-department="${index}">Удалить</button></div>`
+      )
+      .join('');
+    $$('[data-remove-department]', root).forEach(button =>
+      on(button, 'click', () => {
+        builderDepartments.splice(Number(button.dataset.removeDepartment), 1);
+        renderBuilderDepartments();
+      })
+    );
+  }
+
+  async function loadBuilderSettings() {
+    try {
+      const config = await api('/api/v1/settings/builder');
+      builderDepartments = config.departments || [];
+      renderBuilderDepartments();
+      if ($('#builder-tone')) $('#builder-tone').value = config.tone || 'friendly';
+      if ($('#builder-start-template')) $('#builder-start-template').value = config.start_template || '';
+      if ($('#builder-handoff-template')) $('#builder-handoff-template').value = config.handoff_template || '';
+      if ($('#builder-signature')) $('#builder-signature').value = config.signature || '';
+
+      const channelsData = await api('/api/v1/settings/channels');
+      $$('[data-channel-card]').forEach(card => {
+        const configured = channelsData.configured || {};
+        const metadata = (channelsData.channels || {})[card.dataset.channelCard] || {};
+        const name = card.dataset.channelCard;
+        const active =
+          name === 'telegram'
+            ? configured.telegram_token
+            : name === 'max'
+              ? configured.max_token
+              : configured.mail_user && configured.mail_imap_host && configured.mail_smtp_host;
+        const owner = metadata.bot_username
+          ? `@${metadata.bot_username}`
+          : metadata.email_user || metadata.bot_name || '';
+        const ownerElement = $(`[data-channel-owner="${name}"]`, card);
+        if (ownerElement) ownerElement.textContent = owner ? `Подключено: ${owner}` : '';
+        const status = $('.channel-status', card);
+        if (status) {
+          status.textContent =
+            metadata.status === 'warning'
+              ? `Предупреждение: ${metadata.last_error}`
+              : active
+                ? metadata.status === 'error' && metadata.last_error
+                  ? `Ошибка: ${metadata.last_error}`
+                  : 'Подключён'
+                : 'Не настроен';
+          status.classList.toggle('configured', !!active);
+        }
+        const disable = $('[data-disable-channel]', card);
+        if (disable) disable.hidden = !active;
+      });
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function saveBuilderSettings() {
+    const departmentsList = $$('[data-department-index]').map(row => ({
+      name: $('[data-dept-name]', row)?.value.trim() || '',
+      description: $('[data-dept-description]', row)?.value.trim() || ''
+    }));
+    try {
+      await api('/api/v1/settings/builder', {
+        method: 'PUT',
+        body: JSON.stringify({
+          departments: departmentsList,
+          tone: $('#builder-tone')?.value,
+          start_template: $('#builder-start-template')?.value,
+          handoff_template: $('#builder-handoff-template')?.value,
+          signature: $('#builder-signature')?.value
+        })
+      });
+      builderDepartments = departmentsList;
+      renderBuilderDepartments();
+      toast('Настройки конструктора сохранены');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function channelConfigPayload(name) {
+    if (name === 'telegram') {
+      return { telegram_token: $('#builder-telegram-token')?.value.trim() || '' };
+    }
+    if (name === 'max') {
+      return { max_token: $('#builder-max-token')?.value.trim() || '' };
+    }
+    const [imap, smtp] = ($('#builder-mail-hosts')?.value || '').split('/').map(value => value.trim());
+    return {
+      mail_imap_host: imap || '',
+      mail_smtp_host: smtp || '',
+      mail_user: $('#builder-mail-user')?.value.trim() || '',
+      mail_password: $('#builder-mail-password')?.value || ''
+    };
+  }
+
+  async function saveBuilderChannel(name) {
+    try {
+      const result = await api('/api/v1/settings/channels', {
+        method: 'PUT',
+        body: JSON.stringify(channelConfigPayload(name))
+      });
+      toast(result.restart_required ? 'Канал сохранён и запущен' : 'Настройки канала сохранены');
+      await loadBuilderSettings();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function disableBuilderChannel(name) {
+    if (!name) return;
+    try {
+      await api(`/api/v1/settings/channels/${name}`, { method: 'DELETE' });
+      await loadBuilderSettings();
+      toast('Канал отключён');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function checkBuilderChannel(name) {
+    const config = channelConfigPayload(name);
+    const complete =
+      name === 'email'
+        ? config.mail_imap_host && config.mail_smtp_host && config.mail_user && config.mail_password
+        : config[`${name}_token`];
+    if (complete) {
+      try {
+        await api('/api/v1/settings/channels', { method: 'PUT', body: JSON.stringify(config) });
+      } catch (error) {
+        toast(error.message);
+        return;
+      }
+    }
+    const status = $('.channel-status', $(`[data-channel-card="${name}"]`));
+    if (status) status.textContent = 'Проверяем…';
+    try {
+      const result = await api(`/api/v1/settings/channels/${name}/check`, { method: 'POST', body: '{}' });
+      if (status) {
+        status.textContent = result.ok ? result.message || 'Связь установлена' : `Ошибка: ${result.message}`;
+        status.classList.toggle('configured', !!result.ok);
+      }
+      await loadBuilderSettings();
+    } catch (error) {
+      if (status) status.textContent = error.message;
+    }
+  }
+
+  async function runSmartImport() {
+    const input =
+      $('#smart-import-text') ||
+      $('#smart-import-content') ||
+      $('#smart-import-input') ||
+      $('#builder-smart-text');
+    const departmentSelect = $('#smart-import-department') || $('#builder-smart-department');
+    const resultBox = $('#smart-import-result');
+    const button = $('#smart-import-submit');
+    const text = input?.value.trim() || '';
+    if (!text) {
+      toast('Вставьте текст регламента или инструкции');
+      return;
+    }
+    if (button) button.disabled = true;
+    try {
+      const response = await api('/api/v1/kb/smart-import', {
+        method: 'POST',
+        body: JSON.stringify({
+          text,
+          department: departmentSelect?.value || 'General'
+        })
+      });
+      const articles = response.articles || response.items || response.documents || [];
+      const count = response.count ?? articles.length;
+      if (resultBox) {
+        resultBox.hidden = false;
+        resultBox.innerHTML = `<div class="smart-import-summary">Добавлено статей: ${Number(count)} · источник: ${escapeHTML(response.provider || response.source || 'ai')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
+          .map(
+            item =>
+              `<article class="smart-import-card"><strong>${escapeHTML(item.title || 'Регламент')}</strong><small>${escapeHTML(item.department || '')}${item.keywords?.length ? ` · ${escapeHTML(item.keywords.join(', '))}` : ''}</small><pre>${escapeHTML(item.content || '')}</pre></article>`
+          )
+          .join('')}`;
+      }
+      if (input) input.value = '';
+      await loadKnowledge();
+      toast(`Сгенерировано регламентов: ${Number(count)}`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  async function runSandboxPreview() {
+    const message = $('#sandbox-message')?.value.trim() || '';
+    if (!message) {
+      toast('Введите вопрос для тестирования');
+      return;
+    }
+    const button = $('#sandbox-run');
+    if (button) button.disabled = true;
+    try {
+      const result = await api('/api/v1/settings/preview', {
+        method: 'POST',
+        body: JSON.stringify({ message, channel: $('#sandbox-channel')?.value })
+      });
+      const meta = $('#sandbox-meta');
+      if (meta) {
+        meta.textContent = `${result.matched_kb_title ? `База знаний: ${result.matched_kb_title}` : 'Совпадений в базе знаний нет'} · ${result.department} · приоритет: ${result.priority} · ${result.auto_replied ? 'автоответ' : 'передача оператору'} · ПДн скрыто: ${result.pii_masked_count || 0}`;
+      }
+      const email = $('#sandbox-email-preview');
+      const text = $('#sandbox-text-preview');
+      if ($('#sandbox-channel')?.value === 'email') {
+        if (text) text.hidden = true;
+        if (email) {
+          email.hidden = false;
+          email.srcdoc = result.rendered_preview;
+        }
+      } else {
+        if (email) email.hidden = true;
+        if (text) {
+          text.hidden = false;
+          text.textContent = result.rendered_preview;
+        }
+      }
+    } catch (error) {
+      const meta = $('#sandbox-meta');
+      if (meta) meta.textContent = error.message;
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function insertBuilderVariable(value) {
+    const target = $('#builder-handoff-template');
+    if (!target) return;
+    target.focus();
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? start;
+    target.setRangeText(value, start, end, 'end');
+    target.focus();
+  }
+
+  function setIngestDemo(type) {
+    const channel = $('#ingest-channel');
+    const sender = $('#ingest-sender');
+    const subject = $('#ingest-subject');
+    const message = $('#ingest-message');
+    if (!channel || !sender || !subject || !message) return;
+    if (type === 'billing') {
+      channel.value = 'bot';
+      sender.value = '@maria_fin';
+      subject.value = '';
+      message.value =
+        'С корпоративной карты дважды списалась оплата за подписку по тарифу Pro, верните переплату на баланс.';
+    } else if (type === 'bot') {
+      channel.value = 'bot';
+      sender.value = '@alex_dev';
+      subject.value = '';
+      message.value = 'Привет, почему не работает сервер в кластере NL-1? Всё упало!';
+    } else {
+      channel.value = 'email';
+      sender.value = 'client@company.ru';
+      subject.value = 'Лежит сервер!';
+      message.value = 'Здравствуйте! У нас перестал отвечать VPS-сервер в кластере NL-1, сайты выдают 502.';
+    }
+  }
+
+  async function updateTicket(id, changes, button) {
+    const prior = button?.textContent;
+    if (button) {
+      button.disabled = true;
+      button.classList.add('is-loading');
+      button.textContent = 'Сохраняем…';
+    }
+    try {
+      await api(`/api/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(changes) });
+      const ticket = state.tickets.find(item => String(item.id) === String(id));
+      if (ticket) ticket.status = changes.status || ticket.status;
+      await loadOperator();
+      toast(changes.status === 'closed' ? `Тикет #${id} закрыт` : `Тикет #${id} взят в работу`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (button) {
+        button.classList.remove('is-loading');
+        button.textContent = prior;
+        button.disabled = false;
+      }
+    }
+  }
+
+  async function resetData() {
+    if (!confirm('Удалить все тикеты и сбросить нумерацию?')) return;
+    try {
+      await api('/api/tickets/reset', { method: 'DELETE' });
+      await loadOperator();
+      await loadHistory();
+      toast('База тикетов очищена');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function loadKnowledge() {
+    const list = $('#knowledge-list');
+    if (!list || !hasSession()) return;
+    try {
+      const documents = await api('/api/knowledge');
+      const emptyKb = $('#knowledge-empty');
+      if (emptyKb) emptyKb.hidden = documents.length !== 0;
+      list.innerHTML = documents.length
+        ? documents
+            .map(
+              document =>
+                `<article class="knowledge-card" data-filename="${escapeHTML(document.filename)}"><div class="knowledge-card-top">${departmentTag(document.department || 'Не назначен')}<span class="ticket-id">${escapeHTML(document.filename)}</span></div><h3>${escapeHTML(document.title)}</h3><p class="knowledge-keywords">${(document.keywords || []).map(keyword => `<span>${escapeHTML(keyword)}</span>`).join('')}</p>${document.expires_at ? `<p class="muted">Автоудаление: ${new Date(document.expires_at).toLocaleString('ru-RU')}</p>` : '<p class="muted">Бессрочный регламент</p>'}<div class="knowledge-content">${escapeHTML(document.content)}</div><div class="knowledge-actions"><button type="button" data-knowledge-action="resolve">✅ Сбой устранён</button><button type="button" data-knowledge-action="edit">✏️ Изменить ответ</button><button type="button" data-knowledge-action="delete">🗑 Удалить регламент</button></div></article>`
+            )
+            .join('')
+        : '';
+      $$('[data-knowledge-action]', list).forEach(button => on(button, 'click', () => manageKnowledge(button)));
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function manageKnowledge(button) {
+    const card = button.closest('[data-filename]');
+    const filename = card?.dataset.filename;
+    if (!filename) return;
+    try {
+      if (button.dataset.knowledgeAction === 'delete') {
+        await api(`/api/knowledge/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      } else if (button.dataset.knowledgeAction === 'resolve') {
+        await api(`/api/knowledge/${encodeURIComponent(filename)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ action: 'resolve_incident', resolution_note: 'Оператор подтвердил восстановление.' })
+        });
+      } else {
+        const content = prompt('Новый текст ответа', card.querySelector('.knowledge-content')?.textContent || '');
+        if (content === null) return;
+        await api(`/api/knowledge/${encodeURIComponent(filename)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ content })
+        });
+      }
+      await loadKnowledge();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function submitKnowledge(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      await api('/api/knowledge', {
+        method: 'POST',
+        body: JSON.stringify({
+          department: $('#knowledge-department')?.value,
+          title: $('#knowledge-title')?.value.trim(),
+          keywords: ($('#knowledge-keywords')?.value || '')
+            .split(',')
+            .map(item => item.trim())
+            .filter(Boolean),
+          content: $('#knowledge-content')?.value.trim()
+        })
+      });
+      if (form) form.reset();
+      await loadKnowledge();
+      toast('Регламент сохранен и доступен ИИ');
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function startEmployeePolling() {
+    if (state.employeePoll) clearInterval(state.employeePoll);
+    state.employeePoll = setInterval(() => {
+      if (document.hidden || !authReady || state.currentTicketId === null) return;
+      const activeTab = $('.tab.active')?.dataset?.tab;
+      if (activeTab && activeTab !== 'employee') return;
+      const current = state.tickets.find(item => String(item.id) === String(state.currentTicketId));
+      if (current && ['auto_resolved', 'closed', 'resolved'].includes(current.status)) return;
+      loadHistory();
+    }, 5000);
+  }
+
+  function init() {
+    document.body.classList.add('auth-required');
+
+    on($('#auth-form'), 'submit', event => {
+      event.preventDefault();
+      authenticate($('#operator-token')?.value || '');
+    });
+    on($('#workspace-form'), 'submit', createWorkspace);
+    on($('#toggle-token'), 'click', () => {
+      const field = $('#operator-token');
+      if (!field) return;
+      field.type = field.type === 'password' ? 'text' : 'password';
+      $('#toggle-token')?.setAttribute(
+        'aria-label',
+        field.type === 'password' ? 'Показать токен' : 'Скрыть токен'
+      );
+    });
+    on($('#logout'), 'click', logout);
+
+    $$('.tab').forEach(tab =>
+      on(tab, 'click', () => {
+        $$('.tab, .view').forEach(element => element.classList.remove('active'));
+        tab.classList.add('active');
+        const view = $(`#${tab.dataset.tab}`);
+        if (view) view.classList.add('active');
+        if (!hasSession()) return;
+        if (tab.dataset.tab === 'operator') loadOperator();
+        if (tab.dataset.tab === 'knowledge') loadKnowledge();
+        if (tab.dataset.tab === 'channels') {
+          loadWidgetConfig();
+          loadAPIKeys();
+        }
+        if (tab.dataset.tab === 'builder') {
+          loadBuilderSettings();
+          loadWidgetConfig();
+          loadAPIKeys();
+        }
+      })
+    );
+
+    $$('[data-open-builder]').forEach(button =>
+      on(button, 'click', () => {
+        $('.tab[data-tab="builder"]')?.click();
+      })
+    );
+
+    on($('#ingest-submit'), 'click', submitIngest);
+    $$('[data-ingest-demo]').forEach(button =>
+      on(button, 'click', () => setIngestDemo(button.dataset.ingestDemo))
+    );
+    $$('[data-demo]').forEach(button =>
+      on(button, 'click', () => {
+        const problem = $('#problem');
+        if (problem) {
+          problem.value = button.dataset.demo || '';
+          problem.focus();
+        }
+      })
+    );
+
+    on($('#ticket-form'), 'submit', submitTicket);
+    on($('#email'), 'change', loadHistory);
+    on($('#refresh-history'), 'click', loadHistory);
+    on($('#refresh-queue'), 'click', loadOperator);
+    on($('#reset-data'), 'click', resetData);
+    on($('#department-filter'), 'change', renderTickets);
+    on($('#status-filter'), 'change', renderTickets);
+    on($('#knowledge-form'), 'submit', submitKnowledge);
+    on($('#refresh-knowledge'), 'click', loadKnowledge);
+
+    on($('#widget-save'), 'click', saveWidgetConfig);
+    ['#widget-title', '#widget-greeting', '#widget-color-text'].forEach(selector =>
+      on($(selector), 'input', updateWidgetPreview)
+    );
+    on($('#widget-color'), 'input', event => {
+      const text = $('#widget-color-text');
+      if (text) text.value = event.currentTarget.value;
+      updateWidgetPreview();
+    });
+    on($('#create-widget-key'), 'click', () => createAPIKey('widget'));
+    on($('#create-ingest-key'), 'click', () => createAPIKey('ingest'));
+    on($('#refresh-api-keys'), 'click', loadAPIKeys);
+    on($('#copy-widget-snippet'), 'click', copyWidgetSnippet);
+
+    on($('#add-builder-department'), 'click', () => {
+      builderDepartments.push({ name: '', description: '' });
+      renderBuilderDepartments();
+    });
+    on($('#save-builder-style'), 'click', saveBuilderSettings);
+    $$('[data-disable-channel]').forEach(button =>
+      on(button, 'click', () => disableBuilderChannel(button.closest('[data-channel-card]')?.dataset.channelCard))
+    );
+    $$('[data-insert-variable]').forEach(button =>
+      on(button, 'click', () => insertBuilderVariable(button.dataset.insertVariable))
+    );
+    $$('[data-check-channel]').forEach(button =>
+      on(button, 'click', () => checkBuilderChannel(button.dataset.checkChannel))
+    );
+    $$('[data-save-channel]').forEach(button =>
+      on(button, 'click', () => saveBuilderChannel(button.dataset.saveChannel))
+    );
+    on($('#smart-import-submit'), 'click', runSmartImport);
+    on($('#sandbox-run'), 'click', runSandboxPreview);
+
+    if (operatorToken) authenticate(operatorToken);
+    else showAuth();
+
+    startEmployeePolling();
+    setInterval(() => {
+      if (!document.hidden && authReady && $('#operator')?.classList.contains('active')) {
+        loadOperator();
+      }
+    }, 5000);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();

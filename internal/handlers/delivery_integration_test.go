@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,6 +66,205 @@ func replyTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestTenantIsolationTicketsAndSettings(t *testing.T) {
+	db := replyTestDB(t)
+	ctx := context.Background()
+	tokens := map[string]string{"tenant_a": strings.Repeat("a", 40), "tenant_b": strings.Repeat("b", 40)}
+	for tenant, token := range tokens {
+		hash := sha256.Sum256([]byte(token))
+		if _, err := db.Exec(ctx, `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES($1,$1,$2,$3)`, tenant, token[:8], hex.EncodeToString(hash[:])); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `INSERT INTO app_settings(tenant_id,id,builder_config) VALUES($1,TRUE,$2::jsonb) ON CONFLICT (tenant_id,id) DO UPDATE SET builder_config=EXCLUDED.builder_config`, tenant, `{"departments":[{"name":"`+tenant+`","description":""}],"tone":"friendly"}`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `INSERT INTO tickets(tenant_id,user_email,raw_text) VALUES($1,$2,'private request')`, tenant, tenant+"@example.test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	tickets := &TicketsHandler{db: db}
+	integrations := NewIntegrationsHandler(db)
+	mux.HandleFunc("GET /api/tickets", tickets.List)
+	mux.HandleFunc("GET /api/v1/settings/builder", integrations.BuilderSettings)
+	server := security.ProtectOperatorTenants(mux, db)
+	for tenant, token := range tokens {
+		t.Run(tenant, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/tickets", nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("ticket list status=%d body=%s", response.Code, response.Body.String())
+			}
+			var rows []map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &rows); err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0]["user_email"] != tenant+"@example.test" {
+				t.Fatalf("tenant ticket leak: %#v", rows)
+			}
+
+			request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/builder", nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			response = httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("settings status=%d body=%s", response.Code, response.Body.String())
+			}
+			var config map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &config); err != nil {
+				t.Fatal(err)
+			}
+			departments := config["departments"].([]any)
+			if departments[0].(map[string]any)["name"] != tenant {
+				t.Fatalf("tenant settings leak: %#v", config)
+			}
+		})
+	}
+}
+
+func TestChannelIdentityConflictAndTenantWorkerIsolation(t *testing.T) {
+	db := replyTestDB(t)
+	ctx := context.Background()
+	t.Setenv("FLOWOPS_OPERATOR_TOKEN", strings.Repeat("z", 32))
+	for _, tenant := range []string{"channel_a", "channel_b", "channel_c"} {
+		token := strings.Repeat(string(tenant[len(tenant)-1]), 40)
+		hash := sha256.Sum256([]byte(token))
+		if _, err := db.Exec(ctx, `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES($1,$1,$2,$3)`, tenant, token[:8], hex.EncodeToString(hash[:])); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `INSERT INTO app_settings(tenant_id,id) VALUES($1,TRUE)`, tenant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := NewIntegrationsHandler(db).WithChannelValidator(func(_ context.Context, channel string, values map[string]string) (string, string, map[string]string, error) {
+		return "tg:87654321", "@FlowOpsAI2_bot", map[string]string{"bot_username": "FlowOpsAI2_bot", "bot_name": "FlowOps"}, nil
+	})
+	put := func(tenant, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "/api/v1/settings/channels", strings.NewReader(`{"telegram_token":"`+token+`"}`))
+		r = r.WithContext(security.WithTenantID(r.Context(), tenant))
+		r.Header.Set("Authorization", "Bearer "+strings.Repeat("z", 32))
+		w := httptest.NewRecorder()
+		first.ChannelSettings(w, r)
+		return w
+	}
+	response := put("channel_a", "fake-but-validated")
+	if response.Code != http.StatusOK {
+		t.Fatalf("first channel bind status=%d: %s", response.Code, response.Body.String())
+	}
+	response = put("channel_b", "same-fake-token")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "@FlowOpsAI2_bot") {
+		t.Fatalf("duplicate bind status=%d body=%s", response.Code, response.Body.String())
+	}
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/settings/channels/telegram", nil)
+	deleteRequest.SetPathValue("channel", "telegram")
+	deleteRequest = deleteRequest.WithContext(security.WithTenantID(deleteRequest.Context(), "channel_a"))
+	deleteRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("z", 32))
+	deleteResponse := httptest.NewRecorder()
+	first.DeleteChannel(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete channel status=%d body=%s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	response = put("channel_b", "same-fake-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("channel binding was not released: %d %s", response.Code, response.Body.String())
+	}
+
+	mailHandler := NewIntegrationsHandler(db).WithChannelValidator(func(_ context.Context, channel string, values map[string]string) (string, string, map[string]string, error) {
+		return "mail:" + strings.ToLower(values["mail_user"]) + "@" + strings.ToLower(values["mail_imap_host"]), values["mail_user"], map[string]string{"email_user": values["mail_user"]}, nil
+	})
+	mailPut := func(tenant string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "/api/v1/settings/channels", strings.NewReader(`{"mail_imap_host":"imap.example.test","mail_smtp_host":"smtp.example.test","mail_user":"Support@Example.test","mail_password":"secret"}`))
+		r = r.WithContext(security.WithTenantID(r.Context(), tenant))
+		r.Header.Set("Authorization", "Bearer "+strings.Repeat("z", 32))
+		w := httptest.NewRecorder()
+		mailHandler.ChannelSettings(w, r)
+		return w
+	}
+	if res := mailPut("channel_a"); res.Code != http.StatusOK {
+		t.Fatalf("first email bind status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := mailPut("channel_b"); res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "support@example.test") {
+		t.Fatalf("duplicate email bind status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	envConfig := channels.Config{TelegramToken: "env-token", MaxToken: "env-max", MailUser: "default@example.test", MailIMAPHost: "imap", MailSMTPHost: "smtp"}
+	other := channels.ForTenant("channel_b", envConfig, channels.Config{TenantID: "channel_b"}, nil)
+	if other.TelegramToken != "" || other.MaxToken != "" || other.MailUser != "" {
+		t.Fatalf("non-default inherited env channel config: %+v", other)
+	}
+	defaultConfig := channels.ForTenant("default", envConfig, channels.Config{TenantID: "default"}, nil)
+	if defaultConfig.TelegramToken != "env-token" {
+		t.Fatalf("default env fallback lost: %+v", defaultConfig)
+	}
+
+	knowledgeRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(knowledgeRoot, "default"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	base, err := knowledge.Load(filepath.Join(knowledgeRoot, "default"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kbA, err := base.TenantBase("channel_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kbB, err := base.TenantBase("channel_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantA := security.WithTenantID(context.Background(), "channel_a")
+	tenantB := security.WithTenantID(context.Background(), "channel_b")
+	loader := func(ctx context.Context) (settings.BuilderConfig, error) {
+		var raw []byte
+		err := db.QueryRow(ctx, `SELECT builder_config FROM app_settings WHERE tenant_id=$1 AND id=TRUE`, security.TenantID(ctx)).Scan(&raw)
+		return settings.LoadOrDefault(ctx, func(context.Context) (settings.BuilderConfig, error) {
+			var c settings.BuilderConfig
+			_ = json.Unmarshal(raw, &c)
+			return c, nil
+		}), err
+	}
+	for tenant, start := range map[string]string{"channel_a": "A start", "channel_b": "B start"} {
+		data, _ := json.Marshal(settings.BuilderConfig{StartTemplate: start, Departments: []settings.Department{{Name: tenant}}})
+		if _, err := db.Exec(ctx, `UPDATE app_settings SET builder_config=$1::jsonb WHERE tenant_id=$2`, string(data), tenant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startA := channels.StartReplyText(tenantA, loader)
+	startB := channels.StartReplyText(tenantB, loader)
+	if startA != "A start" || startB != "B start" {
+		t.Fatalf("/start settings crossed tenants: %q / %q", startA, startB)
+	}
+	if _, err = kbA.Add("IT", "Tenant A secret Wi-Fi", []string{"tenantawifi"}, "Private tenant A access instructions"); err != nil {
+		t.Fatal(err)
+	}
+	ticketAnalyzer := analyzer.New(base).WithBuilderConfig(loader)
+	resultA := ticketAnalyzer.Analyze(tenantA, "tenantawifi")
+	resultB := ticketAnalyzer.Analyze(tenantB, "tenantawifi")
+	if resultA.RAGAnswer == nil || resultB.RAGAnswer != nil {
+		t.Fatalf("tenant knowledge crossed: A=%v B=%v", resultA.RAGAnswer, resultB.RAGAnswer)
+	}
+	ticketHandler := NewTicketsHandler(db, slog.New(slog.NewTextHandler(io.Discard, nil)), ticketAnalyzer).WithBuilderConfig(loader)
+	if _, err = ticketHandler.IngestMessage(tenantA, models.IngestRequest{Channel: "bot", Sender: "tg:10", Message: "request A"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ticketHandler.IngestMessage(tenantB, models.IngestRequest{Channel: "bot", Sender: "tg:10", Message: "request B"}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM tickets WHERE tenant_id=$1`, security.TenantID(tenantA)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("ticket tenant isolation count=%d err=%v", count, err)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM tickets WHERE tenant_id=$1`, security.TenantID(tenantB)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("second tenant ticket isolation count=%d err=%v", count, err)
+	}
+	if len(kbA.Documents()) == 0 || len(kbB.Documents()) != 0 {
+		t.Fatalf("knowledge bases are not isolated: A=%d B=%d", len(kbA.Documents()), len(kbB.Documents()))
+	}
 }
 
 func TestSavedBuilderSettingsChangeLiveRepliesAndAnalyzerPrompt(t *testing.T) {

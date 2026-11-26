@@ -39,7 +39,7 @@
   const toggle = open => { panel.classList.toggle('open',open); launcher.setAttribute('aria-expanded',String(open)); if(open) question.focus(); };
   launcher.addEventListener('click',()=>toggle(!panel.classList.contains('open')));
   close.addEventListener('click',()=>toggle(false));
-  fetch(`${apiURL}/api/v1/widget/config`).then(response=>response.ok?response.json():null).then(config=>{
+  fetch(`${apiURL}/api/v1/widget/config`,{headers:{'Authorization':`Bearer ${token}`}}).then(response=>response.ok?response.json():null).then(config=>{
     if(!config)return;
     if(typeof config.title==='string' && config.title.trim()) title.textContent=config.title;
     if(typeof config.color==='string' && /^#[0-9a-f]{6}$/i.test(config.color)) host.style.setProperty('--flowops-color',config.color);

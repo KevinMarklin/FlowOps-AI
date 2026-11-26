@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/security"
 	"golang.org/x/text/encoding/htmlindex"
 )
 
@@ -27,12 +28,17 @@ func runEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interfa
 	Info(string, ...any)
 	Error(string, ...any)
 }) {
+	ctx = security.WithTenantID(ctx, cfg.TenantID)
+	cfg.updateStatus("email", "starting", "")
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	failedUIDs := make(map[int]struct{})
 	for ctx.Err() == nil {
 		if err := pollEmail(ctx, cfg, ingest, logger, failedUIDs); err != nil && ctx.Err() == nil {
+			cfg.updateStatus("email", "error", err.Error())
 			logger.Error("email polling failed", "error", err.Error())
+		} else if ctx.Err() == nil {
+			cfg.updateStatus("email", "connected", "")
 		}
 		select {
 		case <-ctx.Done():
@@ -198,6 +204,35 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 		if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
 			return fmt.Errorf("email acknowledgement failed: %w", err)
 		}
+	}
+	return nil
+}
+
+// CheckEmailCredentials verifies both mailbox login and SMTP authentication
+// before credentials are stored. Connections are TLS-only, matching workers.
+func CheckEmailCredentials(ctx context.Context, imapHost, smtpHost, user, password string) error {
+	session, err := connectIMAP(ctx, imapHost)
+	if err != nil {
+		return err
+	}
+	quote := func(value string) string { return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"` }
+	_, loginErr := session.command(ctx, "LOGIN "+quote(user)+" "+quote(password))
+	session.cleanup()
+	if loginErr != nil {
+		return loginErr
+	}
+	conn, cleanup, err := dialMail(ctx, smtpHost)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	client, err := smtp.NewClient(conn, hostName(smtpHost))
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if err := client.Auth(smtp.PlainAuth("", user, password, hostName(smtpHost))); err != nil {
+		return err
 	}
 	return nil
 }
