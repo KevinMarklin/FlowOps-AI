@@ -134,6 +134,7 @@ func runTelegram(ctx context.Context, tenantID, token string, builderConfig sett
 	var offset int64
 	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}
 	for ctx.Err() == nil {
+		drafts.intake.purgeExpired()
 		values := url.Values{"timeout": {"30"}, "allowed_updates": {`["message","callback_query"]`}}
 		if offset > 0 {
 			values.Set("offset", strconv.FormatInt(offset, 10))

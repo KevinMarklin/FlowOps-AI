@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"flowops-ai/internal/intake"
 	"flowops-ai/internal/knowledge"
 )
 
@@ -64,5 +65,23 @@ func TestUniversityDemoScenariosReturnCorrectBundledGuide(t *testing.T) {
 	}
 	if count != 6 {
 		t.Fatalf("reset removed bundled guides: %d", count)
+	}
+}
+
+func TestUniversityIntakeRoutesEquipmentAndAccessWithoutCloud(t *testing.T) {
+	t.Setenv("FLOWOPS_AI_PROVIDERS", "")
+	base, err := knowledge.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(base)
+	for _, message := range []string{
+		intake.Compose("Через 10 минут занятие, проектор не показывает изображение", intake.Details{Location: "Корпус А, аудитория 313", Tried: "Пока ничего"}),
+		intake.Compose("Не получается войти в личный кабинет", intake.Details{Symptom: "Страница не загружается", Tried: "Перезапуск не помог"}),
+	} {
+		r := a.Analyze(context.Background(), message)
+		if r.Department != "IT" || r.RAGAnswer != nil {
+			t.Fatalf("wrong routing or invented instruction: %+v", r)
+		}
 	}
 }

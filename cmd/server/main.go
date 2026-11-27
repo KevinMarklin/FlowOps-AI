@@ -208,6 +208,7 @@ func main() {
 	mux.HandleFunc("GET /api/tickets", ticketsHandler.List)
 	mux.HandleFunc("GET /api/tickets/{id}", ticketsHandler.Detail)
 	mux.HandleFunc("POST /api/tickets", ticketsHandler.Create)
+	mux.HandleFunc("POST /api/v1/intake/preview", ticketsHandler.IntakePreview)
 	mux.Handle("POST /api/v1/ingest", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
 	mux.Handle("OPTIONS /api/v1/ingest", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
 	mux.HandleFunc("GET /api/v1/keys", integrationsHandler.Keys)

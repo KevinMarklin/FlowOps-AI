@@ -56,7 +56,7 @@ test('widget retains text typed while an earlier question is being submitted',as
 test('accepted ticket is not reported as failed when history refresh fails',async()=>{
  const begin=source.indexOf('  async function submitTicket('),finish=source.indexOf('\n  async function loadOperator',begin);
  const messages=[],problem={value:'VPN issue'},button={disabled:false},errorBox={hidden:true},form={setAttribute(){},removeAttribute(){}};
- const context={state:{pendingTicket:null},prepareTicketRequest:()=>({key:'test',body:'{}'}),api:async()=>({id:42}),renderAnalysis(){},loadHistory:async()=>{throw new Error('history unavailable')},toast:text=>messages.push(text),$:(selector)=>({'#problem':problem,'#email':{value:'user@example.org'},'.primary-button':button,'#ticket-error':errorBox}[selector]||null)};
+ const context={sessionGeneration:0,state:{pendingTicket:null},previewIntake:async()=>true,resetIntake(){},intakeDetails:{},prepareTicketRequest:()=>({key:'test',body:'{}'}),api:async()=>({id:42}),renderAnalysis(){},loadHistory:async()=>{throw new Error('history unavailable')},toast:text=>messages.push(text),$:(selector)=>({'#problem':problem,'#email':{value:'user@example.org'},'.primary-button':button,'#ticket-error':errorBox}[selector]||null)};
  runInNewContext(source.slice(begin,finish)+'\nthis.submit=submitTicket;',context);
  await context.submit({preventDefault(){},currentTarget:form});
  assert.equal(errorBox.hidden,true);

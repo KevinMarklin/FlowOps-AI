@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/workspace.css?v=7">
   <link rel="stylesheet" href="/workflow.css?v=4">
   <link rel="stylesheet" href="/user-settings.css?v=pilot-1">
+  <link rel="stylesheet" href="/university.css?v=1">
   <link rel="icon" type="image/png" href="/assets/flowops-mark.png">
 </head>
 <body class="auth-required">
@@ -71,7 +72,7 @@
     </nav>
 
     <section id="employee" class="view active">
-      <div class="page-heading"><div><h1>Чем помочь?</h1><p class="lede">Опишите проблему. Найдём инструкцию или передадим обращение нужному специалисту.</p></div></div>
+      <div class="page-heading"><div><h1>Помощь в работе и учёбе</h1><p class="lede">Опишите, что случилось. Подготовим обращение и сохраним все уточнения для специалиста.</p></div></div>
         <div id="employee-workspace-empty" class="workspace-empty employee-empty" hidden><h3>Здесь пока нет данных. Обращения и регламенты появятся после начала работы.</h3><button type="button" data-admin-only data-open-builder>Открыть Конструктор</button></div><div class="employee-grid">
         <div class="panel request-panel">
            <div class="panel-title"><div><h2>Новое обращение</h2></div></div>
@@ -79,22 +80,25 @@
             <label for="email">Рабочая почта</label><p id="identity-hint" class="muted" hidden>Ответ появится здесь. Обращение привязано к вашей учётной записи.</p>
             <input id="email" type="email" value="student.demo@example.org" required>
             <label for="problem">Что случилось?</label>
-            <textarea id="problem" rows="6" aria-describedby="problem-hint" placeholder="Например: после обновления не подключается VPN. Вижу ошибку 809, перезапуск не помог." required></textarea>
+            <textarea id="problem" maxlength="12000" rows="5" aria-describedby="problem-hint" placeholder="Например: через 10 минут занятие, а проектор не показывает изображение." required></textarea>
             <p id="problem-hint" class="field-help">Укажите, что не работает, какую ошибку видите и что уже пробовали.</p>
+            <section id="intake-panel" class="intake-panel" aria-labelledby="intake-title" hidden>
+            <div class="intake-heading"><div><h3 id="intake-title">Подготовим заявку</h3><p>Эти ответы получит специалист вместе с вашим сообщением.</p></div><span class="intake-marker">Уточнение</span></div>
+            <div id="intake-fields" class="intake-fields"></div>
+            <p class="field-help">Не указывайте пароли, коды доступа и документы. Если ответа нет, напишите «Не знаю».</p>
+            <button id="intake-skip" type="button" class="intake-skip">Передать без оставшихся уточнений</button>
+            </section>
             <p id="ticket-error" class="form-error" role="alert" hidden></p>
-            <button class="primary-button" type="submit"><span>Отправить обращение</span></button>
+            <button class="primary-button" type="submit"><span>Продолжить</span></button>
             <p id="ticket-progress" class="field-help" role="status" hidden>Анализируем проблему и проверяем базу регламентов…</p>
           </form>
-          <div class="demo-block"><div class="demo-heading"><span>Примеры обращений</span><small>Финансовый университет</small></div><div class="demo-grid">
-            <button type="button" data-demo="Как получить справку об обучении по месту требования в МФЦ Финуниверситета?"><b>Справка об обучении</b><span>Студенческий офис / МФЦ</span></button>
-            <button type="button" data-demo="Как заказать справку для военкомата в МФЦ Финуниверситета?"><b>Справка в военкомат</b><span>Маршрут в ответственное подразделение</span></button>
-            <button type="button" data-demo="Как подключиться к сети кампуса FA-WiFi?"><b>Wi-Fi кампуса</b><span>Подключение к FA-WiFi</span></button>
-            <button type="button" data-demo="Как восстановить пароль от ЛК или Образовательного портала Финуниверситета?"><b>Пароль ЛК / портала</b><span>Безопасное восстановление доступа</span></button>
-            <button type="button" data-demo="Как оформить командировку сотруднику Финуниверситета?"><b>Командировка</b><span>Согласование служебной поездки</span></button>
-            <button type="button" data-demo="Как оформить авансовый отчёт после командировки в Финуниверситете?"><b>Авансовый отчёт</b><span>Документы после командировки</span></button>
+          <div class="demo-block"><div class="demo-heading"><span>Примеры обращений</span><small>Сценарии для университета</small></div><div class="demo-grid">
+            <button type="button" data-demo="Через 10 минут занятие, проектор не показывает изображение."><b>Оборудование в аудитории</b><span>Уточним место, неисправность и влияние на занятие</span></button>
+            <button type="button" data-demo="Не получается войти в личный кабинет Финуниверситета."><b>Доступ к сервису</b><span>Выясним сервис, ошибку и выполненные проверки</span></button>
+            <button type="button" data-demo="Как получить справку об обучении в Финуниверситете?"><b>Справка об обучении</b><span>Проверим доступную инструкцию</span></button>
           </div></div>
         </div>
-        <div class="result-column"><div id="analysis-result" class="panel result-panel empty" tabindex="-1" aria-label="Результат обращения"><div class="empty-state"><h2>Что будет после отправки</h2><ol class="request-steps"><li><strong>Разберём проблему</strong><span>Выделим суть, определим отдел и приоритет.</span></li><li><strong>Проверим регламенты</strong><span>Если есть готовая инструкция, покажем её здесь.</span></li><li><strong>Подключим специалиста</strong><span>Если регламента нет или он не помог.</span></li></ol></div></div>
+        <div class="result-column"><div id="analysis-result" class="panel result-panel empty" tabindex="-1" aria-label="Результат обращения"><div class="empty-state"><h2>Что будет после отправки</h2><ol class="request-steps"><li><strong>Подготовим обращение</strong><span>Для оборудования и доступа уточним недостающие сведения.</span></li><li><strong>Проверим регламенты</strong><span>Если есть готовая инструкция, покажем её здесь.</span></li><li><strong>Сохраним контекст</strong><span>Специалист увидит проблему и все ваши ответы. Решение инструкции подтвердите вы.</span></li></ol></div></div>
            <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="Номер или текст проблемы" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div><div class="ticket-paging"><p id="history-page-note" class="muted"></p><button id="history-newest" type="button" class="secondary-button" hidden>К последним</button><button id="history-older" type="button" class="secondary-button" hidden>Более ранние</button></div></div>
          </div>
        </div>
@@ -181,6 +185,6 @@
     </section>
    </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=reliability-1"></script>
+    <script src="/app.js?v=university-reliability-1"></script>
 </body>
 </html>

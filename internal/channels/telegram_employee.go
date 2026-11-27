@@ -75,7 +75,7 @@ func handleTelegramEmployee(ctx context.Context, update telegramUpdate, service 
 		}
 		return err
 	}
-	if strings.HasPrefix(text, "/") {
+	if strings.HasPrefix(text, "/") && !(text == "/skip" && drafts.intake.get(chatID) != nil) {
 		drafts.close(chatID)
 		fields := strings.Fields(text)
 		name, _, _ := strings.Cut(fields[0], "@")
@@ -108,12 +108,22 @@ func handleTelegramEmployee(ctx context.Context, update telegramUpdate, service 
 	if update.Message.MessageID > 0 {
 		key = fmt.Sprintf("tg-message:%d", update.Message.MessageID)
 	}
-	result, err := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: fmt.Sprintf("tg:%d", chatID), Message: text, RequireConfirmation: true, IdempotencyKey: key})
+	draft, question := drafts.intake.advance(chatID, text, key)
+	if question != "" {
+		return command(ctx, "sendMessage", telegramScreenBody(chatID, telegramScreen{Text: question, Buttons: [][]telegramButton{{{"↩️ Отмена", "emp:menu"}}}}))
+	}
+	request := models.IngestRequest{Channel: "bot", Sender: fmt.Sprintf("tg:%d", chatID), Message: text, RequireConfirmation: true, IdempotencyKey: key}
+	if draft != nil {
+		request.Message = draft.Message
+		request.Intake = &draft.Details
+		request.IdempotencyKey = draft.Key
+	}
+	result, err := ingest(ctx, request)
 	if err != nil {
 		return command(ctx, "sendMessage", telegramScreenBody(chatID, telegramScreen{Text: "Не удалось отправить обращение. Отправьте текст ещё раз или нажмите «Отмена».", Buttons: [][]telegramButton{{{"↩️ Отмена", "emp:menu"}}}}))
 	}
 	drafts.close(chatID)
-	text = fmt.Sprintf("**Обращение #%d принято**\nОтдел: %s\nПриоритет: %s\nСтатус: %s\n\n", result.TicketID, shortTelegramText(botDepartment(result.Department), 120), botPriority(result.Priority), botStatus(result.Status)) + result.ReplyText
+	text = fmt.Sprintf("**Обращение #%d принято**\nОтдел: %s\nПриоритет: %s\nСтатус: %s\n\n", result.TicketID, shortTelegramText(botDepartment(result.Department), 120), botPriority(result.Priority), botStatus(result.Status)) + intakeReceipt(draft) + result.ReplyText
 	if result.AutoReplied {
 		text = strings.TrimSuffix(text, "\n\nЕсли решение не помогло, просто напишите сюда ещё раз — мы подключим специалиста.")
 	} else {
