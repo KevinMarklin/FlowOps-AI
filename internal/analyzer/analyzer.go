@@ -121,7 +121,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 			}
 			result = unmaskResult(result, masked)
 			result.PIIMaskedCount, result.PIIMaskedTypes = masked.MaskedCount, masked.MaskedTypes
-			result = a.attachSafeAnswer(ctx, result, rawText)
+			result = a.attachSafeAnswer(ctx, result, rawText, builderConfig)
 			a.setActiveProvider("llm", provider.name, provider.model())
 			slog.Info(fmt.Sprintf("[AI] Analyzed by: %s | department=%s | priority=%s | duration_ms=%d", providerName, result.Department, result.Priority, time.Since(started).Milliseconds()))
 			return result
@@ -132,7 +132,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	}
 	// External capacity limits must not disable local classification for every channel.
 	result := a.analyzeHeuristicallyForBuilder(rawText, builderConfig)
-	result = a.attachSafeAnswer(ctx, result, rawText)
+	result = a.attachSafeAnswer(ctx, result, rawText, builderConfig)
 	result = unmaskResult(result, masked)
 	result.PIIMaskedTypes = masked.MaskedTypes
 	if sentToModel {
@@ -173,13 +173,13 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 			result = unmaskResult(result, masked)
 			result.PIIMaskedCount = masked.MaskedCount
 			result.PIIMaskedTypes = masked.MaskedTypes
-			result = a.attachSafeAnswer(ctx, result, message)
+			result = a.attachSafeAnswer(ctx, result, message, builderConfig)
 			a.setActiveProvider("llm", provider.name, provider.model())
 			return result
 		}
 	}
 	result := a.analyzeHeuristicallyForBuilder(message, builderConfig)
-	result = a.attachSafeAnswer(ctx, result, message)
+	result = a.attachSafeAnswer(ctx, result, message, builderConfig)
 	result = unmaskResult(result, masked)
 	result.PIIMaskedCount = masked.MaskedCount
 	result.PIIMaskedTypes = masked.MaskedTypes

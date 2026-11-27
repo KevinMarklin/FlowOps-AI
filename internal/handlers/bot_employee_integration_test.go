@@ -51,7 +51,7 @@ func TestBotEmployeeHistoryOwnershipAndAtomicFeedback(t *testing.T) {
 	if _, err := h.BotTicket(otherCompany, "tg:17", ids[0]); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal("cross-tenant detail exposed")
 	}
-	for _, sender := range []string{"tg:-17", "tg:017", "tg:0", "tg:17 ", "max:17", "17", ""} {
+	for _, sender := range []string{"tg:-17", "tg:017", "tg:0", "tg:17 ", "max:017", "max:0", "max_chat:17", "17", ""} {
 		if _, err := h.BotTickets(ctx, sender, 0); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatal("invalid sender accepted")
 		}

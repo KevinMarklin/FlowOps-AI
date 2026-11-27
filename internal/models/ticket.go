@@ -6,22 +6,32 @@ import (
 )
 
 type Ticket struct {
-	DeliveryStatus   string    `json:"delivery_status"`
-	ID               int       `json:"id"`
-	UserEmail        string    `json:"user_email"`
-	Channel          string    `json:"channel"`
-	Subject          string    `json:"subject,omitempty"`
-	CallbackURL      string    `json:"callback_url,omitempty"`
-	RawText          string    `json:"raw_text"`
-	Department       string    `json:"department"`
-	Priority         string    `json:"priority"`
-	ExtractedSummary *string   `json:"extracted_summary,omitempty"`
-	RAGAnswer        *string   `json:"rag_answer,omitempty"`
-	OperatorReply    *string   `json:"operator_reply"`
-	PIIMaskedCount   int       `json:"pii_masked_count"`
-	PIIMaskedTypes   []string  `json:"pii_masked_types"`
-	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"created_at"`
+	Messages         []TicketMessage `json:"messages,omitempty"`
+	DeliveryStatus   string          `json:"delivery_status"`
+	ID               int             `json:"id"`
+	UserEmail        string          `json:"user_email"`
+	Channel          string          `json:"channel"`
+	Subject          string          `json:"subject,omitempty"`
+	CallbackURL      string          `json:"callback_url,omitempty"`
+	RawText          string          `json:"raw_text"`
+	Department       string          `json:"department"`
+	Priority         string          `json:"priority"`
+	ExtractedSummary *string         `json:"extracted_summary,omitempty"`
+	RAGAnswer        *string         `json:"rag_answer,omitempty"`
+	OperatorReply    *string         `json:"operator_reply"`
+	PIIMaskedCount   int             `json:"pii_masked_count"`
+	PIIMaskedTypes   []string        `json:"pii_masked_types"`
+	Status           string          `json:"status"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
+type TicketMessage struct {
+	ID            int64     `json:"id"`
+	Role          string    `json:"role"`
+	Body          string    `json:"body"`
+	CreatedAt     time.Time `json:"created_at"`
+	Rating        int       `json:"rating"`
+	RatingComment string    `json:"rating_comment,omitempty"`
 }
 
 type CreateTicketRequest struct {
@@ -31,6 +41,7 @@ type CreateTicketRequest struct {
 }
 
 type IngestRequest struct {
+	BotMessageKeys      []string        `json:"-"`
 	Intake              *intake.Details `json:"intake,omitempty"`
 	IdempotencyKey      string          `json:"idempotency_key,omitempty"`
 	Channel             string          `json:"channel"`

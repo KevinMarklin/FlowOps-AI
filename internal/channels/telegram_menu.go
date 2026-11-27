@@ -34,8 +34,9 @@ func (button telegramButton) MarshalJSON() ([]byte, error) {
 }
 
 type telegramScreen struct {
-	Text    string
-	Buttons [][]telegramButton
+	Text        string
+	Buttons     [][]telegramButton
+	KeepHistory bool
 }
 
 func menuButton() []telegramButton { return []telegramButton{{"☰ Меню", "emp:menu"}} }
@@ -90,7 +91,7 @@ func employeeAction(ctx context.Context, sender, action string, service Employee
 	case "emp:find":
 		return plain("Чтобы открыть своё обращение, отправьте команду с номером, например:\n/ticket 123\n\nПосле подключения аккаунта здесь доступны и ваши обращения с сайта.")
 	case "emp:help":
-		return plain("Как работает поддержка\n\n1. Опишите проблему. ИИ выделит суть, определит нужный отдел и приоритет: низкий, средний или высокий.\n2. Если в базе знаний есть регламент, бот покажет его. Нажмите «Помогло» или «Нужен специалист».\n3. Если регламента нет или он не помог, вопрос передаётся специалисту. Ответ придёт в этот чат.\n\nВ интернете ответы не ищем. Историю и текущий статус можно открыть в «Мои обращения».")
+		return plain("Опишите проблему. Если есть подходящий регламент, покажем ответ. Пока обращение открыто, просто пишите следующие сообщения в этот чат. «Вопрос решён» закрывает обращение, «Не помогло» оставляет его открытым. Оценка 1–5 относится к конкретному ответу. История доступна в «Мои обращения». Для отдельной проблемы выберите «Новое обращение».")
 	}
 	if service == nil {
 		return plain("История временно недоступна. Попробуйте открыть меню позже.")
@@ -133,6 +134,40 @@ func employeeAction(ctx context.Context, sender, action string, service Employee
 	if id <= 0 {
 		return plain("Некорректный номер обращения. Откройте меню.")
 	}
+	if parts[1] == "ratings" || parts[1] == "rating" {
+		ticket, err := service.BotTicket(ctx, sender, id)
+		if err != nil {
+			return plain("Обращение недоступно.")
+		}
+		screen := plain("Выберите ответ для оценки:")
+		screen.Buttons = nil
+		if parts[1] == "rating" && len(parts) == 4 {
+			message, e := strconv.ParseInt(parts[3], 10, 64)
+			if e != nil {
+				return plain("Некорректный ответ.")
+			}
+			for _, m := range ticket.Messages {
+				if m.ID == message && (m.Role == "assistant" || m.Role == "operator") {
+					screen.Text = "Оценка ответа:\n\n" + shortTelegramText(stripKnowledgeSource(m.Body), 2200)
+					row := []telegramButton{}
+					for score := 1; score <= 5; score++ {
+						row = append(row, telegramButton{strconv.Itoa(score), fmt.Sprintf("emp:rate:%d:%d:%d", id, message, score)})
+					}
+					screen.Buttons = append(screen.Buttons, row)
+					break
+				}
+			}
+		} else {
+			for i := len(ticket.Messages) - 1; i >= 0 && len(screen.Buttons) < 8; i-- {
+				m := ticket.Messages[i]
+				if m.Role == "assistant" || m.Role == "operator" {
+					screen.Buttons = append(screen.Buttons, []telegramButton{{shortTelegramText(stripKnowledgeSource(m.Body), 65), fmt.Sprintf("emp:rating:%d:%d", id, m.ID)}})
+				}
+			}
+		}
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"К обращению", fmt.Sprintf("emp:ticket:%d", id)}})
+		return screen
+	}
 	page := 0
 	if len(parts) == 4 {
 		page, err = strconv.Atoi(parts[3])
@@ -144,11 +179,20 @@ func employeeAction(ctx context.Context, sender, action string, service Employee
 	switch parts[1] {
 	case "ticket":
 		ticket, err = service.BotTicket(ctx, sender, id)
+		if err == nil {
+			if dialogue, ok := service.(EmployeeDialogue); ok {
+				err = dialogue.BotActivate(ctx, sender, id)
+			}
+		}
 	case "yes", "no":
 		if len(parts) != 3 {
 			return plain("Некорректная кнопка. Откройте обращение заново.")
 		}
-		ticket, err = service.BotFeedback(ctx, sender, id, parts[1] == "yes")
+		if dialogue, ok := service.(EmployeeDialogue); ok {
+			ticket, err = dialogue.BotDecide(ctx, sender, id, parts[1] == "yes")
+		} else {
+			ticket, err = service.BotFeedback(ctx, sender, id, parts[1] == "yes")
+		}
 		if err == ErrBotFeedbackClosed {
 			return plain("Ответ уже обработан или обращение закрыто. Откройте его заново в «Мои обращения».")
 		}
@@ -167,11 +211,18 @@ func employeeTicketScreen(ticket models.Ticket, page int) telegramScreen {
 		summary = *ticket.ExtractedSummary
 	}
 	detail := "Суть: " + summary + "\n\nИсходное обращение:\n" + ticket.RawText
-	if ticket.OperatorReply != nil && strings.TrimSpace(*ticket.OperatorReply) != "" {
+	if len(ticket.Messages) > 0 {
+		detail = "Переписка обращения:\n"
+		for _, message := range ticket.Messages {
+			label := map[string]string{"employee": "Вы", "assistant": "Помощник", "operator": "Специалист", "system": "Статус"}[message.Role]
+			detail += "\n" + label + ":\n" + stripKnowledgeSource(message.Body) + "\n"
+		}
+	}
+	if len(ticket.Messages) == 0 && ticket.OperatorReply != nil && strings.TrimSpace(*ticket.OperatorReply) != "" {
 		detail += "\n\nОтвет специалиста:\n" + *ticket.OperatorReply
-	} else if ticket.RAGAnswer != nil && strings.TrimSpace(*ticket.RAGAnswer) != "" {
+	} else if len(ticket.Messages) == 0 && ticket.RAGAnswer != nil && strings.TrimSpace(*ticket.RAGAnswer) != "" {
 		detail += "\n\nОтвет по регламенту:\n" + stripKnowledgeSource(*ticket.RAGAnswer)
-	} else {
+	} else if len(ticket.Messages) == 0 {
 		detail += "\n\nГотового регламента нет. Обращение передано специалисту, ответ появится здесь."
 	}
 	chunks := telegramTextPages(detail, 2500)
@@ -191,11 +242,31 @@ func employeeTicketScreen(ticket models.Ticket, page int) telegramScreen {
 		}
 		screen.Buttons = append(screen.Buttons, row)
 	}
-	if ticket.Status == "awaiting_confirmation" && ticket.RAGAnswer != nil && strings.TrimSpace(*ticket.RAGAnswer) != "" && (ticket.OperatorReply == nil || strings.TrimSpace(*ticket.OperatorReply) == "") {
-		screen.Buttons = append(screen.Buttons, []telegramButton{{"✅ Помогло", fmt.Sprintf("emp:yes:%d", ticket.ID)}}, []telegramButton{{"👤 Нужен специалист", fmt.Sprintf("emp:no:%d", ticket.ID)}})
+	if ticket.Status != "closed" && ticket.Status != "auto_resolved" {
+		screen.Text += "\n\nПродолжайте писать в этот чат, пока вопрос не решён."
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"Вопрос решён", fmt.Sprintf("emp:yes:%d", ticket.ID)}, {"Не помогло", fmt.Sprintf("emp:no:%d", ticket.ID)}})
+	}
+	for i := len(ticket.Messages) - 1; i >= 0; i-- {
+		m := ticket.Messages[i]
+		if m.Role == "assistant" || m.Role == "operator" {
+			row := []telegramButton{}
+			for score := 1; score <= 5; score++ {
+				label := strconv.Itoa(score)
+				if m.Rating == score {
+					label += " ✓"
+				}
+				row = append(row, telegramButton{label, fmt.Sprintf("emp:rate:%d:%d:%d", ticket.ID, m.ID, score)})
+			}
+			screen.Text += "\nОцените последний ответ от 1 до 5."
+			screen.Buttons = append(screen.Buttons, row)
+			break
+		}
 	}
 	if ticket.OperatorReply != nil && strings.TrimSpace(*ticket.OperatorReply) != "" {
 		screen.Buttons = append(screen.Buttons, []telegramButton{{"✅ Прочитано", fmt.Sprintf("emp:read:%d", ticket.ID)}})
+	}
+	if len(ticket.Messages) > 0 {
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"Выбрать ответ для оценки", fmt.Sprintf("emp:ratings:%d", ticket.ID)}})
 	}
 	screen.Buttons = append(screen.Buttons, []telegramButton{{"↻ Обновить статус", fmt.Sprintf("emp:ticket:%d:%d", ticket.ID, page)}}, []telegramButton{{"📂 Мои обращения", "emp:list:0"}}, menuButton())
 	return screen

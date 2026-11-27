@@ -57,7 +57,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticke
 			if strings.TrimSpace(d.config.MaxToken) == "" {
 				return fmt.Errorf("MAX channel disabled")
 			}
-			return sendMaxMessage(ctx, d.config, "user_id", strings.TrimPrefix(sender, "max:"), reply)
+			id, err := strconv.ParseInt(strings.TrimPrefix(sender, "max:"), 10, 64)
+			if err != nil {
+				return err
+			}
+			screen := employeeReplyScreen(ticketID, reply)
+			screen.Buttons = append(screen.Buttons, []telegramButton{{"Вопрос решён", fmt.Sprintf("emp:yes:%d", ticketID)}, {"Не помогло", fmt.Sprintf("emp:no:%d", ticketID)}})
+			return sendMaxScreen(ctx, d.config, id, screen)
 		}
 		if strings.HasPrefix(sender, "max_chat:") {
 			return fmt.Errorf("corporate support replies require a private chat")

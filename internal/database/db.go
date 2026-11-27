@@ -193,6 +193,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, IdempotencySchema); err != nil {
 		return fmt.Errorf("apply request idempotency migration: %w", err)
 	}
+	if _, err := pool.Exec(ctx, ConversationsSchema); err != nil {
+		return fmt.Errorf("apply conversation migration: %w", err)
+	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 

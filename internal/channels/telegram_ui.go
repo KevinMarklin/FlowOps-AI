@@ -27,6 +27,10 @@ func (ui *telegramUI) command(ctx context.Context, method string, value any) err
 	if !ok {
 		return telegramCommand(ctx, ui.token, method, value)
 	}
+	if keep, _ := body["keep_history"].(bool); keep {
+		delete(body, "keep_history")
+		return telegramCommand(ctx, ui.token, method, body)
+	}
 	chatID, _ := body["chat_id"].(int64)
 	if method != "sendMessage" && method != "editMessageText" && method != "deleteMessage" {
 		return telegramCommand(ctx, ui.token, method, body)

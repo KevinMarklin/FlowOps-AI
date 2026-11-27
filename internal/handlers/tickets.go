@@ -223,6 +223,24 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,$14,$15)
 	if err != nil {
 		return channels.IngestResult{}, err
 	}
+	if botTenant != "" {
+		keys := append([]string{request.IdempotencyKey}, request.BotMessageKeys...)
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			if !requestKeyPattern.MatchString(key) {
+				return channels.IngestResult{}, errRequestKey
+			}
+			var receiptID int
+			if err = gate.query.QueryRow(ctx, `INSERT INTO bot_dialogue_receipts(bot_tenant_id,sender,key_hash,ticket_id) VALUES($1,$2,$3,$4) ON CONFLICT(bot_tenant_id,sender,key_hash) DO UPDATE SET key_hash=EXCLUDED.key_hash RETURNING ticket_id`, botTenant, request.Sender, requestHash([]byte(key)), ticket.ID).Scan(&receiptID); err != nil {
+				return channels.IngestResult{}, err
+			}
+			if receiptID != ticket.ID {
+				return channels.IngestResult{}, errRequestConflict
+			}
+		}
+	}
 	if err := gate.finish(ctx, ticket.ID); err != nil {
 		return channels.IngestResult{}, err
 	}
@@ -521,6 +539,9 @@ func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error 
 			}
 			if originalBotTenant != "" {
 				routeTenant = originalBotTenant
+			}
+			if m.BotRouteTenant != "" {
+				routeTenant = m.BotRouteTenant
 			}
 			// Recheck at delivery time: an old queued answer must never follow an
 			// unlinked, disabled or reassigned chat to another website account.

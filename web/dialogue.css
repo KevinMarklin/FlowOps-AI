@@ -1,0 +1,36 @@
+.ticket-dialogue{padding:24px;min-width:0;scroll-margin-top:24px}
+.ticket-dialogue[hidden],.ticket-dialogue [hidden]{display:none!important}
+.dialogue-header{display:flex;align-items:start;justify-content:space-between;gap:16px;margin-bottom:22px}
+.dialogue-header h2{margin:0 0 8px;font-size:21px}
+.dialogue-header p{margin:0;font-size:13px;line-height:1.6;max-width:65ch}
+.dialogue-messages{display:flex;flex-direction:column;gap:20px;margin:22px 0;max-height:680px;overflow-y:auto;overscroll-behavior:contain;padding:4px;scrollbar-color:#7597a6 transparent}
+.dialogue-message{padding:18px;background:#edf5f6;border-radius:10px;min-width:0}
+.dialogue-employee{background:#f1f4f7;margin-left:28px}
+.dialogue-operator{background:#e5f1ef}
+.dialogue-system{padding:6px 0;background:transparent;color:#526d82;font-size:13px;text-align:center}
+.dialogue-message header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.dialogue-message header strong{font-size:13px;font-weight:600}
+.dialogue-message time{color:#526d82;font-size:11px;font-variant-numeric:tabular-nums}
+.dialogue-body{font-size:14px;white-space:pre-wrap;line-height:1.75;overflow-wrap:anywhere}
+.dialogue-body>*:first-child{margin-top:0}
+.ticket-dialogue textarea{width:100%;resize:vertical;line-height:1.6;font-size:15px;font-family:inherit;padding:12px;border:1px solid #b9cdd8;border-radius:6px;background:#fff;color:#102a43;min-height:88px}
+.ticket-dialogue textarea:focus-visible{outline:3px solid #147d92;outline-offset:2px}
+.ticket-dialogue form{margin-top:24px}
+.dialogue-decisions{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px;padding-top:20px;border-top:1px solid var(--workflow-border)}
+.dialogue-decisions button{min-height:44px}
+.answer-rating{margin-top:18px;border-top:1px solid #b8d0d8;padding-top:12px}
+.answer-rating summary{font-size:13px;color:#0b5367;cursor:pointer;min-height:32px;line-height:1.6}
+.answer-rating [role=group]{display:flex;gap:8px;margin:12px 0}
+.answer-rating [aria-pressed=true]{background:#0b5367;color:#fff;border-color:#0b5367}
+.answer-rating label{font-size:12px}
+.answer-rating textarea{margin-top:6px;font-size:13px}
+.answer-rating .field-help{margin:8px 0 0}
+#operator-dialogue{margin-bottom:24px}
+[data-theme=dark] .dialogue-message{background:#203c48;color:#e0edf7}
+[data-theme=dark] .dialogue-employee{background:#172d3b}
+[data-theme=dark] .dialogue-operator{background:#23443f}
+[data-theme=dark] .dialogue-system{background:transparent;color:#b4c8d7}
+[data-theme=dark] .dialogue-message time,[data-theme=dark] .answer-rating summary{color:#b4c8d7}
+[data-theme=dark] .answer-rating [aria-pressed=true]{background:#75c9c5;color:#102a35}
+[data-theme=dark] .ticket-dialogue textarea{background:#101e2a;color:#e0edf7;border-color:#638392}
+@media(max-width:600px){.ticket-dialogue{padding:20px}.dialogue-header{flex-wrap:wrap}.dialogue-message{padding:14px}.dialogue-employee{margin-left:12px}.dialogue-messages{max-height:560px}.dialogue-decisions{flex-direction:column}.dialogue-header h2{font-size:20px}.dialogue-message header{display:block}.dialogue-message time{display:block;margin-top:4px}}

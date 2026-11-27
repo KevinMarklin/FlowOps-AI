@@ -73,6 +73,23 @@ func TestAddUnassignedDocumentNormalizesToGeneral(t *testing.T) {
 	}
 }
 
+func TestRelevantRuleMatchesRussianInflectionButNotBoilerplate(t *testing.T) {
+	base, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := base.Add("HR", "Кадровая справка", []string{"справка"}, "Уточните сведения у специалиста, потребуется дополнительная информация.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base.FindRelevant("Как заказать справку?", "HR"); got == nil || got.Filename != doc.Filename {
+		t.Fatal("Russian inflection lost a matching rule")
+	}
+	if got := base.FindRelevant("Не могу войти в портал\nУточнения пропущены: специалисту может потребоваться дополнительная информация.", "HR"); got != nil {
+		t.Fatal("boilerplate selected an unrelated rule")
+	}
+}
+
 func TestFindRelevantDoesNotUseGenericWordsForVPN(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "it_vpn.md"), []byte("# VPN\nОшибка сертификата для VPN."), 0600); err != nil {

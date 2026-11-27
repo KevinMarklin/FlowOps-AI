@@ -176,7 +176,7 @@ func reviewResult(reason string) Result {
 
 // Attach only a server-selected, validated document. Never return model prose,
 // model citations or PII from the knowledge base to a different employee.
-func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText string) Result {
+func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText string, configs ...settings.BuilderConfig) Result {
 	result.RAGAnswer = nil
 	if security.CheckPromptInput(rawText, security.MaxTicketBytes) != "" {
 		return reviewResult("unsafe_ticket")
@@ -186,6 +186,24 @@ func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText 
 		return result
 	}
 	doc := base.FindRelevant(rawText, result.Department)
+	// A topic match in an approved regulation is stronger evidence than the
+	// classifier's department guess. Never select a department the tenant disabled.
+	if candidate := base.FindRelevant(rawText, "Unassigned"); candidate != nil {
+		allowed := candidate.Department == "General" || len(configs) == 0 || configs[0].Departments == nil
+		if len(configs) > 0 {
+			for _, department := range configs[0].Departments {
+				if department.Name == candidate.Department {
+					allowed = true
+				}
+			}
+		}
+		if allowed {
+			doc = candidate
+			if doc.Department != "General" {
+				result.Department = doc.Department
+			}
+		}
+	}
 	if doc == nil {
 		slog.Info("[RAG] Knowledge base MISS -> escalating to operator")
 		return result

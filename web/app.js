@@ -58,6 +58,7 @@
   const canTab = name => (roleTabs[state.user?.role] || []).includes(name);
 
   function clearWorkspaceData() {
+	window.FlowOpsSupportUI?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
     workState = { id: null, seconds: 0, running: false, busy: false, activity: 0 };
@@ -726,19 +727,15 @@
   function renderAnalysis(ticket) {
     const result = $('#analysis-result');
     if (!result) return;
+    window.FlowOpsSupportUI?.open(ticket.id);
     const operatorReply = String(ticket.operator_reply || '').trim();
     const complete = ['auto_resolved', 'closed', 'resolved'].includes(ticket.status);
     const waiting = ticket.rag_answer && !operatorReply && !complete && ticket.status !== 'assigned_to_operator';
     const title = operatorReply ? 'Ответ специалиста' : complete ? 'Обращение решено' : waiting ? 'Нашли инструкцию для вас' : 'Передано специалисту';
-    const description = operatorReply ? 'Ответ сохранён в истории обращения.' : complete ? 'Обращение закрыто. Решение останется в истории.' : waiting ? 'Выполните действия из регламента и сообщите, помогли ли они.' : ticket.rag_answer ? 'Регламент не помог. Специалист выбранного отдела продолжит работу.' : 'Готового регламента нет. Обращение направлено в нужный отдел.';
-    const answer = operatorReply
-      ? `<section class="operator-solution"><h3>Решение</h3><p>${escapeHTML(operatorReply)}</p></section>`
-      : ticket.rag_answer
-        ? `<section class="regulation-answer"><h3>Ответ из базы знаний</h3><div class="rag-box">${regulationMarkup(ticket.rag_answer)}</div></section>${waiting ? '<div class="feedback-question">Удалось решить проблему?</div><div class="result-actions"><button type="button" class="resolve" data-feedback="true">Да, проблема решена</button><button type="button" class="escalate" data-feedback="false">Нет, нужен специалист</button></div>' : ''}`
-        : '';
-    const next = !complete && !waiting && !operatorReply ? '<p class="next-action">Ответ специалиста появится в этом обращении. Повторно отправлять вопрос не нужно.</p>' : '';
+    const description = operatorReply ? 'Ответ сохранён в переписке ниже. Продолжайте диалог или подтвердите решение.' : complete ? 'Обращение закрыто. Решение останется в истории.' : waiting ? 'Выполните действия из регламента и сообщите, помогли ли они.' : ticket.rag_answer ? 'Регламент не помог. Специалист выбранного отдела продолжит работу.' : 'Готового регламента нет. Обращение направлено в нужный отдел.';
+    const next = !complete && !waiting && !operatorReply ? '<p class="next-action">Переписка доступна ниже. Пока обращение открыто, вы можете дополнять его сообщениями.</p>' : '';
     result.classList.remove('empty');
-    result.innerHTML = `<div class="result-heading"><span class="ticket-reference">Обращение #${ticket.id}</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div><h2>${title}</h2><p class="result-description">${description}</p><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || ticket.raw_text || 'Суть не выделена')}</div><dl class="routing-details"><div><dt>Ответственный отдел</dt><dd>${departmentTag(ticket.department)}</dd></div><div><dt>Приоритет</dt><dd>${priorityTag(ticket.priority)}</dd></div></dl>${answer}${next}`;
+    result.innerHTML = `<div class="result-heading"><span class="ticket-reference">Обращение #${ticket.id}</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div><h2>${title}</h2><p class="result-description">${description}</p><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || ticket.raw_text || 'Суть не выделена')}</div><dl class="routing-details"><div><dt>Ответственный отдел</dt><dd>${departmentTag(ticket.department)}</dd></div><div><dt>Приоритет</dt><dd>${priorityTag(ticket.priority)}</dd></div></dl>${next}`;
     $$('[data-feedback]', result).forEach(button => on(button, 'click', () => handleFeedback(ticket, result, button)));
   }
 
@@ -993,7 +990,7 @@
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..."></textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
       .filter(item => item !== 'General')
       .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
       .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
@@ -1007,6 +1004,8 @@
 
   function bindTicketControls(card) {
     const id = card.dataset.id;
+    const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.textContent='Открыть переписку';
+    dialogueButton.addEventListener('click',()=>window.FlowOpsSupportUI?.openOperator(id));$('.ticket-controls',card)?.prepend(dialogueButton);
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
     const draft = state.replyDrafts.get(id);
     const fields = $$(draftFields, card);
@@ -1061,9 +1060,9 @@
     }
     if (button) button.disabled = true;
     try {
-      await api(`/api/tickets/${id}/reply`, {
+      await api(`/api/tickets/${id}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ operator_reply: reply.value.trim() })
+        body: JSON.stringify(window.FlowOpsSupportUI.replyRequest(id,reply.value.trim()))
       });
       if (String(workState.id) === String(id)) await trackWork(id, 'pause');
       const toggle = card.querySelector('[data-rag-toggle]');
@@ -1097,6 +1096,7 @@
         toast('Ответ отправлен сотруднику');
       }
       state.replyDrafts.delete(String(id));
+      window.FlowOpsSupportUI.replySent(id);
       await loadOperator(true);
     } catch (error) {
       toast(error.message);
@@ -1816,6 +1816,10 @@
     }, 5000);
   }
 
+  window.FlowOpsSupport={request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,changed:(id,status,messages)=>{
+    for(const ticket of [...state.tickets,...state.historyTickets]){if(String(ticket.id)!==String(id))continue;ticket.status=status;const operator=messages.filter(message=>message.role==='operator').at(-1);if(operator)ticket.operator_reply=operator.body;}
+    const current=state.tickets.find(ticket=>String(ticket.id)===String(id));if(current&&String(state.currentTicketId)===String(id))renderAnalysis(current);renderHistory();
+  }};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();

@@ -10,6 +10,14 @@ import (
 )
 
 var ErrBotFeedbackClosed = errors.New("bot ticket no longer accepts feedback")
+var ErrNoActiveDialogue = errors.New("no active conversation")
+
+type EmployeeDialogue interface {
+	BotActivate(context.Context, string, int) error
+	BotContinue(context.Context, string, string, string) (models.Ticket, error)
+	BotRate(context.Context, string, int, int64, int) error
+	BotDecide(context.Context, string, int, bool) (models.Ticket, error)
+}
 
 // EmployeeTickets exposes only requester operations. Implementations must scope
 // every read and write to both the tenant context and the verified sender.

@@ -112,6 +112,21 @@ func intakeReceipt(d *intakeDraft) string {
 	}
 	return "\nУточнения сохранены в обращении.\n"
 }
+
+func intakeMessageKeys(d *intakeDraft, key string) []string {
+	keys := []string{}
+	if key != "" {
+		keys = append(keys, key)
+	}
+	if d != nil {
+		for previous := range d.seenMessageKeys {
+			if previous != "" && previous != key {
+				keys = append(keys, previous)
+			}
+		}
+	}
+	return keys
+}
 func maxFeedbackCommand(text string) (int, bool, bool) {
 	fields := strings.Fields(text)
 	if len(fields) != 2 || (fields[0] != "/yes" && fields[0] != "/no") {
