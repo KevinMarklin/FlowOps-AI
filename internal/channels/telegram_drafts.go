@@ -4,13 +4,18 @@ import "time"
 
 // Each polling worker owns its own state: chats from different bots never share
 // a draft. Restart/expiry closes the draft instead of ingesting unexpected text.
-type telegramDrafts struct{ chats map[int64]time.Time }
+type telegramDrafts struct {
+	chats  map[int64]time.Time
+	intake *intakeDrafts
+}
 
-func newTelegramDrafts() *telegramDrafts   { return &telegramDrafts{chats: make(map[int64]time.Time)} }
-func (d *telegramDrafts) close(chat int64) { delete(d.chats, chat) }
+func newTelegramDrafts() *telegramDrafts {
+	return &telegramDrafts{chats: make(map[int64]time.Time), intake: newIntakeDrafts()}
+}
+func (d *telegramDrafts) close(chat int64) { delete(d.chats, chat); d.intake.close(chat) }
 func (d *telegramDrafts) waiting(chat int64) bool {
 	expires, ok := d.chats[chat]
-	if !ok || !time.Now().Before(expires) {
+	if !ok || !time.Now().Before(expires) || d.intake.expired(chat) {
 		d.close(chat)
 		return false
 	}

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"flowops-ai/internal/intake"
+	"time"
+)
 
 type Ticket struct {
 	DeliveryStatus   string    `json:"delivery_status"`
@@ -22,18 +25,20 @@ type Ticket struct {
 }
 
 type CreateTicketRequest struct {
-	UserEmail string `json:"user_email"`
-	RawText   string `json:"raw_text"`
+	Intake    *intake.Details `json:"intake,omitempty"`
+	UserEmail string          `json:"user_email"`
+	RawText   string          `json:"raw_text"`
 }
 
 type IngestRequest struct {
-	IdempotencyKey      string `json:"idempotency_key,omitempty"`
-	Channel             string `json:"channel"`
-	Sender              string `json:"sender"`
-	Subject             string `json:"subject"`
-	Message             string `json:"message"`
-	CallbackURL         string `json:"callback_url"`
-	RequireConfirmation bool   `json:"require_confirmation"`
+	Intake              *intake.Details `json:"intake,omitempty"`
+	IdempotencyKey      string          `json:"idempotency_key,omitempty"`
+	Channel             string          `json:"channel"`
+	Sender              string          `json:"sender"`
+	Subject             string          `json:"subject"`
+	Message             string          `json:"message"`
+	CallbackURL         string          `json:"callback_url"`
+	RequireConfirmation bool            `json:"require_confirmation"`
 }
 
 type FeedbackRequest struct {

@@ -1,0 +1,23 @@
+/* University intake: a working form, with the context carried alongside it. */
+.intake-panel { margin: 22px 0; padding: 20px; border-left: 4px solid #147d92; background: #edf5f7; border-radius: 0 12px 12px 0; }
+.intake-panel[hidden] { display: none; }
+.intake-heading { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.intake-heading h3 { margin: 0 0 6px; font-size: 20px; color: #102a43; }
+.intake-heading p { margin: 0; color: #526d82; line-height: 1.5; max-width: 52ch; }
+.intake-marker { padding: 4px 9px; border: 1px solid #94bbc4; border-radius: 5px; color: #0b5367; font-size: 12px; white-space: nowrap; }
+.intake-fields { display: grid; gap: 16px; min-width: 0; }
+.intake-fields > div { min-width: 0; }
+.intake-fields label { display: block; margin-top: 0; }
+.intake-fields input { width: 100%; min-width: 0; background: #fff; }
+.intake-fields .field-help { margin: 5px 0 0; }
+.intake-skip { background: transparent; color: #0b5367; padding: 10px 0; text-decoration: underline; text-underline-offset: 4px; border: 0; text-align: left; cursor: pointer; line-height: 1.5; min-height: 44px; }
+.intake-skip:disabled { opacity: .6; cursor: wait; }
+.intake-context { border-left: 3px solid #147d92; padding: 4px 14px; margin: 14px 0; }
+.intake-context h4 { margin: 0 0 8px; font-size: 14px; }
+.intake-context p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text, #102a43); line-height: 1.65; }
+[data-theme="dark"] .intake-panel { background: #1a2c3b; }
+[data-theme="dark"] .intake-heading h3, [data-theme="dark"] .intake-context p { color: #e0edf7; }
+[data-theme="dark"] .intake-heading p { color: #b4c8d7; }
+[data-theme="dark"] .intake-fields input { background: #101e2a; color: #e0edf7; }
+[data-theme="dark"] .intake-marker, [data-theme="dark"] .intake-skip { color: #a1d7de; }
+@media (max-width: 520px) { .intake-panel { padding: 16px 12px; } .intake-heading { display: block; } .intake-marker { display: none; } }

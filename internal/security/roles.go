@@ -84,6 +84,9 @@ func AllowRequest(role, method, path string) bool {
 	if role == "analyst" {
 		return false
 	}
+	if path == "/api/v1/intake/preview" {
+		return method == http.MethodPost
+	}
 	if path == "/api/tickets" {
 		return method == http.MethodGet || method == http.MethodPost
 	}

@@ -26,6 +26,7 @@ type maxUpdate struct {
 	Message struct {
 		Body struct {
 			Text string `json:"text"`
+			MID  string `json:"mid"`
 		} `json:"body"`
 		Sender struct {
 			UserID int64 `json:"user_id"`
@@ -86,8 +87,11 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 }, services ...EmployeeTickets) {
 	ctx = security.WithTenantID(ctx, cfg.TenantID)
 	cfg.updateStatus("max", "starting", "")
+	drafts := newIntakeDrafts()
+	receipts := newMessageReceipts()
 	var marker int64
 	for ctx.Err() == nil {
+		drafts.purgeExpired()
 		query := url.Values{"timeout": {"30"}, "types": {"message_created,bot_started"}}
 		if marker > 0 {
 			query.Set("marker", strconv.FormatInt(marker, 10))
@@ -120,6 +124,7 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 							if userID == 0 {
 								userID = update.Message.Sender.UserID
 							}
+							drafts.close(userID)
 							chatID := update.ChatID
 							if chatID == 0 {
 								chatID = update.Message.Recipient.ChatID
@@ -145,6 +150,9 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						}
 						if text == "/start" || strings.HasPrefix(text, "/start@") || strings.HasPrefix(text, "/start ") {
 							userID := update.Message.Sender.UserID
+							if maxHasPrivateUser(update) {
+								drafts.close(userID)
+							}
 							chatID := update.Message.Recipient.ChatID
 							if chatID == 0 {
 								chatID = update.ChatID
@@ -175,7 +183,15 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						} else if chatID != 0 {
 							sender, targetType, targetID = fmt.Sprintf("max_chat:%d", chatID), "chat_id", chatID
 						}
+						privateUser := maxHasPrivateUser(update) && targetType == "user_id"
 						if sender == "" {
+							continue
+						}
+						receiptKey := ""
+						if update.Message.Body.MID != "" {
+							receiptKey = sender + "\x00" + update.Message.Body.MID
+						}
+						if !receipts.accept(receiptKey) {
 							continue
 						}
 						var service EmployeeTickets
@@ -183,17 +199,79 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 							service = services[0]
 						}
 						if reply, handled := botLinkCommand(ctx, sender, text, service); handled {
+							if privateUser {
+								drafts.close(userID)
+							}
 							if err := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); err != nil {
 								logger.Error("MAX account link response failed", "error", "operation failed")
 							}
 							continue
 						}
-						result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "bot", Sender: sender, Message: text})
+						if privateUser {
+							if drafts.expired(userID) {
+								drafts.close(userID)
+								_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Время уточнения истекло. Опишите проблему заново.")
+								continue
+							}
+							if text == "/cancel" {
+								drafts.close(userID)
+								_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Обращение отменено. Опишите новую проблему, когда понадобится помощь.")
+								continue
+							}
+							if id, resolved, handled := maxFeedbackCommand(text); handled {
+								reply := "Не удалось обновить обращение. Проверьте номер: доступны только ваши обращения."
+								if service != nil {
+									if _, err := service.BotFeedback(ctx, sender, id, resolved); err == nil {
+										if resolved {
+											reply = "Спасибо! Решение подтверждено."
+										} else {
+											reply = "Обращение передано специалисту. Ответ придёт в этот чат."
+										}
+									}
+								}
+								_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply)
+								continue
+							}
+							if strings.HasPrefix(text, "/") && !(text == "/skip" && drafts.get(userID) != nil) {
+								_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Опишите проблему сообщением. /cancel — отмена; /skip — пропустить уточнения; /yes НОМЕР и /no НОМЕР — оценить предложенное решение.")
+								continue
+							}
+						}
+						request := models.IngestRequest{Channel: "bot", Sender: sender, Message: text, RequireConfirmation: true}
+						if update.Message.Body.MID != "" {
+							request.IdempotencyKey = "max-message:" + update.Message.Body.MID
+						}
+						var draft *intakeDraft
+						if privateUser {
+							var question string
+							draft, question = drafts.advance(userID, text, request.IdempotencyKey)
+							if question != "" {
+								if err := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), question); err != nil {
+									receipts.forget(receiptKey)
+									logger.Error("MAX clarification response failed", "error", "operation failed")
+								}
+								continue
+							}
+							if draft != nil {
+								request.Message = draft.Message
+								request.Intake = &draft.Details
+								request.IdempotencyKey = draft.Key
+							}
+						}
+						result, ingestErr := ingest(ctx, request)
 						if ingestErr != nil {
+							receipts.forget(receiptKey)
 							logger.Error("MAX ingest failed", "error", "operation failed")
+							_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Не удалось сохранить обращение. Повторите сообщение или /cancel.")
 							continue
 						}
-						reply := result.ReplyText
+						if privateUser {
+							drafts.close(userID)
+						}
+						reply := intakeReceipt(draft) + result.ReplyText
+						if privateUser && result.AutoReplied && result.Status == "awaiting_confirmation" {
+							reply += fmt.Sprintf("\n\nПомогло: /yes %d\nНужен специалист: /no %d", result.TicketID, result.TicketID)
+						}
 						if sendErr := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); sendErr != nil {
 							LogOutgoing(logger, "bot", sender, result.TicketID, "AI", sendErr)
 						} else {
@@ -211,4 +289,11 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 			cfg.updateStatus("max", "connected", "")
 		}
 	}
+}
+
+// A missing sender identity must not collapse unrelated chat drafts into key 0.
+// Group messages must not alter the same user's private conversation either.
+func maxHasPrivateUser(update maxUpdate) bool {
+	kind := update.Message.Recipient.ChatType
+	return update.Message.Sender.UserID > 0 && !strings.EqualFold(kind, "chat") && !strings.EqualFold(kind, "channel")
 }

@@ -67,6 +67,8 @@
     ['#history-search', '#queue-search'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
     ['#priority-filter', '#department-filter', '#status-filter'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
     ['#ticket-error', '#ticket-progress'].forEach(selector => { if ($(selector)) $(selector).hidden = true; });
+    $('#ticket-form')?.removeAttribute('aria-busy');
+    $$('#ticket-form button, #intake-fields input').forEach(field => { field.disabled = false; });
     ['#ticket-list', '#history-list', '#metrics', '#audit-list', '#members-list', '#knowledge-list', '#smart-import-results'].forEach(selector => $(selector)?.replaceChildren());
     ['#workspace-result', '#member-issued', '#issued-key-notice'].forEach(selector => { const element = $(selector); if (element) { element.replaceChildren(); element.hidden = true; } });
     ['#ticket-form', '#knowledge-form', '#member-form', '#workspace-form'].forEach(selector => $(selector)?.reset());
@@ -246,7 +248,7 @@
 
   function clearLocalSession() {
     sessionGeneration++;
-    authReady = false; clearWorkspaceData(); state.user = null; renderHistory([]);
+    authReady = false; resetIntake(); clearWorkspaceData(); state.user = null; renderHistory([]);
     $('#activation-form')?.reset(); $('#auth-form')?.reset();
     $('#activation-details').open = false;
     $('#registration-details').open = false;
@@ -667,7 +669,7 @@
       ? tickets
           .map(
             ticket =>
-              `<details class="history-row" data-ticket-id="${ticket.id}"><summary><div><strong>#${ticket.id} · ${escapeHTML(ticket.extracted_summary || ticket.raw_text)}</strong><p>${channelTag(ticket.channel)} <span class="history-status">${escapeHTML(statusLabel(ticket.status))}</span></p></div>${priorityTag(ticket.priority)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
+              `<details class="history-row" data-ticket-id="${ticket.id}"><summary><div><strong>#${ticket.id} · ${escapeHTML(ticket.extracted_summary || ticket.raw_text)}</strong><p>${channelTag(ticket.channel)} <span class="history-status">${escapeHTML(statusLabel(ticket.status))}</span></p></div>${priorityTag(ticket.priority)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${regulationMarkup(ticket.rag_answer)}</div>` : ''}${intakeContextMarkup(ticket.raw_text)}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
           )
           .join('')
       : `<p class="muted">${query ? 'Ничего не найдено. Попробуйте другой номер или слово.' : 'Пока нет обращений. Опишите проблему в форме — ответ появится здесь.'}</p>`;
@@ -728,8 +730,54 @@
     }
   }
 
-  function prepareTicketRequest(email, text) {
-    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim() });
+  let intakeEpoch = 0;
+  let intakeMessage = '';
+  let intakeDetails = {};
+  function resetIntake() {
+    intakeEpoch++; intakeMessage = ''; intakeDetails = {};
+    const panel = $('#intake-panel'); if (panel) panel.hidden = true;
+    const fields = $('#intake-fields'); if (fields) fields.replaceChildren();
+    const label = $('#ticket-form .primary-button span'); if (label) label.textContent = 'Продолжить';
+  }
+  function collectIntake() {
+    $$('#intake-fields input').forEach(input => { intakeDetails[input.dataset.intakeKey] = input.value.trim(); });
+  }
+  async function previewIntake(message) {
+    if (message !== intakeMessage) { resetIntake(); intakeMessage = message; }
+    collectIntake();
+    const epoch = intakeEpoch;
+    const plan = await api('/api/v1/intake/preview', { method: 'POST', body: JSON.stringify({message, details: intakeDetails}) });
+    if (epoch !== intakeEpoch) return false;
+    if (plan.ready) return true;
+    $('#intake-panel').hidden = false;
+    $('#intake-title').textContent = plan.title;
+    // Preserve answers and keyboard focus when another validation pass is needed.
+    const keys = new Set($$('#intake-fields input').map(input => input.dataset.intakeKey));
+    plan.fields.forEach(field => {
+      if (keys.has(field.key)) return;
+      const label = document.createElement('label'); label.htmlFor = `intake-${field.key}`; label.textContent = field.label;
+      const input = document.createElement('input'); input.id = label.htmlFor; input.dataset.intakeKey = field.key;
+      input.maxLength = 300; input.autocomplete = 'off';
+      input.placeholder = { location: 'Например: корпус А, аудитория 313', service: 'Название сервиса', symptom: 'Опишите, что видите', impact: 'Как это мешает работе?', tried: 'Что уже пробовали?' }[field.key] || '';
+      input.addEventListener('input', () => { intakeDetails.skip = false; });
+      const hint = document.createElement('p'); hint.id = `${input.id}-hint`; hint.className = 'field-help'; hint.textContent = field.hint;
+      input.setAttribute('aria-describedby',hint.id);
+      const group = document.createElement('div'); group.append(label,input,hint); $('#intake-fields').append(group);
+    });
+    const label = $('#ticket-form .primary-button span'); if (label) label.textContent = 'Отправить обращение';
+    const first = plan.fields.map(field => $(`#intake-${field.key}`)).find(input => input && !input.value.trim());
+    first?.focus();
+    return false;
+  }
+  function intakeContextMarkup(text) {
+    const marker = '\n\nУточнения заявителя:\n';
+    const index = (text || '').lastIndexOf(marker);
+    if (index < 0) return '';
+    return `<section class="intake-context"><h4>Контекст для специалиста</h4><p>${escapeHTML(text.slice(index + marker.length))}</p></section>`;
+  }
+
+  function prepareTicketRequest(email, text, details = {}) {
+    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim(), intake: details });
     if (!state.pendingTicket || state.pendingTicket.body !== body) {
       const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
       state.pendingTicket = { body, key: `web-${Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')}` };
@@ -747,39 +795,51 @@
     if (!problem.value.trim()) { toast('Опишите проблему перед отправкой.'); problem.focus(); return; }
     const errorBox = $('#ticket-error');
     if (errorBox) errorBox.hidden = true;
+    const submissionSession = sessionGeneration;
+    const submissionUser = state.user?.id;
+    const submissionRole = state.user?.role;
+    const isCurrentSubmission = () => submissionSession === sessionGeneration && state.user?.id === submissionUser && state.user?.role === submissionRole;
+    const controls = [...(form.querySelectorAll?.('#intake-fields input, #intake-skip') || [])];
+    controls.forEach(field => { field.disabled = true; });
     const progress = $('#ticket-progress');
-    if (progress) progress.hidden = false;
+    if (progress) { progress.textContent = 'Проверяем, хватает ли сведений для обращения…'; progress.hidden = false; }
     form.setAttribute('aria-busy', 'true');
     if (button) {
       button.disabled = true;
       const label = $('span', button);
-      if (label) label.textContent = 'ИИ анализирует...';
+      if (label) label.textContent = 'Проверяем обращение…';
     }
     const submittedProblem = problem.value;
     try {
-      const request = prepareTicketRequest(email.value, submittedProblem);
+      if (!await previewIntake(submittedProblem.trim()) || problem.value !== submittedProblem || !isCurrentSubmission()) return;
+      if (progress) progress.textContent = 'Сохраняем обращение и проверяем базу регламентов…';
+      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails);
       const ticket = await api('/api/tickets', {
         method: 'POST', headers: { 'Idempotency-Key': request.key }, body: request.body
       });
+      if (!isCurrentSubmission()) return;
       if (state.pendingTicket === request) state.pendingTicket = null;
-      if (problem.value === submittedProblem) problem.value = '';
+      if (problem.value === submittedProblem) { problem.value = ''; resetIntake(); }
       state.currentTicketId = ticket.id;
       state.historyBefore = 0;
       renderAnalysis(ticket);
       $('#analysis-result')?.focus({ preventScroll: true });
       $('#analysis-result')?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
       toast(`Обращение #${ticket.id} принято`);
-      try { await loadHistory(); } catch (_) { toast('Обращение принято. Список обращений пока не обновился — обновите его позже.'); }
+      try { await loadHistory(); } catch (_) { if (isCurrentSubmission()) toast('Обращение принято. Список обращений пока не обновился — обновите его позже.'); }
     } catch (error) {
+      if (!isCurrentSubmission()) return;
       if (errorBox) { errorBox.textContent = `Не удалось отправить обращение. ${error.message} Текст сохранён в форме — попробуйте ещё раз.`; errorBox.hidden = false; }
       toast(error.message);
     } finally {
+      if (!isCurrentSubmission()) return;
+      controls.forEach(field => { field.disabled = false; });
       form.removeAttribute('aria-busy');
       if (progress) progress.hidden = true;
       if (button) {
         button.disabled = false;
         const label = $('span', button);
-        if (label) label.textContent = 'Отправить обращение';
+        if (label) label.textContent = $('#intake-panel')?.hidden ? 'Продолжить' : 'Отправить обращение';
       }
     }
   }
@@ -895,7 +955,7 @@
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details><div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
       .slice(0, 4)
       .map(item => `<option value="${item}">${departments[item]}</option>`)
       .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
@@ -1617,12 +1677,15 @@
       on(button, 'click', () => {
         const problem = $('#problem');
         if (problem) {
+          resetIntake();
           problem.value = button.dataset.demo || '';
           problem.focus();
         }
       })
     );
 
+    on($('#problem'), 'input', resetIntake);
+    on($('#intake-skip'), 'click', () => { if ($('#ticket-form .primary-button')?.disabled) return; collectIntake(); intakeDetails.skip = true; $('#ticket-form')?.requestSubmit(); });
     on($('#ticket-form'), 'submit', submitTicket);
     on($('#email'), 'change', loadHistory);
     on($('#refresh-history'), 'click', () => { state.historyBefore = 0; loadHistory(); });

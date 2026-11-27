@@ -15,6 +15,7 @@ import (
 	"flowops-ai/internal/analyzer"
 	"flowops-ai/internal/channels"
 	"flowops-ai/internal/delivery"
+	"flowops-ai/internal/intake"
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
@@ -82,6 +83,21 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(request.RawText) == "" {
 		writeError(w, http.StatusBadRequest, "raw_text is required")
 		return
+	}
+	if request.Intake != nil {
+		if err := intake.Validate(request.RawText, *request.Intake); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		if !intake.Evaluate(request.RawText, *request.Intake).Ready {
+			writeError(w, 400, "Заполните уточнения или выберите передачу без уточнений.")
+			return
+		}
+		request.RawText = intake.Compose(request.RawText, *request.Intake)
+		if len(request.RawText) > security.MaxTicketBytes {
+			writeError(w, 400, "Обращение с уточнениями превышает допустимый объём.")
+			return
+		}
 	}
 	request.RawText = strings.ToValidUTF8(request.RawText, "�")
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
@@ -165,6 +181,16 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 		if err != nil {
 			return channels.IngestResult{}, err
 		}
+	}
+	if request.Intake != nil {
+		if err := intake.Validate(request.Message, *request.Intake); err != nil {
+			return channels.IngestResult{}, err
+		}
+		if !intake.Evaluate(request.Message, *request.Intake).Ready {
+			return channels.IngestResult{}, fmt.Errorf("incomplete intake")
+		}
+		request.Message = intake.Compose(request.Message, *request.Intake)
+		request.Intake = nil
 	}
 	if err := h.validateIngest(request); err != nil {
 		return channels.IngestResult{}, err

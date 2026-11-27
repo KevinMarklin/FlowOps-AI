@@ -44,3 +44,7 @@ knowledge_base/ws_*/
 !knowledge_base/fa_portal_password.md
 !knowledge_base/fa_business_trip.md
 !knowledge_base/fa_advance_report.md
+
+# Local browser verification artifacts
+output/playwright/
+.playwright-cli/
