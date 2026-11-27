@@ -27,6 +27,7 @@ type CreateTicketRequest struct {
 }
 
 type IngestRequest struct {
+	IdempotencyKey      string `json:"idempotency_key,omitempty"`
 	Channel             string `json:"channel"`
 	Sender              string `json:"sender"`
 	Subject             string `json:"subject"`

@@ -2,7 +2,9 @@
   'use strict';
 
   const state = {
+    pendingTicket: null,
     tickets: [],
+    historyBefore: 0, operatorBefore: 0,
     currentTicketId: null,
     employeePoll: null,
     operatorLoading: false,
@@ -17,6 +19,33 @@
     if (element) element.addEventListener(event, handler);
   };
   const initialAnalysis = $('#analysis-result')?.cloneNode(true);
+  let workState = { id: null, seconds: 0, running: false, busy: false, activity: 0 };
+
+  function renderWork() {
+    $$('[data-work-time]').forEach(label => {
+      const current = String(label.dataset.workTime) === String(workState.id);
+      label.textContent = current ? `${workState.running ? 'В работе' : 'Пауза'} · ${Math.floor(workState.seconds / 60)} мин ${Math.floor(workState.seconds % 60)} с` : 'Время пока не учитывается';
+    });
+    $$('[data-action="work-pause"]').forEach(button => { button.hidden = !workState.running || String(button.closest('[data-id]')?.dataset.id) !== String(workState.id); });
+  }
+
+  async function trackWork(id, action) {
+    if (!hasSession() || !['admin', 'operator'].includes(state.user?.role) || workState.busy) return false;
+    const generation = sessionGeneration;
+    workState.busy = true;
+    try {
+      const result = await api(`/api/tickets/${id}/work`, { method: 'POST', body: JSON.stringify({ action }) });
+      if (generation !== sessionGeneration) return false;
+      workState = { id: String(id), seconds: result.active_seconds, running: result.running, busy: false, activity: action === 'start' ? Date.now() : workState.activity };
+      const ticket = state.tickets?.find(item => String(item.id) === String(id));
+      if (ticket && result.status) ticket.status = result.status;
+      renderWork(); return true;
+    } catch (error) {
+      if (generation === sessionGeneration) { workState.running = false; renderWork(); if (action !== 'heartbeat') toast(error.message); }
+      return false;
+    } finally { if (generation === sessionGeneration) workState.busy = false; }
+  }
+
   let settingsEpoch = 0;
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
@@ -31,8 +60,10 @@
   function clearWorkspaceData() {
     $('#user-settings')?.close();
     clearPersonalCodes();
+    workState = { id: null, seconds: 0, running: false, busy: false, activity: 0 };
+    state.pendingTicket = null;
     state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear();
-    state.historyTickets = [];
+    state.historyTickets = []; state.historyBefore = 0; state.operatorBefore = 0;
     ['#history-search', '#queue-search'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
     ['#priority-filter', '#department-filter', '#status-filter'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
     ['#ticket-error', '#ticket-progress'].forEach(selector => { if ($(selector)) $(selector).hidden = true; });
@@ -386,7 +417,7 @@
     settingsEpoch++;
     if (settingsRefresh) clearInterval(settingsRefresh);
     settingsRefresh = null;
-    $$('[data-personal-code]').forEach(box => { box.hidden = true; $('input', box).value = ''; });
+    $$('[data-personal-code]').forEach(box => { box.hidden = true; $('input', box).value = ''; const link = $('[data-open-bot]', box); if (link) { link.hidden = true; link.removeAttribute('href'); } });
   }
 
   function setSiteTheme(theme) {
@@ -398,20 +429,22 @@
 
   async function loadPersonalLinks() {
     const dialog = $('#user-settings');
+    const epoch = settingsEpoch;
     if (!dialog?.open || !hasSession()) return;
     try {
       const status = await api('/api/v1/profile/bots');
-      if (!dialog.open) return;
+      if (!dialog.open || epoch !== settingsEpoch) return;
       $('#settings-access-hint').hidden = status.can_connect;
       $$('[data-personal-channel]').forEach(row => {
         const connection = status.channels[row.dataset.personalChannel] || {};
         $('[data-link-status]', row).textContent = connection.connected ? 'Аккаунт подключён' : connection.linked ? 'Нужно подключить заново: доступ или пароль изменились' : 'Не подключён';
-        $('[data-issue-link]', row).disabled = !status.can_connect || !!connection.linked;
+        $('[data-issue-link]', row).disabled = row.dataset.busy === 'true' || !status.can_connect || !!connection.connected;
+        $('[data-issue-link]', row).textContent = connection.linked && !connection.connected ? 'Подключить заново' : 'Подключить';
         $('[data-unlink]', row).hidden = !connection.linked;
-        if (connection.connected) { const box = $('[data-personal-code]', row); box.hidden = true; $('input', box).value = ''; }
+        if (connection.connected) { const box = $('[data-personal-code]', row); box.hidden = true; $('input', box).value = ''; const link = $('[data-open-bot]', box); if (link) { link.hidden = true; link.removeAttribute('href'); } }
       });
       $('#user-settings-error').hidden = true;
-    } catch (error) { const box = $('#user-settings-error'); box.textContent = error.message; box.hidden = false; }
+    } catch (error) { if (epoch !== settingsEpoch || !$('#user-settings').open) return; const box = $('#user-settings-error'); box.textContent = error.message; box.hidden = false; }
   }
 
   function openUserSettings() {
@@ -425,21 +458,28 @@
   }
 
   async function changePersonalLink(row, disconnect) {
+    if (row.dataset.busy === 'true') return;
+    row.dataset.busy = 'true';
     const epoch = settingsEpoch;
     const buttons = $$('button', row); buttons.forEach(button => { button.disabled = true; });
     try {
       const data = await api(`/api/v1/profile/bots/${row.dataset.personalChannel}`, { method: disconnect ? 'DELETE' : 'POST', body: '{}' });
       if (epoch !== settingsEpoch || !$('#user-settings').open) return;
       const box = $('[data-personal-code]', row);
-      if (disconnect) { box.hidden = true; $('input', box).value = ''; }
+      if (disconnect) { box.hidden = true; $('input', box).value = ''; const link = $('[data-open-bot]', box); if (link) { link.hidden = true; link.removeAttribute('href'); } }
       else {
         $('input', box).value = data.command;
+        const link = $('[data-open-bot]', box);
+        if (link) {
+          link.hidden = true; link.removeAttribute('href');
+          try { const url = new URL(data.open_url); if (url.protocol === 'https:' && url.hostname === 't.me' && !url.username && !url.password) { link.href = url.href; link.hidden = false; } } catch {}
+        }
         $('[data-code-expiry]', box).textContent = `Действует до ${new Date(data.expires_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}. Новый код отменит предыдущий.`;
         box.hidden = false;
       }
       await loadPersonalLinks();
-    } catch (error) { const box = $('#user-settings-error'); box.textContent = error.message; box.hidden = false; }
-    finally { buttons.forEach(button => { button.disabled = false; }); if (epoch === settingsEpoch) loadPersonalLinks(); }
+    } catch (error) { if (epoch !== settingsEpoch || !$('#user-settings').open) return; const box = $('#user-settings-error'); box.textContent = error.message; box.hidden = false; }
+    finally { delete row.dataset.busy; buttons.forEach(button => { button.disabled = false; }); if (epoch === settingsEpoch) loadPersonalLinks(); }
   }
 
   async function api(path, options = {}) {
@@ -584,11 +624,22 @@
     }
   }
 
+  function updateTicketPaging(prefix, tickets, size, cursor) {
+    const older = $(`#${prefix}-older`), newest = $(`#${prefix}-newest`);
+    if (older) { older.hidden = tickets.length < size; older.dataset.before = tickets.length ? String(tickets[tickets.length - 1].id) : ''; }
+    if (newest) newest.hidden = !cursor;
+    const note = $(`#${prefix}-page-note`);
+    if (note) note.textContent = cursor ? 'Более ранние обращения. Поиск работает на этой странице.' : 'Последние обращения. Поиск работает на этой странице.';
+  }
+
   async function loadHistory() {
     if (!hasSession() || !canTab('employee')) return;
     try {
       const email = $('#email');
-      const tickets = await api('/api/tickets');
+      const cursor = state.historyBefore;
+      const tickets = await api(`/api/tickets?limit=20&before_id=${cursor}`);
+      if (cursor !== state.historyBefore) return;
+      updateTicketPaging('history', tickets, 20, cursor);
       state.tickets = tickets;
       const value = email ? email.value.trim() : '';
       renderHistory(tickets.filter(ticket => state.user?.role === 'employee' || !value || ticket.user_email === value));
@@ -677,6 +728,15 @@
     }
   }
 
+  function prepareTicketRequest(email, text) {
+    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim() });
+    if (!state.pendingTicket || state.pendingTicket.body !== body) {
+      const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
+      state.pendingTicket = { body, key: `web-${Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')}` };
+    }
+    return state.pendingTicket;
+  }
+
   async function submitTicket(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -697,17 +757,19 @@
     }
     const submittedProblem = problem.value;
     try {
+      const request = prepareTicketRequest(email.value, submittedProblem);
       const ticket = await api('/api/tickets', {
-        method: 'POST',
-        body: JSON.stringify({ user_email: email.value.trim(), raw_text: submittedProblem.trim() })
+        method: 'POST', headers: { 'Idempotency-Key': request.key }, body: request.body
       });
+      if (state.pendingTicket === request) state.pendingTicket = null;
       if (problem.value === submittedProblem) problem.value = '';
       state.currentTicketId = ticket.id;
+      state.historyBefore = 0;
       renderAnalysis(ticket);
       $('#analysis-result')?.focus({ preventScroll: true });
       $('#analysis-result')?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
-      await loadHistory();
       toast(`Обращение #${ticket.id} принято`);
+      try { await loadHistory(); } catch (_) { toast('Обращение принято. Список обращений пока не обновился — обновите его позже.'); }
     } catch (error) {
       if (errorBox) { errorBox.textContent = `Не удалось отправить обращение. ${error.message} Текст сохранён в форме — попробуйте ещё раз.`; errorBox.hidden = false; }
       toast(error.message);
@@ -726,7 +788,10 @@
     if (!hasSession() || !canTab('operator') || state.operatorLoading) return;
     state.operatorLoading = true;
     try {
-      const tickets = await api('/api/tickets');
+      const cursor = state.operatorBefore;
+      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}`);
+      if (cursor !== state.operatorBefore) return;
+      updateTicketPaging('queue', tickets, 100, cursor);
       state.tickets = tickets;
       if (forceRender === true || !$('#ticket-list')?.contains(document.activeElement)) renderTickets();
       const emptyOperator = $('#operator-empty');
@@ -788,6 +853,8 @@
       <article class="metric metric-accent"><div class="metric-label">Deflection Rate</div><div class="metric-value">${format(stats.deflection_rate_percent, 1)}<small>%</small></div><div class="metric-detail">${format(stats.auto_resolved)} из ${format(total)} подтверждены без ответа оператора</div></article>
       <article class="metric"><div class="metric-label">Сэкономлено часов · оценка</div><div class="metric-value">${format(stats.estimated_saved_hours, 2)}<small>ч</small></div><div class="metric-detail">${format(stats.auto_resolved)} × ${format(stats.baseline_minutes_per_ticket, 1)} мин / 60</div></article>
       <article class="metric"><div class="metric-label">Открытые обращения</div><div class="metric-value">${format(open)}</div><div class="metric-detail">из них ${format(stats.awaiting_confirmation)} ожидают подтверждения</div></article>
+      <article class="metric"><div class="metric-label">Работа операторов · наблюдение</div><div class="metric-value">${format(number(stats.operator_active_seconds) / 60, 1)}<small>мин</small></div><div class="metric-detail">${format(stats.operator_measured_tickets)} обращений · среднее ${format(number(stats.operator_average_seconds) / 60, 1)} мин; только интервалы активности</div></article>
+      <article class="metric"><div class="metric-label">Исправления маршрута</div><div class="metric-value">${format(stats.routing_corrected_tickets)}</div><div class="metric-detail">обращений с изменённым отделом · ${format(stats.routing_corrections)} изменений; это не оценка точности ИИ</div></article>
       <article class="metric load-panel"><div class="load-heading"><h3>Распределение нагрузки по отделам</h3><span>Открытые / всего · доля открытой очереди</span></div><div class="department-load">${codes
         .map(code => {
           const count = number(stats.active_by_department?.[code]);
@@ -831,7 +898,7 @@
     return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details><div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
       .slice(0, 4)
       .map(item => `<option value="${item}">${departments[item]}</option>`)
-      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
+      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
       .map(
         item => `<option value="${item}" ${item === ticket.department ? 'selected' : ''}>${departments[item]}</option>`
       )
@@ -858,10 +925,7 @@
     const take = card.querySelector('[data-action="take"]');
     const close = card.querySelector('[data-action="close"]');
     const status = card.dataset.status;
-    if (status === 'assigned_to_operator' && take) {
-      take.disabled = true;
-      take.textContent = 'В работе';
-    }
+    if (take) take.textContent = 'Работать с обращением';
     if (status === 'closed') {
       if (take) take.disabled = true;
       if (close) {
@@ -872,7 +936,13 @@
     card.querySelectorAll('select[data-field]').forEach(select =>
       on(select, 'change', () => updateTicket(id, { [select.dataset.field]: select.value }))
     );
-    on(take, 'click', event => updateTicket(id, { status: 'assigned_to_operator' }, event.currentTarget));
+    on(take, 'click', async () => {
+      if (await trackWork(id, 'start')) { const composer = $('.reply-composer', card); if (composer) composer.open = true; $('[data-reply]', card)?.focus(); }
+    });
+    on($('[data-action="work-pause"]', card), 'click', () => trackWork(id, 'pause'));
+    on(card, 'input', () => { if (String(workState.id) === id) { workState.activity = Date.now(); if (!workState.running) trackWork(id, 'start'); } });
+    on($('[data-reply]', card), 'focus', () => { if (!workState.running || String(workState.id) !== id) trackWork(id, 'start'); });
+    renderWork();
     on(close, 'click', event => updateTicket(id, { status: 'closed' }, event.currentTarget));
     const toggle = card.querySelector('[data-rag-toggle]');
     on(toggle, 'change', () => {
@@ -897,6 +967,7 @@
         method: 'POST',
         body: JSON.stringify({ operator_reply: reply.value.trim() })
       });
+      if (String(workState.id) === String(id)) await trackWork(id, 'pause');
       const toggle = card.querySelector('[data-rag-toggle]');
       if (toggle && toggle.checked) {
         const ticket = state.tickets.find(item => String(item.id) === String(id));
@@ -1554,8 +1625,12 @@
 
     on($('#ticket-form'), 'submit', submitTicket);
     on($('#email'), 'change', loadHistory);
-    on($('#refresh-history'), 'click', loadHistory);
-    on($('#refresh-queue'), 'click', loadOperator);
+    on($('#refresh-history'), 'click', () => { state.historyBefore = 0; loadHistory(); });
+    on($('#refresh-queue'), 'click', () => { state.operatorBefore = 0; loadOperator(); });
+    on($('#history-older'), 'click', () => { state.historyBefore = Number($('#history-older').dataset.before) || 0; loadHistory(); });
+    on($('#history-newest'), 'click', () => { state.historyBefore = 0; loadHistory(); });
+    on($('#queue-older'), 'click', () => { state.operatorBefore = Number($('#queue-older').dataset.before) || 0; loadOperator(true); });
+    on($('#queue-newest'), 'click', () => { state.operatorBefore = 0; loadOperator(true); });
     on($('#reset-data'), 'click', resetData);
     on($('#department-filter'), 'change', renderTickets);
     on($('#status-filter'), 'change', renderTickets);
@@ -1619,6 +1694,14 @@
     on(document, 'visibilitychange', () => { if (!document.hidden && authReady) checkAPI(); });
     on(window, 'focus', () => { if (authReady) checkAPI(); });
 
+    setInterval(() => {
+      if (!workState.running || workState.busy || !hasSession()) return;
+      const focusedCard = document.activeElement?.closest('.ticket-card');
+      const active = !document.hidden && document.hasFocus() && $('#operator')?.classList.contains('active') && focusedCard?.dataset.id === String(workState.id) && Date.now() - workState.activity < 60000;
+      trackWork(workState.id, active ? 'heartbeat' : 'pause');
+    }, 15000);
+    on(window, 'blur', () => { if (workState.running) trackWork(workState.id, 'pause'); });
+    on(document, 'visibilitychange', () => { if (document.hidden && workState.running) trackWork(workState.id, 'pause'); });
     startEmployeePolling();
     let heartbeat = 0;
     setInterval(() => {

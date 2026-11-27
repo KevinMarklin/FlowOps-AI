@@ -1,0 +1,143 @@
+{
+  "dataset_kind": "synthetic",
+  "department_accuracy_percent": 100,
+  "external_allowed": false,
+  "priority_accuracy_percent": 100,
+  "production_accuracy_proven": false,
+  "results": [
+    {
+      "actual_department": "IT",
+      "actual_priority": "high",
+      "department_correct": true,
+      "id": "vpn-error",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "IT",
+      "actual_priority": "low",
+      "department_correct": true,
+      "id": "vpn-question",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "Facilities",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "printer-cartridge",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "Facilities",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "printer-error",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "HR",
+      "actual_priority": "low",
+      "department_correct": true,
+      "id": "certificate",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "HR",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "vacation",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "Accounting",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "advance-report",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "Accounting",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "salary-card",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "Billing",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "payment",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "Unassigned",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "unknown",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "IT",
+      "actual_priority": "high",
+      "department_correct": true,
+      "id": "server-no-rule",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    },
+    {
+      "actual_department": "General",
+      "actual_priority": "medium",
+      "department_correct": true,
+      "id": "prompt-injection",
+      "mode": "heuristic_fallback",
+      "model": "",
+      "priority_correct": true,
+      "provider": "Локальный анализатор",
+      "source_correct": true
+    }
+  ],
+  "samples": 12,
+  "source_accuracy_percent": 100
+}

@@ -84,6 +84,21 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.RawText = strings.ToValidUTF8(request.RawText, "�")
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
+	gate, gateErr := h.beginCreation(ctx, security.TenantID(ctx), "web:"+security.RequesterID(ctx), r.Header.Get("Idempotency-Key"), request)
+	if gateErr != nil {
+		writeCreationError(w, gateErr)
+		return
+	}
+	defer gate.close(ctx)
+	if gate.existing != nil {
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, http.StatusCreated, gate.existing)
+		return
+	}
+
 	channels.LogIncoming(h.logger, "web", request.UserEmail)
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
 	status := initialTicketStatus(analysis)
@@ -93,7 +108,7 @@ VALUES ($11,$1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 
 	var ticket models.Ticket
-	err := h.db.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context())).Scan(
+	err := gate.query.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
 		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
@@ -101,6 +116,10 @@ RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALE
 	if err != nil {
 		h.logger.Error("failed to create ticket")
 		writeError(w, http.StatusInternalServerError, "failed to create ticket")
+		return
+	}
+	if err := gate.finish(ctx, ticket.ID); err != nil {
+		writeCreationError(w, err)
 		return
 	}
 	h.auditPII(r.Context(), ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
@@ -121,9 +140,16 @@ func (h *TicketsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		if request.IdempotencyKey != "" && request.IdempotencyKey != key {
+			writeError(w, 400, "conflicting idempotency keys")
+			return
+		}
+		request.IdempotencyKey = key
+	}
 	result, err := h.IngestMessage(r.Context(), request)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to ingest ticket")
+		writeCreationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
@@ -143,35 +169,58 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	if err := h.validateIngest(request); err != nil {
 		return channels.IngestResult{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	namespace := security.TenantID(ctx)
+	if botTenant != "" {
+		namespace = botTenant
+	}
+	gate, err := h.beginCreation(ctx, namespace, "ingest:"+request.Channel+":"+request.Sender, request.IdempotencyKey, request)
+	if err != nil {
+		return channels.IngestResult{}, err
+	}
+	defer gate.close(ctx)
+	if gate.existing != nil {
+		return h.ingestResult(ctx, *gate.existing), nil
+	}
 	channels.LogIncoming(h.logger, request.Channel, request.Sender)
 	rawText := strings.TrimSpace(strings.Join([]string{request.Subject, request.Message}, "\n"))
 	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
 	status := initialTicketStatus(analysis)
-	autoReplied := analysis.RAGAnswer != nil
-	builderConfig := settings.LoadOrDefault(ctx, h.builderConfig)
 	tenant := security.TenantID(ctx)
 	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,requester_id,bot_tenant_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,$14,$15)
 	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 	var ticket models.Ticket
-	err := h.db.QueryRow(ctx, query, tenant, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(ctx), botTenant).Scan(
+	err = gate.query.QueryRow(ctx, query, tenant, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(ctx), botTenant).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus)
 	if err != nil {
 		return channels.IngestResult{}, err
 	}
-	replyDepartment := analysis.Department
-	if replyDepartment != "" && replyDepartment != "Unassigned" && replyDepartment != "General" {
-		if label := departmentLabel(replyDepartment); label != "" {
-			replyDepartment = label
-		}
-	}
-	replyText := channels.BuilderEscalationReplyText(ticket.ID, replyDepartment, builderConfig.HandoffTemplate)
-	if autoReplied {
-		replyText = channels.PublicReplyText(ticket.ID, channels.AppendSignature(*analysis.RAGAnswer, builderConfig.Signature))
+	if err := gate.finish(ctx, ticket.ID); err != nil {
+		return channels.IngestResult{}, err
 	}
 	h.auditPII(ctx, ticket.ID, ticket.PIIMaskedCount, ticket.PIIMaskedTypes)
-	h.logger.Info(fmt.Sprintf("[TICKET #%d] status=%s | auto_replied=%t | channel=%s | department=%s", ticket.ID, ticket.Status, autoReplied, channels.DisplayChannel(ticket.Channel, request.Sender), ticket.Department))
-	return channels.IngestResult{TicketID: ticket.ID, Channel: ticket.Channel, AutoReplied: autoReplied, ReplyText: replyText, Department: ticket.Department, Priority: ticket.Priority, Status: ticket.Status, ExtractedSummary: ticket.ExtractedSummary, PIIMaskedCount: ticket.PIIMaskedCount, PIIMaskedTypes: ticket.PIIMaskedTypes}, nil
+	h.logger.Info(fmt.Sprintf("[TICKET #%d] status=%s | auto_replied=%t | channel=%s | department=%s", ticket.ID, ticket.Status, ticket.RAGAnswer != nil, channels.DisplayChannel(ticket.Channel, request.Sender), ticket.Department))
+	return h.ingestResult(ctx, ticket), nil
+}
+
+func (h *TicketsHandler) ingestResult(ctx context.Context, ticket models.Ticket) channels.IngestResult {
+	builderConfig := settings.LoadOrDefault(ctx, h.builderConfig)
+	replyDepartment := ticket.Department
+	if label := departmentLabel(replyDepartment); label != "" {
+		replyDepartment = label
+	}
+	replyText := channels.BuilderEscalationReplyText(ticket.ID, replyDepartment, builderConfig.HandoffTemplate)
+	autoReplied := ticket.RAGAnswer != nil
+	if autoReplied {
+		replyText = channels.PublicReplyText(ticket.ID, channels.AppendSignature(*ticket.RAGAnswer, builderConfig.Signature))
+	}
+	if ticket.OperatorReply != nil && strings.TrimSpace(*ticket.OperatorReply) != "" {
+		replyText = channels.OperatorReplyText(ticket.ID, *ticket.OperatorReply)
+		autoReplied = false
+	}
+	return channels.IngestResult{TicketID: ticket.ID, Channel: ticket.Channel, AutoReplied: autoReplied, ReplyText: replyText, Department: ticket.Department, Priority: ticket.Priority, Status: ticket.Status, ExtractedSummary: ticket.ExtractedSummary, PIIMaskedCount: ticket.PIIMaskedCount, PIIMaskedTypes: ticket.PIIMaskedTypes}
 }
 
 // User-controlled channel/confirmation flags cannot authorize ticket closure.
@@ -214,14 +263,58 @@ func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
 	if request.Resolved {
 		status = "auto_resolved"
 	}
-	h.logger.Info("ticket feedback received", "id", id, "resolved", request.Resolved, "status", status)
-	if tag, err := h.db.Exec(r.Context(), `UPDATE tickets SET status = $1 WHERE id = $2 AND tenant_id=$3`, status, id, security.TenantID(r.Context())); err != nil || tag.RowsAffected() == 0 {
-		if err != nil {
-			h.logger.Error("failed to update ticket feedback")
-		}
-		writeError(w, http.StatusNotFound, "ticket not found")
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to record feedback")
 		return
 	}
+	defer tx.Rollback(r.Context())
+	var current string
+	var rag, operatorReply *string
+	err = tx.QueryRow(r.Context(), `SELECT status,rag_answer,operator_reply FROM tickets WHERE id=$1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4) FOR UPDATE`, id, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context())).Scan(&current, &rag, &operatorReply)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 404, "ticket not found")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "failed to read ticket feedback")
+		return
+	}
+	eligibleAnswer := rag != nil && strings.TrimSpace(*rag) != "" && (operatorReply == nil || strings.TrimSpace(*operatorReply) == "")
+	if current != "awaiting_confirmation" || !eligibleAnswer {
+		// A repeated click is safe only when this exact decision was already audited.
+		var previous bool
+		if current == status && eligibleAnswer {
+			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM audit_logs WHERE tenant_id=$1 AND ticket_id=$2 AND event_type='TICKET_FEEDBACK' AND details=$3)`, security.TenantID(r.Context()), id, "status="+status).Scan(&previous)
+			if err != nil {
+				writeError(w, 500, "failed to read feedback audit")
+				return
+			}
+		}
+		if !previous {
+			writeError(w, 409, "Ответ уже обработан или обращение не ожидает подтверждения регламента")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": status})
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE tickets SET status=$1 WHERE id=$2 AND tenant_id=$3`, status, id, security.TenantID(r.Context())); err != nil {
+		writeError(w, 500, "failed to update ticket feedback")
+		return
+	}
+	actor := security.RequesterID(r.Context())
+	if actor == "" {
+		actor = "integration"
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) VALUES($1,'TICKET_FEEDBACK',$2,$3,$4)`, security.TenantID(r.Context()), actor, id, "status="+status); err != nil {
+		writeError(w, 500, "failed to record feedback audit")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit feedback")
+		return
+	}
+	h.logger.Info("ticket feedback received", "id", id, "resolved", request.Resolved, "status", status)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": status})
 }
 
@@ -327,8 +420,8 @@ func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, 
 	}
 	defer tx.Rollback(ctx)
 	// Lock first to serialize reply revisions with queue acknowledgements.
-	var channel, sender, callback string
-	if err = tx.QueryRow(ctx, `SELECT COALESCE(channel,'web'),COALESCE(user_email,''),COALESCE(callback_url,'') FROM tickets WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, id, security.TenantID(ctx)).Scan(&channel, &sender, &callback); err != nil {
+	var channel, sender, callback, oldDepartment string
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(channel,'web'),COALESCE(user_email,''),COALESCE(callback_url,''),COALESCE(department,'') FROM tickets WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, id, security.TenantID(ctx)).Scan(&channel, &sender, &callback, &oldDepartment); err != nil {
 		return err
 	}
 	if reply != nil {
@@ -347,6 +440,24 @@ func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, 
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) VALUES($1,'OPERATOR_REPLY','operator',$2,'Reply saved with durable delivery events')`, security.TenantID(ctx), id); err != nil {
+			return err
+		}
+	}
+	var newDepartment, newStatus string
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(department,''),status FROM tickets WHERE tenant_id=$1 AND id=$2`, security.TenantID(ctx), id).Scan(&newDepartment, &newStatus); err != nil {
+		return err
+	}
+	if newDepartment != oldDepartment {
+		actor := security.RequesterID(ctx)
+		if actor == "" {
+			actor = "operator"
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) VALUES($1,'TICKET_ROUTING_CORRECTED',$2,$3,$4)`, security.TenantID(ctx), actor, id, "from="+oldDepartment+";to="+newDepartment); err != nil {
+			return err
+		}
+	}
+	if newStatus == "closed" || newStatus == "resolved" || newStatus == "auto_resolved" {
+		if _, err = tx.Exec(ctx, `UPDATE ticket_work_sessions SET active_seconds=active_seconds+LEAST(30,GREATEST(0,EXTRACT(EPOCH FROM NOW()-last_seen_at))),running=FALSE,last_seen_at=NOW() WHERE tenant_id=$1 AND ticket_id=$2 AND running=TRUE`, security.TenantID(ctx), id); err != nil {
 			return err
 		}
 	}
@@ -376,18 +487,26 @@ func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error 
 				return fmt.Errorf("load original ticket message: %w", err)
 			}
 		}
-		var err error
-		if h.tenantDispatcher != nil {
-			routeTenant := m.TenantID
-			if m.Channel == "bot" {
-				var originalBotTenant string
-				if loadErr := h.db.QueryRow(ctx, `SELECT bot_tenant_id FROM tickets WHERE tenant_id=$1 AND id=$2`, m.TenantID, m.TicketID).Scan(&originalBotTenant); loadErr != nil {
-					return loadErr
-				}
-				if originalBotTenant != "" {
-					routeTenant = originalBotTenant
+		routeTenant := m.TenantID
+		if m.Channel == "bot" {
+			var originalBotTenant, requester string
+			if loadErr := h.db.QueryRow(ctx, `SELECT bot_tenant_id,requester_id FROM tickets WHERE tenant_id=$1 AND id=$2`, m.TenantID, m.TicketID).Scan(&originalBotTenant, &requester); loadErr != nil {
+				return loadErr
+			}
+			if originalBotTenant != "" {
+				routeTenant = originalBotTenant
+			}
+			// Recheck at delivery time: an old queued answer must never follow an
+			// unlinked, disabled or reassigned chat to another website account.
+			if requester != "" {
+				linked, linkErr := security.BotContext(security.WithTenantID(ctx, routeTenant), h.db, m.Recipient)
+				if linkErr != nil || security.RequesterID(linked) != requester || security.TenantID(linked) != m.TenantID {
+					return fmt.Errorf("bot delivery blocked: account binding is no longer valid")
 				}
 			}
+		}
+		var err error
+		if h.tenantDispatcher != nil {
 			err = h.tenantDispatcher.Dispatch(ctx, routeTenant, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
 		} else {
 			err = h.dispatcher.Dispatch(ctx, m.Channel, m.Recipient, m.TicketID, originalSubject, originalMessage, m.Body)
@@ -410,6 +529,12 @@ func (h *TicketsHandler) sendWebhook(callbackURL string, ticketID int, reply str
 
 // Enforce limits for HTTP adapters AND background channel workers before analysis/storage.
 func (h *TicketsHandler) validateIngest(r models.IngestRequest) error {
+	if r.IdempotencyKey != "" && !requestKeyPattern.MatchString(r.IdempotencyKey) {
+		return errRequestKey
+	}
+	if r.Channel == "bot" && strings.HasPrefix(r.Sender, "max_chat:") {
+		return fmt.Errorf("corporate support requests require a private chat")
+	}
 	if !validChannel(r.Channel) || strings.TrimSpace(r.Message) == "" {
 		return fmt.Errorf("channel and message are required")
 	}
@@ -507,13 +632,29 @@ func hasValue(value string, values ...string) bool {
 }
 
 func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
+	limit, before := 100, 0
+	for key, target := range map[string]*int{"limit": &limit, "before_id": &before} {
+		if values, present := r.URL.Query()[key]; present {
+			if len(values) != 1 {
+				writeError(w, 400, "pagination parameter must occur once")
+				return
+			}
+			parsed, err := strconv.ParseInt(values[0], 10, 32)
+			if err != nil || parsed < 0 || (key == "limit" && (parsed < 1 || parsed > 200)) {
+				writeError(w, 400, "invalid pagination parameters: limit 1..200, before_id nonnegative")
+				return
+			}
+			*target = int(parsed)
+		}
+	}
+
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3)
-ORDER BY created_at DESC, id DESC`
+FROM tickets WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
+ORDER BY id DESC LIMIT $5`
 
-	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()))
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1)
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
@@ -541,6 +682,10 @@ ORDER BY created_at DESC, id DESC`
 		return
 	}
 
+	if len(tickets) > limit {
+		tickets = tickets[:limit]
+		w.Header().Set("X-Next-Cursor", strconv.Itoa(tickets[len(tickets)-1].ID))
+	}
 	writeJSON(w, http.StatusOK, tickets)
 }
 

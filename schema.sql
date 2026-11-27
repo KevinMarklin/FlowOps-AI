@@ -136,3 +136,33 @@ CREATE TABLE IF NOT EXISTS member_bot_links (
  UNIQUE(member_id,channel)
 );
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS bot_tenant_id TEXT NOT NULL DEFAULT '';
+
+-- Keyset pagination for operator queues and personal request history.
+CREATE INDEX IF NOT EXISTS tickets_tenant_cursor ON tickets(tenant_id,id DESC);
+CREATE INDEX IF NOT EXISTS tickets_requester_cursor ON tickets(tenant_id,requester_id,id DESC);
+
+
+CREATE TABLE IF NOT EXISTS ticket_work_sessions (
+ tenant_id TEXT NOT NULL REFERENCES workspaces(tenant_id) ON DELETE CASCADE,
+ operator_id TEXT NOT NULL,
+ ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+ active_seconds DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK(active_seconds>=0),
+ running BOOLEAN NOT NULL DEFAULT FALSE,
+ last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(tenant_id,operator_id,ticket_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ticket_work_one_active ON ticket_work_sessions(tenant_id,operator_id) WHERE running=TRUE;
+CREATE INDEX IF NOT EXISTS ticket_work_totals ON ticket_work_sessions(tenant_id,ticket_id);
+
+
+CREATE TABLE IF NOT EXISTS ticket_requests (
+ tenant_id TEXT NOT NULL,
+ scope_hash TEXT NOT NULL,
+ key_hash TEXT NOT NULL,
+ payload_hash TEXT NOT NULL,
+ ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(tenant_id,scope_hash,key_hash)
+);
+ALTER TABLE ticket_requests DROP CONSTRAINT IF EXISTS ticket_requests_tenant_id_fkey;
+CREATE INDEX IF NOT EXISTS ticket_requests_ticket ON ticket_requests(ticket_id);

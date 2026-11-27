@@ -60,10 +60,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, channel, sender string, ticke
 			return sendMaxMessage(ctx, d.config, "user_id", strings.TrimPrefix(sender, "max:"), reply)
 		}
 		if strings.HasPrefix(sender, "max_chat:") {
-			if strings.TrimSpace(d.config.MaxToken) == "" {
-				return fmt.Errorf("MAX channel disabled")
-			}
-			return sendMaxMessage(ctx, d.config, "chat_id", strings.TrimPrefix(sender, "max_chat:"), reply)
+			return fmt.Errorf("corporate support replies require a private chat")
 		}
 	case "email":
 		if !d.config.emailEnabled() {

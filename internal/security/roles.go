@@ -97,7 +97,7 @@ func AllowRequest(role, method, path string) bool {
 			return method == http.MethodGet || (role == "operator" && method == http.MethodPatch)
 		}
 		if len(parts) == 2 && method == http.MethodPost {
-			return parts[1] == "feedback" || (role == "operator" && parts[1] == "reply")
+			return parts[1] == "feedback" || (role == "operator" && (parts[1] == "reply" || parts[1] == "work"))
 		}
 	}
 	if role == "operator" && (path == "/api/knowledge" || strings.HasPrefix(path, "/api/knowledge/")) {

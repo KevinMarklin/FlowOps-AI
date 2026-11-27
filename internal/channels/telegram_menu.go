@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,12 +16,29 @@ type telegramButton struct {
 	Text string `json:"text"`
 	Data string `json:"callback_data"`
 }
+
+// Keep Telegram's neutral buttons as the default; accent only the main action.
+func (button telegramButton) MarshalJSON() ([]byte, error) {
+	style := ""
+	if button.Data == "emp:new" {
+		style = "primary"
+	}
+	if strings.HasPrefix(button.Data, "emp:yes:") {
+		style = "success"
+	}
+	return json.Marshal(struct {
+		Text  string `json:"text"`
+		Data  string `json:"callback_data"`
+		Style string `json:"style,omitempty"`
+	}{button.Text, button.Data, style})
+}
+
 type telegramScreen struct {
 	Text    string
 	Buttons [][]telegramButton
 }
 
-func menuButton() []telegramButton { return []telegramButton{{"Меню", "emp:menu"}} }
+func menuButton() []telegramButton { return []telegramButton{{"☰ Меню", "emp:menu"}} }
 
 func employeeReplyScreen(ticketID int, text string) telegramScreen {
 	// A single notification avoids flooding the chat and partial multi-message
@@ -31,18 +49,19 @@ func employeeReplyScreen(ticketID int, text string) telegramScreen {
 		screen.Text += "…\n\nПолный текст доступен в карточке обращения в «Мои обращения»."
 	}
 	if ticketID > 0 {
-		screen.Buttons = append(screen.Buttons, []telegramButton{{"Открыть обращение", fmt.Sprintf("emp:ticket:%d", ticketID)}})
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"📄 Открыть обращение", fmt.Sprintf("emp:ticket:%d", ticketID)}})
 	}
 	screen.Buttons = append(screen.Buttons, menuButton())
 	return screen
 }
 
 func employeeMainMenu(ctx context.Context, loader settings.Loader) telegramScreen {
-	return telegramScreen{Text: shortTelegramText(StartReplyText(ctx, loader), 1500) + "\n\nМеню сотрудника\nОтправьте текст проблемы или выберите действие. После привязки аккаунта доступны также ваши обращения с сайта.", Buttons: [][]telegramButton{
-		{{"Новое обращение", "emp:new"}},
-		{{"Мои обращения", "emp:list:0"}, {"Найти по номеру", "emp:find"}},
-		{{"Как работает поддержка", "emp:help"}},
-		{{"Связать с аккаунтом сайта", "emp:account"}},
+	return telegramScreen{Text: shortTelegramText(StartReplyText(ctx, loader), 1500) + "\n\n**Поддержка сотрудников**\nВыберите действие ниже. Для отправки заявки нажмите «Новое обращение».", Buttons: [][]telegramButton{
+		{{"✍️ Новое обращение", "emp:new"}},
+		{{"📂 Мои обращения", "emp:list:0"}},
+		{{"🔎 Найти по номеру", "emp:find"}},
+		{{"ℹ️ Как работает поддержка", "emp:help"}},
+		{{"🔗 Подключить аккаунт сайта", "emp:account"}},
 	}}
 }
 
@@ -54,11 +73,22 @@ func employeeAction(ctx context.Context, sender, action string, service Employee
 	case "emp:menu":
 		return employeeMainMenu(ctx, loader)
 	case "emp:account":
-		return plain("Войдите на сайт, откройте меню пользователя (три полоски справа сверху), выберите Telegram и получите одноразовый код. Затем отправьте сюда команду /link КОД. Пароль и код активации сайта присылать боту не нужно.")
+		return telegramScreen{Text: "Войдите на сайт → меню пользователя → Telegram → «Подключить». Нажмите «Открыть бота и подключить» или отправьте сюда /link КОД. Пароль от сайта присылать не нужно.", Buttons: [][]telegramButton{{{"Отключить этот Telegram", "emp:disconnect"}}, menuButton()}}
+	case "emp:disconnect":
+		return telegramScreen{Text: "Отключить этот Telegram от аккаунта сайта? Старые обращения и ответы останутся на сайте. Чтобы подключить другой аккаунт, после отключения получите для него новый код.", Buttons: [][]telegramButton{{{"Отключить", "emp:disconnect:confirm"}}, {{"↩️ Отмена", "emp:account"}}}}
+	case "emp:disconnect:confirm":
+		unlinker, ok := service.(BotAccountUnlinker)
+		if !ok {
+			return plain("Отключение временно недоступно. Отключите Telegram в настройках сайта.")
+		}
+		if err := unlinker.UnlinkBot(ctx, sender); err != nil {
+			return plain("Не удалось отключить Telegram. Попробуйте ещё раз позже.")
+		}
+		return plain("Telegram отключён. Теперь получите новый код в нужном аккаунте сайта и подключите его. Старые обращения сохранены на сайте.")
 	case "emp:new":
-		return telegramScreen{Text: "Опишите проблему одним сообщением: что случилось, какую ошибку видите и что уже пробовали.\n\nМы определим отдел и приоритет, найдём регламент или передадим вопрос специалисту.", Buttons: [][]telegramButton{{{"Отмена", "emp:menu"}}}}
+		return telegramScreen{Text: "**Новое обращение**\n\nОпишите проблему одним сообщением: что случилось, какую ошибку видите и что уже пробовали.\n\nМы определим отдел и приоритет, найдём регламент или передадим вопрос специалисту.", Buttons: [][]telegramButton{{{"↩️ Отмена", "emp:menu"}}}}
 	case "emp:find":
-		return plain("Чтобы открыть своё обращение, отправьте команду с номером, например:\n/ticket 123\n\nДоступны только обращения, созданные в этом личном чате.")
+		return plain("Чтобы открыть своё обращение, отправьте команду с номером, например:\n/ticket 123\n\nПосле подключения аккаунта здесь доступны и ваши обращения с сайта.")
 	case "emp:help":
 		return plain("Как работает поддержка\n\n1. Опишите проблему. ИИ выделит суть, определит нужный отдел и приоритет: низкий, средний или высокий.\n2. Если в базе знаний есть регламент, бот покажет его. Нажмите «Помогло» или «Нужен специалист».\n3. Если регламента нет или он не помог, вопрос передаётся специалисту. Ответ придёт в этот чат.\n\nВ интернете ответы не ищем. Историю и текущий статус можно открыть в «Мои обращения».")
 	}
@@ -79,9 +109,9 @@ func employeeAction(ctx context.Context, sender, action string, service Employee
 			return plain("Не удалось загрузить обращения. Попробуйте ещё раз позже.")
 		}
 		if len(tickets) == 0 {
-			return telegramScreen{Text: "Обращений на этой странице пока нет. Чтобы создать новое, отправьте текст проблемы.", Buttons: [][]telegramButton{{{"Новое обращение", "emp:new"}}, menuButton()}}
+			return telegramScreen{Text: "Обращений на этой странице пока нет. Для новой заявки нажмите «Новое обращение».", Buttons: [][]telegramButton{{{"✍️ Новое обращение", "emp:new"}}, menuButton()}}
 		}
-		screen := telegramScreen{Text: "Мои обращения\nВыберите обращение, чтобы посмотреть статус, регламент или ответ специалиста."}
+		screen := telegramScreen{Text: "**Мои обращения**\nВыберите обращение, чтобы посмотреть статус, регламент или ответ специалиста."}
 		for i, ticket := range tickets {
 			if i == 8 {
 				screen.Buttons = append(screen.Buttons, []telegramButton{{"Более ранние", fmt.Sprintf("emp:list:%d", tickets[7].ID)}})
@@ -148,7 +178,7 @@ func employeeTicketScreen(ticket models.Ticket, page int) telegramScreen {
 	if page >= len(chunks) {
 		page = 0
 	}
-	header := fmt.Sprintf("Обращение #%d\nСтатус: %s\nОтдел: %s\nПриоритет: %s\n\n", ticket.ID, botStatus(ticket.Status), shortTelegramText(botDepartment(ticket.Department), 120), botPriority(ticket.Priority))
+	header := fmt.Sprintf("**Обращение #%d**\nСтатус: %s\nОтдел: %s\nПриоритет: %s\n\n", ticket.ID, botStatus(ticket.Status), shortTelegramText(botDepartment(ticket.Department), 120), botPriority(ticket.Priority))
 	screen := telegramScreen{Text: header + chunks[page]}
 	if len(chunks) > 1 {
 		screen.Text += fmt.Sprintf("\n\nСтраница %d из %d", page+1, len(chunks))
@@ -162,9 +192,12 @@ func employeeTicketScreen(ticket models.Ticket, page int) telegramScreen {
 		screen.Buttons = append(screen.Buttons, row)
 	}
 	if ticket.Status == "awaiting_confirmation" && ticket.RAGAnswer != nil && strings.TrimSpace(*ticket.RAGAnswer) != "" && (ticket.OperatorReply == nil || strings.TrimSpace(*ticket.OperatorReply) == "") {
-		screen.Buttons = append(screen.Buttons, []telegramButton{{"Помогло", fmt.Sprintf("emp:yes:%d", ticket.ID)}, {"Нужен специалист", fmt.Sprintf("emp:no:%d", ticket.ID)}})
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"✅ Помогло", fmt.Sprintf("emp:yes:%d", ticket.ID)}}, []telegramButton{{"👤 Нужен специалист", fmt.Sprintf("emp:no:%d", ticket.ID)}})
 	}
-	screen.Buttons = append(screen.Buttons, []telegramButton{{"Обновить статус", fmt.Sprintf("emp:ticket:%d:%d", ticket.ID, page)}}, []telegramButton{{"Мои обращения", "emp:list:0"}}, menuButton())
+	if ticket.OperatorReply != nil && strings.TrimSpace(*ticket.OperatorReply) != "" {
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"✅ Прочитано", fmt.Sprintf("emp:read:%d", ticket.ID)}})
+	}
+	screen.Buttons = append(screen.Buttons, []telegramButton{{"↻ Обновить статус", fmt.Sprintf("emp:ticket:%d:%d", ticket.ID, page)}}, []telegramButton{{"📂 Мои обращения", "emp:list:0"}}, menuButton())
 	return screen
 }
 

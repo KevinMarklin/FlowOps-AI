@@ -45,15 +45,22 @@
     if(typeof config.color==='string' && /^#[0-9a-f]{6}$/i.test(config.color)) host.style.setProperty('--flowops-color',config.color);
     if(typeof config.greeting==='string' && config.greeting.trim()) addMessage(config.greeting);
   }).catch(()=>addMessage('Здравствуйте! Чем мы можем помочь?'));
+  let pending = null;
   form.addEventListener('submit',async event=>{
     event.preventDefault(); const message=question.value.trim();
-    if(!message)return;
+    if(!message || send.disabled)return;
     if(!token){status.textContent='Не настроен ключ доступа чата.';return;}
-    addMessage(message,'user'); question.value=''; send.disabled=true; status.textContent='Отправляем…';
+    const payload={channel:'widget',sender:contact.value.trim(),message};
+    const identity=JSON.stringify(payload);
+    if(!pending || pending.identity!==identity){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);pending={identity,key:'widget-'+Array.from(bytes,x=>x.toString(16).padStart(2,'0')).join('')};addMessage(message,'user');}
+    const request=pending;
+    send.disabled=true; status.textContent='Отправляем…';
     try{
-      const response=await fetch(`${apiURL}/api/v1/ingest`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({channel:'widget',sender:contact.value.trim(),message})});
+      const response=await fetch(`${apiURL}/api/v1/ingest`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({...payload,idempotency_key:request.key})});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error(data.error||'Не удалось отправить вопрос.');
+      if(question.value.trim()===message)question.value='';
+      if(pending===request)pending=null;
       addMessage(data.reply_text || (data.auto_replied ? 'Ответ подготовлен.' : `Ваше обращение №${data.ticket_id} передано специалисту.`));
       status.textContent=data.auto_replied?'Ответ из базы знаний':'Заявка создана';
     }catch(error){status.textContent=error.message || 'Ошибка связи с сервером.';addMessage(status.textContent);}

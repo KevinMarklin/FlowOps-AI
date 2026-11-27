@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"net"
 	"net/mail"
 	"net/smtp"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,9 +35,8 @@ func runEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interfa
 	cfg.updateStatus("email", "starting", "")
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	failedUIDs := make(map[int]struct{})
 	for ctx.Err() == nil {
-		if err := pollEmail(ctx, cfg, ingest, logger, failedUIDs); err != nil && ctx.Err() == nil {
+		if err := pollEmail(ctx, cfg, ingest, logger); err != nil && ctx.Err() == nil {
 			cfg.updateStatus("email", "error", err.Error())
 			logger.Error("email polling failed", "error", err.Error())
 		} else if ctx.Err() == nil {
@@ -77,7 +79,14 @@ func hostName(address string) string {
 }
 
 func (s *imapSession) command(ctx context.Context, command string) ([]byte, error) {
-	_ = s.conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	if limit, ok := ctx.Deadline(); ok && limit.Before(deadline) {
+		deadline = limit
+	}
+	_ = s.conn.SetDeadline(deadline)
 	tag := fmt.Sprintf("A%04d", s.next)
 	s.next++
 	if _, err := fmt.Fprintf(s.conn, "%s %s\r\n", tag, command); err != nil {
@@ -127,31 +136,41 @@ func (s *imapSession) command(ctx context.Context, command string) ([]byte, erro
 func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
-}, failedUIDs map[int]struct{}) error {
+}) error {
 	session, err := connectIMAP(ctx, cfg.MailIMAPHost)
 	if err != nil {
 		return err
 	}
 	defer session.cleanup()
+	return pollIMAPMailbox(ctx, session, cfg, ingest, logger, sendEmail)
+}
+
+type emailSender func(context.Context, Config, string, string, int, string, string, bool) error
+
+func pollIMAPMailbox(ctx context.Context, session *imapSession, cfg Config, ingest IngestFunc, logger interface {
+	Info(string, ...any)
+	Error(string, ...any)
+}, send emailSender) error {
+	var err error
 	quote := func(value string) string { return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"` }
 	if _, err = session.command(ctx, "LOGIN "+quote(cfg.MailUser)+" "+quote(cfg.MailPassword)); err != nil {
 		return err
 	}
-	if _, err = session.command(ctx, "SELECT INBOX"); err != nil {
+	selected, err := session.command(ctx, "SELECT INBOX")
+	if err != nil {
 		return err
+	}
+	validity := emailUIDValidity(selected)
+	if validity == "" {
+		return errors.New("mailbox UIDVALIDITY missing or invalid")
 	}
 	result, err := session.command(ctx, "UID SEARCH UNSEEN")
 	if err != nil {
 		return err
 	}
+	var processingErr error
 	ids := parseIMAPSearch(string(result))
 	for _, id := range ids {
-		if _, failed := failedUIDs[id]; failed {
-			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
-				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
-			}
-			continue
-		}
 		fetched, fetchErr := session.command(ctx, fmt.Sprintf("UID FETCH %d (BODY.PEEK[])", id))
 		if fetchErr != nil {
 			return fmt.Errorf("email fetch failed: %w", fetchErr)
@@ -159,15 +178,14 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 		raw := extractIMAPLiteral(fetched)
 		message, parseErr := mail.ReadMessage(bytes.NewReader(raw))
 		if parseErr != nil {
-			logger.Error("email parse failed", "message_uid", id, "error", parseErr.Error())
+			logger.Error("email parse failed", "message_uid", id)
+			processingErr = errors.Join(processingErr, errors.New("email parse failed"))
 			continue
 		}
 		from, parseErr := mail.ParseAddress(message.Header.Get("From"))
 		if parseErr != nil {
-			logger.Error("email sender parse failed", "message_uid", id, "error", parseErr.Error())
-			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
-				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
-			}
+			logger.Error("email sender parse failed", "message_uid", id)
+			processingErr = errors.Join(processingErr, errors.New("email sender invalid; message retained unread"))
 			continue
 		}
 		if isSystemEmailSender(from.Address) {
@@ -180,24 +198,25 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 		subject, _ := decoder.DecodeHeader(message.Header.Get("Subject"))
 		bodyText, bodyErr := decodeMIMEBody(message.Header.Get("Content-Type"), message.Header.Get("Content-Transfer-Encoding"), message.Body)
 		if bodyErr != nil {
-			logger.Error("email body decode failed", "message_uid", id, "error", bodyErr.Error())
+			logger.Error("email body decode failed", "message_uid", id)
+			processingErr = errors.Join(processingErr, errors.New("email body decode failed"))
+			continue
 		}
 		bodyText = cleanEmailText(bodyText)
 		bodyText = trimEmailQuote(bodyText)
 		if strings.TrimSpace(bodyText) == "" {
 			bodyText = "(Письмо без текстового содержимого)"
 		}
-		result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "email", Sender: from.Address, Subject: subject, Message: bodyText})
+		result, ingestErr := ingest(ctx, models.IngestRequest{Channel: "email", Sender: from.Address, Subject: subject, Message: bodyText, IdempotencyKey: emailRequestKey(cfg, validity, id)})
 		if ingestErr != nil {
 			logger.Error("email ingest failed", "message_uid", id, "error", ingestErr.Error())
-			failedUIDs[id] = struct{}{}
-			if _, err := session.command(ctx, fmt.Sprintf("UID STORE %d +FLAGS (\\Seen)", id)); err != nil {
-				logger.Error("email acknowledgement failed", "message_uid", id, "error", err.Error())
-			}
+			processingErr = errors.Join(processingErr, errors.New("email ingest failed; message retained unread"))
 			continue
 		}
-		if err := sendEmail(ctx, cfg, from.Address, fmt.Sprintf("Re: [Заявка #%d] %s", result.TicketID, subject), result.TicketID, html.EscapeString(bodyText), result.ReplyText, result.AutoReplied); err != nil {
+		if err := send(ctx, cfg, from.Address, fmt.Sprintf("Re: [Заявка #%d] %s", result.TicketID, subject), result.TicketID, html.EscapeString(bodyText), result.ReplyText, result.AutoReplied); err != nil {
 			LogOutgoing(logger, "email", from.Address, result.TicketID, "AI", err)
+			processingErr = errors.Join(processingErr, errors.New("email reply failed; message retained unread"))
+			continue
 		} else {
 			LogOutgoing(logger, "email", from.Address, result.TicketID, "AI", nil)
 		}
@@ -205,7 +224,26 @@ func pollEmail(ctx context.Context, cfg Config, ingest IngestFunc, logger interf
 			return fmt.Errorf("email acknowledgement failed: %w", err)
 		}
 	}
-	return nil
+	return processingErr
+}
+
+var uidValidityPattern = regexp.MustCompile(`(?i)\[UIDVALIDITY ([0-9]+)\]`)
+
+func emailUIDValidity(response []byte) string {
+	match := uidValidityPattern.FindSubmatch(response)
+	if len(match) != 2 {
+		return ""
+	}
+	value, err := strconv.ParseUint(string(match[1]), 10, 32)
+	if err != nil || value == 0 {
+		return ""
+	}
+	return strconv.FormatUint(value, 10)
+}
+
+func emailRequestKey(cfg Config, validity string, uid int) string {
+	identity := fmt.Sprintf("%s\x00%s\x00INBOX\x00%s\x00%d", cfg.MailIMAPHost, cfg.MailUser, validity, uid)
+	return fmt.Sprintf("mail:%x", sha256.Sum256([]byte(identity)))
 }
 
 // CheckEmailCredentials verifies both mailbox login and SMTP authentication

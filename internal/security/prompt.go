@@ -36,13 +36,16 @@ var logEmail = regexp.MustCompile(`(?i)[a-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@(
 var logPhone = regexp.MustCompile(`(?:\+?\d[\d ()-]{8,}\d)`)
 var logSecretQuery = regexp.MustCompile(`(?i)([?&](?:key|api_key|token|access_token)=)[^&\s"']+`)
 
+var logTelegramCredential = regexp.MustCompile(`(?i)(https?://api[.]telegram[.]org/bot)[^/\s"']+`)
+
 // SafeLogError preserves technical diagnostics while removing common personal
 // identifiers and credentials that may be echoed by a remote service.
 func SafeLogError(err error) string {
 	if err == nil {
 		return "unknown error"
 	}
-	message := credentialPattern.ReplaceAllString(err.Error(), "[REDACTED]")
+	message := logTelegramCredential.ReplaceAllString(err.Error(), "${1}[REDACTED]")
+	message = credentialPattern.ReplaceAllString(message, "[REDACTED]")
 	message = logSecretQuery.ReplaceAllString(message, "$1[REDACTED]")
 	message = logEmail.ReplaceAllString(message, "***@$1")
 	message = logPhone.ReplaceAllString(message, "[REDACTED]")

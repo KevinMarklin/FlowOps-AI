@@ -12,6 +12,12 @@ import (
 )
 
 type statsResponse struct {
+	OperatorActiveSeconds   float64 `json:"operator_active_seconds"`
+	OperatorMeasuredTickets int     `json:"operator_measured_tickets"`
+	OperatorAverageSeconds  float64 `json:"operator_average_seconds"`
+	RoutingCorrectedTickets int     `json:"routing_corrected_tickets"`
+	RoutingCorrections      int     `json:"routing_corrections"`
+
 	Total                int            `json:"total"`
 	AutoResolved         int            `json:"auto_resolved"`
 	Assigned             int            `json:"assigned_to_operator"`
@@ -62,7 +68,8 @@ func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	err = tx.QueryRow(r.Context(), `SELECT COUNT(*),
 	 COUNT(*) FILTER (WHERE status='auto_resolved' AND NULLIF(BTRIM(rag_answer),'') IS NOT NULL AND NULLIF(BTRIM(operator_reply),'') IS NULL
-	 AND NOT EXISTS(SELECT 1 FROM audit_logs a WHERE a.ticket_id=tickets.id AND a.tenant_id=tickets.tenant_id AND a.event_type='OPERATOR_REPLY' AND a.created_at>=tickets.created_at)),
+	 AND NOT EXISTS(SELECT 1 FROM audit_logs a WHERE a.ticket_id=tickets.id AND a.tenant_id=tickets.tenant_id AND a.event_type='OPERATOR_REPLY' AND a.created_at>=tickets.created_at)
+ AND NOT EXISTS(SELECT 1 FROM ticket_work_sessions w WHERE w.ticket_id=tickets.id AND w.tenant_id=tickets.tenant_id AND (w.running OR w.active_seconds>0))),
 	 COUNT(*) FILTER (WHERE status='assigned_to_operator'),
 	 COUNT(*) FILTER (WHERE status='closed'),
 	 COUNT(*) FILTER (WHERE status IN ('new','awaiting_confirmation','assigned_to_operator','resolved')),
@@ -110,6 +117,17 @@ func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	if err != nil || rowErr != nil {
 		writeError(w, 500, "failed to read channel stats")
+		return
+	}
+	if err = tx.QueryRow(r.Context(), `SELECT COALESCE(SUM(active_seconds),0),COUNT(DISTINCT ticket_id) FILTER(WHERE active_seconds>0) FROM ticket_work_sessions WHERE tenant_id=$1`, security.TenantID(r.Context())).Scan(&stats.OperatorActiveSeconds, &stats.OperatorMeasuredTickets); err != nil {
+		writeError(w, 500, "failed to load operator work stats")
+		return
+	}
+	if stats.OperatorMeasuredTickets > 0 {
+		stats.OperatorAverageSeconds = stats.OperatorActiveSeconds / float64(stats.OperatorMeasuredTickets)
+	}
+	if err = tx.QueryRow(r.Context(), `SELECT COUNT(DISTINCT a.ticket_id),COUNT(*) FROM audit_logs a JOIN tickets t ON t.id=a.ticket_id AND t.tenant_id=a.tenant_id WHERE a.tenant_id=$1 AND a.event_type='TICKET_ROUTING_CORRECTED'`, security.TenantID(r.Context())).Scan(&stats.RoutingCorrectedTickets, &stats.RoutingCorrections); err != nil {
+		writeError(w, 500, "failed to load routing corrections")
 		return
 	}
 	if err = tx.Commit(r.Context()); err != nil {

@@ -29,8 +29,9 @@ type telegramUpdate struct {
 	} `json:"callback_query"`
 }
 type telegramMessage struct {
-	Text string `json:"text"`
-	From struct {
+	MessageID int64  `json:"message_id"`
+	Text      string `json:"text"`
+	From      struct {
 		ID int64 `json:"id"`
 	} `json:"from"`
 	Chat struct {
@@ -69,24 +70,45 @@ func sendTelegramMessage(ctx context.Context, token string, chatID int64, text s
 	if len(ticketIDs) > 0 {
 		id = ticketIDs[0]
 	}
-	return sendTelegramScreen(ctx, token, chatID, employeeReplyScreen(id, text))
+	screen := employeeReplyScreen(id, text)
+	if id > 0 {
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"✅ Прочитано", fmt.Sprintf("emp:read:%d", id)}})
+	}
+	return sendTelegramScreen(ctx, token, chatID, screen)
 }
 func telegramCommand(ctx context.Context, token, method string, body any) error {
+	_, err := telegramCommandResult(ctx, token, method, body)
+	return err
+}
+
+type telegramAPIError struct {
+	code        int
+	description string
+}
+
+func (e *telegramAPIError) Error() string {
+	return fmt.Sprintf("Telegram operation failed: HTTP %d", e.code)
+}
+func telegramCommandResult(ctx context.Context, token, method string, body any) (int64, error) {
 	resp, err := telegramRequest(ctx, token, method, nil, body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	var result struct {
-		OK bool `json:"ok"`
+		OK          bool            `json:"ok"`
+		Result      json.RawMessage `json:"result"`
+		Description string          `json:"description"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return fmt.Errorf("Telegram response is invalid")
+		return 0, fmt.Errorf("Telegram response is invalid")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.OK {
-		return fmt.Errorf("Telegram operation failed: HTTP %d", resp.StatusCode)
+		return 0, &telegramAPIError{resp.StatusCode, result.Description}
 	}
-	return nil
+	var message telegramMessage
+	_ = json.Unmarshal(result.Result, &message)
+	return message.MessageID, nil
 }
 func telegramScreenBody(chatID int64, screen telegramScreen) map[string]any {
 	body := map[string]any{"chat_id": chatID, "text": FormatTelegramMarkdown(screen.Text), "parse_mode": "HTML"}
@@ -107,6 +129,8 @@ func runTelegram(ctx context.Context, tenantID, token string, builderConfig sett
 	if len(services) > 0 {
 		employeeTickets = services[0]
 	}
+	ui := newTelegramUI(token)
+	drafts := newTelegramDrafts()
 	var offset int64
 	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}
 	for ctx.Err() == nil {
@@ -162,8 +186,8 @@ func runTelegram(ctx context.Context, tenantID, token string, builderConfig sett
 							return result, err
 						}
 						err := handleTelegramEmployee(ctx, update, employeeTickets, builderConfig, loggedIngest, func(ctx context.Context, method string, body any) error {
-							return telegramCommand(ctx, token, method, body)
-						})
+							return ui.command(ctx, method, body)
+						}, drafts)
 						if ticketID > 0 {
 							LogOutgoing(logger, "bot", fmt.Sprintf("tg:%d", update.Message.Chat.ID), ticketID, "AI", err)
 						}

@@ -1,0 +1,17 @@
+[
+  {
+    "path": "/",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "path": "/app.js?v=reliability-1",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "path": "/api/tickets",
+    "status": 401,
+    "pass": true
+  }
+]

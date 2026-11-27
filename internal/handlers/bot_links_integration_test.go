@@ -86,6 +86,14 @@ func TestPersonalBotLinksOwnershipExpiryAndSharedHistory(t *testing.T) {
 	if security.LinkBotAccount(bot, db, "tg:18", code) == nil {
 		t.Fatal("one-use code reused")
 	}
+	// A newly issued code must refresh the same verified binding without unlinking.
+	fresh := issue("telegram")
+	if err := security.LinkBotAccount(bot, db, "tg:17", fresh); err != nil {
+		t.Fatalf("refresh same binding rejected: %v", err)
+	}
+	if security.LinkBotAccount(bot, db, "tg:18", fresh) == nil {
+		t.Fatal("refreshed code was not consumed")
+	}
 	resolved, err := security.BotContext(bot, db, "tg:17")
 	if err != nil || security.RequesterID(resolved) != p.ID || security.TenantID(resolved) != "link-a" {
 		t.Fatal("linked identity not resolved")
@@ -136,6 +144,38 @@ func TestPersonalBotLinksOwnershipExpiryAndSharedHistory(t *testing.T) {
 	h.List(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), fmt.Sprintf(`"id":%d`, created.TicketID)) || strings.Contains(w.Body.String(), "Private other question") {
 		t.Fatal("website history omitted linked ticket or crossed ownership")
+	}
+	// A private chat can revoke only its own binding in the source bot.
+	if err := security.UnlinkBotAccount(security.WithTenantID(ctx, "link-b"), db, "tg:17"); err != nil {
+		t.Fatal(err)
+	}
+	if err := security.UnlinkBotAccount(bot, db, "tg:18"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.BotTicket(bot, "tg:17", webID); err != nil {
+		t.Fatal("another chat/tenant unlinked owner")
+	}
+	if err := h.UnlinkBot(bot, "tg:17"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.BotTicket(bot, "tg:17", webID); err == nil {
+		t.Fatal("bot unlink retained account access")
+	}
+	selectedBot = ""
+	if err := h.Deliver(ctx, delivery.Message{Kind: "channel", TenantID: "link-a", Channel: "bot", Recipient: "tg:17", TicketID: created.TicketID, Body: "Queued private answer"}); err == nil || selectedBot != "" {
+		t.Fatal("queued answer followed revoked binding")
+	}
+
+	var preserved int
+	if db.QueryRow(ctx, `SELECT COUNT(*) FROM tickets WHERE tenant_id='link-a' AND requester_id=$1`, p.ID).Scan(&preserved) != nil || preserved < 2 {
+		t.Fatal("unlink removed saved tickets")
+	}
+	if security.UnlinkBotAccount(bot, db, "max_chat:17") == nil {
+		t.Fatal("group identity can unlink")
+	}
+	relink := issue("telegram")
+	if err := h.LinkBot(bot, "tg:17", relink); err != nil {
+		t.Fatal("reconnect after private unlink failed")
 	}
 	if _, err := db.Exec(ctx, `UPDATE workspace_members SET auth_version=auth_version+1 WHERE id=$1`, p.ID); err != nil {
 		t.Fatal(err)

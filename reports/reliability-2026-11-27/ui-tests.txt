@@ -1,0 +1,20 @@
+✔ closed and reopened settings ignore an older status response (1.5851ms)
+✔ connection action is not submitted twice while its request is pending (16.2992ms)
+✔ unsafe bot URLs are rejected and late-issued codes stay hidden (1.9652ms)
+✔ work heartbeat does not reset the operator inactivity clock (1.0278ms)
+✔ late work response cannot replace another account work state (0.7638ms)
+✔ web retries retain one key; changed requests and completed sends get new keys (1.9246ms)
+✔ widget preserves failed draft, blocks concurrent submits and retries the same key (1.9292ms)
+✔ widget retains text typed while an earlier question is being submitted (1.1722ms)
+✔ accepted ticket is not reported as failed when history refresh fails (1.0205ms)
+✔ polling never silently adopts an administrator from another tab (1.7201ms)
+✔ activation and reload reject a cookie belonging to a different member (1.3851ms)
+✔ API binds the tab to its member and stops on a shared-cookie conflict (1.9822ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 127.3537

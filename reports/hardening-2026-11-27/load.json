@@ -1,0 +1,22 @@
+{
+  "workers": 32,
+  "requests": 1200,
+  "elapsed_seconds": 0.8,
+  "operations": {
+    "read": {
+      "requests": 960,
+      "unexpected_statuses": 0,
+      "median_ms": 17.25,
+      "p95_ms": 30.4,
+      "max_ms": 52.6
+    },
+    "write": {
+      "requests": 240,
+      "unexpected_statuses": 0,
+      "median_ms": 26.98,
+      "p95_ms": 44.16,
+      "max_ms": 54.47
+    }
+  },
+  "unique_ticket_ids": true
+}

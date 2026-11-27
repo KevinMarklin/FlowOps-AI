@@ -183,7 +183,16 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, security.BotLinkSchema); err != nil {
 		return fmt.Errorf("apply bot link migration: %w", err)
 	}
-	return nil
+	if _, err := pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS tickets_tenant_cursor ON tickets(tenant_id,id DESC); CREATE INDEX IF NOT EXISTS tickets_requester_cursor ON tickets(tenant_id,requester_id,id DESC);`); err != nil {
+		return fmt.Errorf("create ticket pagination indexes: %w", err)
+	}
+	if _, err := pool.Exec(ctx, WorkSchema); err != nil {
+		return fmt.Errorf("apply operator work migration: %w", err)
+	}
+	if _, err := pool.Exec(ctx, IdempotencySchema); err != nil {
+		return fmt.Errorf("apply request idempotency migration: %w", err)
+	}
+	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 
 // SyncDefaultWorkspace makes the configured legacy operator token an ordinary

@@ -34,7 +34,7 @@ func (f *employeeServiceFake) LinkBot(ctx context.Context, sender, code string) 
 
 func TestBotLinkCodesNeverBecomeTicketsOrReachAI(t *testing.T) {
 	code := "link_" + strings.Repeat("x", 43)
-	for _, text := range []string{"/link " + code, code, "мой код " + code, "/link"} {
+	for _, text := range []string{"/link " + code, "/start " + code, code, "мой код " + code, "/link"} {
 		service := &employeeServiceFake{}
 		update := decodeTelegramUpdate(t, fmt.Sprintf(`{"message":{"text":%q,"from":{"id":17},"chat":{"id":17,"type":"private"}}}`, text))
 		err := handleTelegramEmployee(security.WithTenantID(context.Background(), "default"), update, service, nil, func(context.Context, models.IngestRequest) (IngestResult, error) {
@@ -50,7 +50,7 @@ func TestBotLinkCodesNeverBecomeTicketsOrReachAI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (text == code || text == "/link "+code) && (service.linkCalls != 1 || service.sender != "tg:17") {
+		if (text == code || text == "/link "+code || text == "/start "+code) && (service.linkCalls != 1 || service.sender != "tg:17") {
 			t.Fatal("verified private sender not linked")
 		}
 	}
@@ -149,6 +149,8 @@ func TestTelegramCallbacksUseVerifiedPrivateSenderAndAcknowledgeFirst(t *testing
 
 func TestTelegramTextCreatesConfirmedTicketAndActionButtons(t *testing.T) {
 	update := decodeTelegramUpdate(t, `{"message":{"text":"Не работает VPN","from":{"id":17},"chat":{"id":17,"type":"private"}}}`)
+	drafts := newTelegramDrafts()
+	drafts.open(17)
 	var sent map[string]any
 	err := handleTelegramEmployee(context.Background(), update, nil, nil, func(_ context.Context, r models.IngestRequest) (IngestResult, error) {
 		if r.Sender != "tg:17" || r.Channel != "bot" || !r.RequireConfirmation || r.Message != "Не работает VPN" {
@@ -160,7 +162,7 @@ func TestTelegramTextCreatesConfirmedTicketAndActionButtons(t *testing.T) {
 			sent = body.(map[string]any)
 		}
 		return nil
-	})
+	}, drafts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +172,7 @@ func TestTelegramTextCreatesConfirmedTicketAndActionButtons(t *testing.T) {
 			t.Fatalf("missing %s", action)
 		}
 	}
+	drafts.open(17)
 	// Failure sends a recovery message instead of claiming a ticket was created.
 	err = handleTelegramEmployee(context.Background(), update, nil, nil, func(context.Context, models.IngestRequest) (IngestResult, error) {
 		return IngestResult{}, errors.New("DB unavailable")
@@ -178,7 +181,7 @@ func TestTelegramTextCreatesConfirmedTicketAndActionButtons(t *testing.T) {
 			sent = body.(map[string]any)
 		}
 		return nil
-	})
+	}, drafts)
 	if err != nil || !strings.Contains(sent["text"].(string), "Не удалось") {
 		t.Fatal("missing retry guidance")
 	}
@@ -271,7 +274,7 @@ func TestTelegramReplyUsesRealClientAndRejectsAPIFailure(t *testing.T) {
 		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.ChatID != 17 || payload.Mode != "HTML" || len(payload.Markup.Buttons) != 2 || payload.Markup.Buttons[0][0].Data != "emp:ticket:42" {
+		if payload.ChatID != 17 || payload.Mode != "HTML" || len(payload.Markup.Buttons) != 3 || payload.Markup.Buttons[0][0].Data != "emp:ticket:42" {
 			t.Fatal("employee keyboard not sent through Telegram transport")
 		}
 		if strings.Contains(payload.Text, "<script>") {

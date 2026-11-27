@@ -317,6 +317,9 @@ func (h *IntegrationsHandler) ChannelSettings(w http.ResponseWriter, r *http.Req
 			_ = h.db.QueryRow(r.Context(), `SELECT channel_metadata FROM app_settings WHERE tenant_id=$1 AND id=TRUE`, security.TenantID(r.Context())).Scan(&metadataRaw)
 			_ = json.Unmarshal(metadataRaw, &metadata)
 		}
+		for _, channel := range metadata {
+			channel["last_error"] = security.SafeChannelError(channel["last_error"])
+		}
 		writeJSON(w, 200, map[string]any{"configured": configured, "channels": metadata})
 		return
 	}

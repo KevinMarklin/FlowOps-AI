@@ -158,20 +158,38 @@ func (h *WorkspaceHandler) Me(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": tenant, "name": name, "is_empty": tickets == 0 && kb == 0, "user": currentUser(r.Context())})
 }
 
-func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
+// Registration is public: expire old entries and cap distinct IPs so spoofed or
+// distributed traffic cannot grow the limiter forever.
+func (h *WorkspaceHandler) allowRegistration(ip string, now time.Time) bool {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	for key, window := range h.windows {
+		if now.Sub(window.started) >= time.Minute {
+			delete(h.windows, key)
+		}
+	}
+	window, exists := h.windows[ip]
+	if !exists {
+		if len(h.windows) >= 10000 {
+			return false
+		}
+		window = workspaceRateWindow{started: now}
+	}
+	if window.count >= 10 {
+		return false
+	}
+	window.count++
+	h.windows[ip] = window
+	return true
+}
+
+func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ip := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		ip = host
 	}
-	window := h.windows[ip]
-	if time.Since(window.started) >= time.Minute {
-		window = workspaceRateWindow{started: time.Now()}
-	}
-	window.count++
-	h.windows[ip] = window
-	h.mu.Unlock()
-	if window.count > 10 {
+	if !h.allowRegistration(ip, time.Now()) {
+		w.Header().Set("Retry-After", "60")
 		http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 		return
 	}

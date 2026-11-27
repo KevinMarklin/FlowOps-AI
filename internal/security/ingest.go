@@ -67,7 +67,7 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
 			w.Header().Set("Vary", "Origin")
 			if r.Header.Get("Origin") != "" {
 				var allowed bool
@@ -154,7 +154,7 @@ func ProtectIngestWithKeys(next http.Handler, token string, db *pgxpool.Pool) ht
 					widgetKey = true
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-					w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+					w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
 					w.Header().Set("Vary", "Origin")
 					body, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 					if readErr != nil {

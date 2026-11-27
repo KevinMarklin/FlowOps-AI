@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"flowops-ai/internal/models"
+	"flowops-ai/internal/security"
 )
 
 var ErrBotFeedbackClosed = errors.New("bot ticket no longer accepts feedback")
@@ -22,6 +23,10 @@ type BotAccountLinker interface {
 	LinkBot(context.Context, string, string) error
 }
 
+type BotAccountUnlinker interface {
+	UnlinkBot(context.Context, string) error
+}
+
 func botLinkCommand(ctx context.Context, sender, text string, service EmployeeTickets) (string, bool) {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
@@ -32,7 +37,7 @@ func botLinkCommand(ctx context.Context, sender, text string, service EmployeeTi
 		return "", false
 	}
 	code := ""
-	if command == "/link" && len(fields) == 2 {
+	if (command == "/link" || command == "/start") && len(fields) == 2 && strings.HasPrefix(fields[1], "link_") {
 		code = fields[1]
 	} else if strings.HasPrefix(fields[0], "link_") && len(fields) == 1 {
 		code = fields[0]
@@ -45,6 +50,14 @@ func botLinkCommand(ctx context.Context, sender, text string, service EmployeeTi
 		return "Привязка доступна только в личном чате с ботом.", true
 	}
 	if err := linker.LinkBot(ctx, sender, code); err != nil {
+		switch {
+		case errors.Is(err, security.ErrBotLinkInvalidCode):
+			return "Код истёк или уже использован. Получите новый код в настройках сайта и отправьте команду целиком.", true
+		case errors.Is(err, security.ErrBotLinkWorkspace):
+			return "Этот бот относится к другой компании. Откройте бота вашей компании или обратитесь к администратору.", true
+		case errors.Is(err, security.ErrBotLinkConflict):
+			return "Telegram или аккаунт сайта уже связан с другим аккаунтом. Откройте в боте «Подключить аккаунт сайта» → «Отключить этот Telegram» либо отключите прежнюю связь в настройках сайта. Затем получите новый код. Чужая привязка автоматически не заменяется.", true
+		}
 		return "Не удалось привязать аккаунт. Код мог истечь, быть использован или аккаунт уже привязан. Проверьте подключение в настройках сайта; при необходимости отключите старую привязку и получите новый код.", true
 	}
 	return "Аккаунт привязан к сайту. Новые обращения из бота появятся в вашей истории на сайте. В Telegram через «Мои обращения» также доступны обращения аккаунта с сайта.", true

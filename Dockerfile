@@ -22,10 +22,14 @@ RUN apk add --no-cache ca-certificates tzdata openssl wget \
 
 WORKDIR /app
 
-COPY --from=builder /app/server /app/server
-COPY web/ /app/web/
-COPY knowledge_base/ /app/knowledge_base/
-COPY schema.sql /app/schema.sql
+RUN addgroup -S -g 10001 flowops && adduser -S -D -H -u 10001 -G flowops flowops \
+    && chown 10001:10001 /app
+COPY --from=builder --chown=10001:10001 /app/server /app/server
+COPY --chown=10001:10001 web/ /app/web/
+COPY --chown=10001:10001 knowledge_base/ /app/knowledge_base/
+COPY --chown=10001:10001 schema.sql /app/schema.sql
+
+USER 10001:10001
 
 EXPOSE 8080
 

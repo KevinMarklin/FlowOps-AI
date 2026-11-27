@@ -4,12 +4,21 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	ErrBotLinkInvalidCode = errors.New("invalid or expired bot link code")
+	ErrBotLinkConflict    = errors.New("bot or account already linked")
+	ErrBotLinkWorkspace   = errors.New("bot belongs to another workspace")
 )
 
 const BotLinkSchema = `
@@ -70,6 +79,26 @@ func BotContext(ctx context.Context, db *pgxpool.Pool, sender string) (context.C
 }
 
 type BotLinksHandler struct{ db *pgxpool.Pool }
+
+var telegramUsername = regexp.MustCompile(`^[A-Za-z0-9_]{5,32}$`)
+
+func (h *BotLinksHandler) telegramURL(ctx context.Context, tenant string, code string) string {
+	var username string
+	var custom bool
+	// Never send an employee to the shared bot if their company has its own bot.
+	err := h.db.QueryRow(ctx, `SELECT COALESCE(channel_metadata->'telegram'->>'bot_username',''),COALESCE(channel_config->>'telegram_token','')<>'' FROM app_settings WHERE tenant_id=$1 AND id=TRUE`, tenant).Scan(&username, &custom)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return ""
+	}
+	if username == "" && !custom {
+		username = strings.TrimSpace(os.Getenv("FLOWOPS_TELEGRAM_BOT_USERNAME"))
+	}
+	username = strings.TrimPrefix(username, "@")
+	if !telegramUsername.MatchString(username) {
+		return ""
+	}
+	return "https://t.me/" + username + "?start=" + url.QueryEscape(code)
+}
 
 func NewBotLinksHandler(db *pgxpool.Pool) *BotLinksHandler { return &BotLinksHandler{db: db} }
 
@@ -156,13 +185,17 @@ func (h *BotLinksHandler) Change(w http.ResponseWriter, r *http.Request) {
 		ingestError(w, 503, "Не удалось создать код")
 		return
 	}
-	roleJSON(w, 201, map[string]any{"code": code, "command": "/link " + code, "expires_at": expires})
+	response := map[string]any{"code": code, "command": "/link " + code, "expires_at": expires}
+	if channel == "telegram" {
+		response["open_url"] = h.telegramURL(r.Context(), p.TenantID, code)
+	}
+	roleJSON(w, 201, response)
 }
 
 func LinkBotAccount(ctx context.Context, db *pgxpool.Pool, sender, code string) error {
 	channel := BotSenderChannel(sender)
 	if channel == "" || len(code) != 48 || !strings.HasPrefix(code, "link_") {
-		return errors.New("invalid bot link code")
+		return ErrBotLinkInvalidCode
 	}
 	tx, err := db.Begin(ctx)
 	if err != nil {
@@ -175,16 +208,21 @@ func LinkBotAccount(ctx context.Context, db *pgxpool.Pool, sender, code string) 
 	// Lock the member before consuming the code; issuance, unlink and reset all
 	// serialize on this identity. A code is only valid for one channel/version.
 	if tx.QueryRow(ctx, `SELECT m.id,m.tenant_id,m.role,m.auth_version,m.is_active FROM bot_link_codes c JOIN workspace_members m ON m.id=c.member_id WHERE c.token_hash=$1 AND c.channel=$2 AND c.expires_at>NOW() AND c.auth_version=m.auth_version FOR UPDATE OF m`, digest(code), channel).Scan(&memberID, &tenant, &role, &version, &active) != nil {
-		return errors.New("invalid bot link code")
+		return ErrBotLinkInvalidCode
 	}
 	botTenant := TenantID(ctx)
 	if !active || role != "employee" || (botTenant != "default" && botTenant != tenant) {
-		return errors.New("bot link not allowed")
+		return ErrBotLinkWorkspace
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO member_bot_links(bot_tenant_id,sender,channel,member_id,auth_version) VALUES($1,$2,$3,$4,$5)`, botTenant, sender, channel, memberID, version); err != nil {
-		return errors.New("bot or account already linked")
+	// A fresh authenticated code may refresh this exact binding, including a
+	// revoked auth_version. It must never replace a different member or sender.
+	tag, err := tx.Exec(ctx, `INSERT INTO member_bot_links(bot_tenant_id,sender,channel,member_id,auth_version) VALUES($1,$2,$3,$4,$5)
+ ON CONFLICT(bot_tenant_id,sender) DO UPDATE SET auth_version=EXCLUDED.auth_version
+ WHERE member_bot_links.member_id=EXCLUDED.member_id AND member_bot_links.channel=EXCLUDED.channel`, botTenant, sender, channel, memberID, version)
+	if err != nil || tag.RowsAffected() != 1 {
+		return ErrBotLinkConflict
 	}
-	tag, err := tx.Exec(ctx, `DELETE FROM bot_link_codes WHERE token_hash=$1 AND expires_at>NOW()`, digest(code))
+	tag, err = tx.Exec(ctx, `DELETE FROM bot_link_codes WHERE token_hash=$1 AND expires_at>NOW()`, digest(code))
 	if err != nil || tag.RowsAffected() != 1 {
 		return errors.New("bot link code already used")
 	}
@@ -193,6 +231,37 @@ func LinkBotAccount(ctx context.Context, db *pgxpool.Pool, sender, code string) 
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,details) VALUES($1,'BOT_ACCOUNT_LINKED',$2,$3)`, tenant, memberID, "channel="+channel); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// A verified private chat may revoke its own binding, but cannot choose another
+// sender or member. Existing tickets remain owned by their website account.
+func UnlinkBotAccount(ctx context.Context, db *pgxpool.Pool, sender string) error {
+	if BotSenderChannel(sender) == "" {
+		return errors.New("private bot identity required")
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var member, tenant string
+	err = tx.QueryRow(ctx, `SELECT m.id,m.tenant_id FROM member_bot_links l JOIN workspace_members m ON m.id=l.member_id WHERE l.bot_tenant_id=$1 AND l.sender=$2 FOR UPDATE OF m,l`, TenantID(ctx), sender).Scan(&member, &tenant)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM member_bot_links WHERE bot_tenant_id=$1 AND sender=$2 AND member_id=$3`, TenantID(ctx), sender, member); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM bot_link_codes WHERE member_id=$1 AND channel=$2`, member, BotSenderChannel(sender)); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,details) VALUES($1,'BOT_ACCOUNT_UNLINKED',$2,$3)`, tenant, member, "channel="+BotSenderChannel(sender)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -1,5 +1,12 @@
 .git
 .env
+.env.*
+!.env.example
+tmp
+reports
+.codex
+.agents
+*.patch
 *.exe
 *.out
 *.err

@@ -113,7 +113,7 @@ func main() {
 	defer stopChannels()
 	go delivery.New(pool, ticketsHandler.Deliver).Run(channelContext, logger)
 	channelStatusUpdate := func(tenant, channel, status, lastError string) {
-		entry := map[string]string{"status": status, "last_error": lastError}
+		entry := map[string]string{"status": status, "last_error": security.SafeChannelError(lastError)}
 		_, _ = pool.Exec(context.Background(), `UPDATE app_settings SET channel_metadata=jsonb_set(channel_metadata,ARRAY[$1],COALESCE(channel_metadata->$1,'{}'::jsonb)||$2::jsonb,TRUE) WHERE tenant_id=$3 AND id=TRUE`, channel, mustJSON(entry), tenant)
 	}
 	channelManager := channels.NewManager(channelContext, ticketsHandler.IngestMessage, logger, channelStatusUpdate).WithEmployeeTickets(ticketsHandler)
@@ -228,6 +228,7 @@ func main() {
 	mux.Handle("GET /", noStoreFileServer(http.Dir("web")))
 	mux.Handle("POST /api/tickets/{id}/feedback", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Feedback), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
 	mux.HandleFunc("POST /api/tickets/{id}/reply", ticketsHandler.Reply)
+	mux.HandleFunc("POST /api/tickets/{id}/work", ticketsHandler.Work)
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)
 	mux.HandleFunc("DELETE /api/tickets/reset", ticketsHandler.Reset)
 	mux.HandleFunc("GET /api/stats", ticketsHandler.Stats)
@@ -242,7 +243,7 @@ func main() {
 		Handler:           loggingMiddleware(logger, security.ProtectOperatorTenants(mux, pool)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 

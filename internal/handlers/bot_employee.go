@@ -102,3 +102,7 @@ func (h *TicketsHandler) BotFeedback(ctx context.Context, sender string, id int,
 func (h *TicketsHandler) LinkBot(ctx context.Context, sender, code string) error {
 	return security.LinkBotAccount(ctx, h.db, sender, code)
 }
+
+func (h *TicketsHandler) UnlinkBot(ctx context.Context, sender string) error {
+	return security.UnlinkBotAccount(ctx, h.db, sender)
+}
