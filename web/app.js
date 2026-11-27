@@ -1004,7 +1004,7 @@
 
   function bindTicketControls(card) {
     const id = card.dataset.id;
-    const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.textContent='Открыть переписку';
+    const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.dataset.openDialogue='';dialogueButton.textContent='Открыть переписку';
     dialogueButton.addEventListener('click',()=>window.FlowOpsSupportUI?.openOperator(id));$('.ticket-controls',card)?.prepend(dialogueButton);
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
     const draft = state.replyDrafts.get(id);

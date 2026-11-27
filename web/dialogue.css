@@ -1,6 +1,9 @@
 .ticket-dialogue{padding:24px;min-width:0;scroll-margin-top:24px}
 .ticket-dialogue[hidden],.ticket-dialogue [hidden]{display:none!important}
 .dialogue-header{display:flex;align-items:start;justify-content:space-between;gap:16px;margin-bottom:22px}
+.dialogue-header>div{flex:1;min-width:0}
+#operator-dialogue .dialogue-header{flex-wrap:wrap}
+.dialogue-header [data-dialogue-collapse]{white-space:nowrap}
 .dialogue-header h2{margin:0 0 8px;font-size:21px}
 .dialogue-header p{margin:0;font-size:13px;line-height:1.6;max-width:65ch}
 .dialogue-messages{display:flex;flex-direction:column;gap:20px;margin:22px 0;max-height:680px;overflow-y:auto;overscroll-behavior:contain;padding:4px;scrollbar-color:#7597a6 transparent}

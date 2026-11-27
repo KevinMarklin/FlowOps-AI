@@ -24,6 +24,16 @@
     else document.getElementById('analysis-result').after(root);
     const view = {root,operator,id:0,loading:false,sending:false,messages:new Map(),drafts:new Map(),pending:new Map(),version:0};
     views.set(name,view);
+    if(operator){
+      const close=document.createElement('button');close.type='button';close.className='secondary-button';close.dataset.dialogueCollapse='';close.textContent='Свернуть переписку';
+      close.addEventListener('click',()=>{
+        root.hidden=true;
+        const card=document.querySelector(`#ticket-list .ticket-card[data-id="${view.id}"]`);
+        card?.scrollIntoView({behavior:'auto',block:'start'});
+        card?.querySelector('[data-open-dialogue]')?.focus({preventScroll:true});
+      });
+      root.querySelector('.dialogue-header').append(close);
+    }
     root.querySelector('[data-dialogue-refresh]').addEventListener('click',()=>load(view));
     root.querySelector('[data-dialogue-older]').addEventListener('click',()=>load(view,true));
     root.querySelector('[data-dialogue-form]').addEventListener('submit',event=>{event.preventDefault();send(view);});
@@ -43,7 +53,7 @@
     if (!api()?.identity()) return;
     const root=mount(operator), view=views.get(root.id); id=Number(id);
     if(view.id!==id){
-      if(view.id)view.drafts.set(view.id,root.querySelector('textarea').value);
+      if(view.id)view.drafts.set(view.id,root.querySelector('[data-dialogue-form] textarea').value);
       view.id=id;view.version++;view.messages.clear();view.loading=false;view.sending=false;
       root.querySelector('[data-dialogue-form] button').disabled=false;
       root.querySelectorAll('[data-dialogue-decision]').forEach(button=>button.disabled=false);
