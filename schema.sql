@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS member_bot_links (
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS bot_tenant_id TEXT NOT NULL DEFAULT '';
 
 -- Keyset pagination for operator queues and personal request history.
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS organization_type TEXT NOT NULL DEFAULT 'other';
 CREATE INDEX IF NOT EXISTS tickets_tenant_cursor ON tickets(tenant_id,id DESC);
 CREATE INDEX IF NOT EXISTS tickets_requester_cursor ON tickets(tenant_id,requester_id,id DESC);
 

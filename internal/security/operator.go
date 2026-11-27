@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flowops-ai/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"net"
 	"net/http"
@@ -137,13 +138,26 @@ func NewWorkspaceHandler(db *pgxpool.Pool) *WorkspaceHandler {
 
 func (h *WorkspaceHandler) Me(w http.ResponseWriter, r *http.Request) {
 	tenant := TenantID(r.Context())
-	var name string
-	if err := h.db.QueryRow(r.Context(), `SELECT name FROM workspaces WHERE tenant_id=$1`, tenant).Scan(&name); err != nil {
+	var name, organizationType string
+	if err := h.db.QueryRow(r.Context(), `SELECT name,organization_type FROM workspaces WHERE tenant_id=$1`, tenant).Scan(&name, &organizationType); err != nil {
 		http.Error(w, `{"error":"workspace not found"}`, http.StatusUnauthorized)
 		return
 	}
+	organization, _ := settings.Organization(organizationType)
+	config, err := settings.LoadBuilderConfig(r.Context(), func(ctx context.Context) ([]byte, error) {
+		var raw []byte
+		err := h.db.QueryRow(ctx, `SELECT builder_config FROM app_settings WHERE tenant_id=$1 AND id=TRUE`, tenant).Scan(&raw)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return raw, err
+	})
+	if err != nil {
+		ingestError(w, 500, "Не удалось загрузить настройки организации")
+		return
+	}
 	if p, ok := CurrentPrincipal(r.Context()); ok && p.Role != "admin" {
-		roleJSON(w, 200, map[string]any{"tenant_id": tenant, "name": name, "user": p})
+		roleJSON(w, 200, map[string]any{"tenant_id": tenant, "name": name, "organization": organization, "departments": config.Departments, "user": p})
 		return
 	}
 	var tickets, kb int
@@ -155,7 +169,7 @@ func (h *WorkspaceHandler) Me(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": tenant, "name": name, "is_empty": tickets == 0 && kb == 0, "user": currentUser(r.Context())})
+	_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": tenant, "name": name, "organization": organization, "departments": config.Departments, "is_empty": tickets == 0 && kb == 0, "user": currentUser(r.Context())})
 }
 
 // Registration is public: expire old entries and cap distinct IPs so spoofed or
@@ -194,12 +208,18 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name string `json:"name"`
+		Name             string `json:"name"`
+		OrganizationType string `json:"organization_type"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Name) == "" || len([]rune(input.Name)) > 120 {
 		http.Error(w, `{"error":"valid workspace name is required"}`, http.StatusBadRequest)
+		return
+	}
+	organization, valid := settings.Organization(input.OrganizationType)
+	if !valid {
+		ingestError(w, 400, "Выберите допустимый тип организации")
 		return
 	}
 	secret := make([]byte, 32)
@@ -221,27 +241,45 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES($1,$2,$3,$4)`, tenant, strings.TrimSpace(input.Name), token[:11], hex.EncodeToString(hash[:]))
+	_, err = tx.Exec(r.Context(), `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash,organization_type) VALUES($1,$2,$3,$4,$5)`, tenant, strings.TrimSpace(input.Name), token[:11], hex.EncodeToString(hash[:]), organization.Type)
 	if err != nil {
 		http.Error(w, `{"error":"workspace creation failed"}`, 500)
 		return
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO app_settings(tenant_id,id) VALUES($1,TRUE) ON CONFLICT (tenant_id,id) DO NOTHING`, tenant); err != nil {
+	config, err := json.Marshal(organization.Builder)
+	if err != nil {
+		ingestError(w, 500, "Не удалось подготовить шаблон")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO app_settings(tenant_id,id,builder_config,widget_greeting) VALUES($1,TRUE,$2,$3)`, tenant, config, organization.Builder.StartTemplate); err != nil {
 		http.Error(w, `{"error":"workspace initialization failed"}`, 500)
 		return
 	}
-	if err = os.MkdirAll(filepath.Join("knowledge_base", tenant), 0700); err != nil {
+	if err = os.MkdirAll("knowledge_base", 0700); err != nil {
+		ingestError(w, 500, "Не удалось подготовить базу знаний")
+		return
+	}
+	directory := filepath.Join("knowledge_base", tenant)
+	if err = organization.Seed(directory); err != nil {
 		http.Error(w, `{"error":"workspace initialization failed"}`, 500)
 		return
 	}
+	// Seed refuses existing paths and cleans up its own partial writes.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.RemoveAll(directory)
+		}
+	}()
 	if err = tx.Commit(r.Context()); err != nil {
 		ingestError(w, 500, "Не удалось сохранить компанию")
 		return
 	}
+	committed = true
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]string{"tenant_id": tenant, "name": strings.TrimSpace(input.Name), "token": token})
+	_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": tenant, "name": strings.TrimSpace(input.Name), "token": token, "organization": organization, "starter_documents": len(organization.Documents)})
 }
 
 var randRead = func(b []byte) (int, error) { return rand.Read(b) }

@@ -645,7 +645,7 @@ func validStatus(value string) bool {
 	return hasValue(value, "new", "awaiting_confirmation", "assigned_to_operator", "auto_resolved", "resolved", "closed")
 }
 func validDepartment(value string) bool {
-	return hasValue(knowledge.NormalizeDepartment(value), "IT", "Billing", "HR", "Accounting", "Facilities", "General")
+	return hasValue(knowledge.NormalizeDepartment(value), "IT", "Billing", "HR", "Accounting", "Facilities", "Academic", "Production", "Supply", "Security", "General")
 }
 func validPriority(value string) bool { return hasValue(value, "low", "medium", "high") }
 func hasValue(value string, values ...string) bool {

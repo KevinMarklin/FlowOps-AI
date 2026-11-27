@@ -537,6 +537,14 @@ func NormalizeDepartment(value string) string {
 		return "Accounting"
 	case "facilities", "ахо и офис", "ахо":
 		return "Facilities"
+	case "academic", "учебный отдел":
+		return "Academic"
+	case "production", "производство":
+		return "Production"
+	case "supply", "поставки":
+		return "Supply"
+	case "security", "информационная безопасность":
+		return "Security"
 	case "general", "общее", "общее / без отдела", "не назначен", "unassigned", "":
 		return "General"
 	default:

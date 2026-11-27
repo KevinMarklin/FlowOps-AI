@@ -403,12 +403,36 @@ func (a *Analyzer) analyzeHeuristicallyForBuilder(rawText string, config setting
 		result.Department = "General"
 		return result
 	}
+	// Organization-specific departments can be more precise than the legacy
+	// classifier (for example, an education certificate is not an HR request).
+	text := strings.ToLower(rawText)
+	legacyScore := 0
+	for _, department := range config.Departments {
+		switch department.Name {
+		case "IT", "Billing", "HR", "Accounting", "Facilities":
+			if score := departmentTextScore(text, department.Name+" "+department.Description); score > legacyScore {
+				legacyScore = score
+			}
+		}
+	}
+	bestSpecialized, specializedScore := "", legacyScore
+	for _, department := range config.Departments {
+		switch department.Name {
+		case "Academic", "Production", "Supply", "Security":
+			if score := departmentTextScore(text, department.Description); score > specializedScore {
+				bestSpecialized, specializedScore = department.Name, score
+			}
+		}
+	}
+	if bestSpecialized != "" {
+		result.Department = bestSpecialized
+		return result
+	}
 	for _, department := range config.Departments {
 		if result.Department == department.Name {
 			return result
 		}
 	}
-	text := strings.ToLower(rawText)
 	best, bestScore := "", 0
 	for _, department := range config.Departments {
 		score := departmentTextScore(text, department.Name+" "+department.Description)

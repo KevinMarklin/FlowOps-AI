@@ -11,7 +11,8 @@
   <link rel="stylesheet" href="/workspace.css?v=7">
   <link rel="stylesheet" href="/workflow.css?v=4">
   <link rel="stylesheet" href="/user-settings.css?v=pilot-1">
-  <link rel="stylesheet" href="/university.css?v=1">
+  <link rel="stylesheet" href="/university.css?v=2">
+  <link rel="stylesheet" href="/service-flow.css?v=1">
   <link rel="icon" type="image/png" href="/assets/flowops-mark.png">
 </head>
 <body class="auth-required">
@@ -30,7 +31,7 @@
         <button class="auth-submit" type="submit">Войти</button>
       </form>
       <details id="registration-details" class="auth-registration"><summary>Зарегистрировать компанию</summary>
-      <form id="workspace-form"><label for="workspace-name">Название новой компании</label><input id="workspace-name" required maxlength="120" placeholder="Например, ООО Ромашка"><button id="workspace-submit" type="submit" class="workspace-create">Создать компанию</button></form>
+      <form id="workspace-form"><label for="workspace-name">Название организации</label><input id="workspace-name" required maxlength="120" placeholder="Например, Колледж № 12"><label for="workspace-type">Тип организации</label><select id="workspace-type" required aria-describedby="workspace-template-note"><option value="education">Учебное заведение</option><option value="bakery">Пекарня</option><option value="bank">Банк</option><option value="other">Другая организация</option></select><p id="workspace-template-note" class="field-help">Создадим отделы и стартовые памятки для выбранной сферы. Адаптируйте их под свои правила в базе знаний.</p><button id="workspace-submit" type="submit" class="workspace-create">Создать организацию</button></form>
       <div id="workspace-result" class="workspace-result" hidden></div>
       </details>
       <details id="activation-details" class="activation-details"><summary id="activation-summary">Восстановить пароль</summary>
@@ -72,31 +73,33 @@
     </nav>
 
     <section id="employee" class="view active">
-      <div class="page-heading"><div><h1>Помощь в работе и учёбе</h1><p class="lede">Опишите, что случилось. Подготовим обращение и сохраним все уточнения для специалиста.</p></div></div>
+      <div class="page-heading"><div><h1 id="service-heading">Помощь в работе</h1><p class="lede">От вопроса до решения — в одном обращении. Начните с примера или опишите ситуацию своими словами.</p></div></div>
+      <ol class="service-stages" aria-label="Этапы обращения"><li><span>1</span><div><strong>Опишите ситуацию</strong><small>Что случилось и где нужна помощь</small></div></li><li><span>2</span><div><strong>Добавьте детали</strong><small>Уточним только недостающие сведения</small></div></li><li><span>3</span><div><strong>Получите решение</strong><small>Инструкция или ответ специалиста</small></div></li></ol>
+      <section class="service-examples" aria-labelledby="service-examples-title"><div class="demo-heading"><h2 id="service-examples-title">С чем нужна помощь?</h2><small id="service-industry">Выберите близкую ситуацию</small></div><div class="demo-grid">
+      <button type="button" data-demo="Не получается войти в рабочий сервис."><b>Доступ к сервису</b><span>Не получается войти в рабочий сервис.</span></button>
+      <button type="button" data-demo="Не работает оборудование на рабочем месте."><b>Оборудование</b><span>Не работает оборудование на рабочем месте.</span></button>
+      <button type="button" data-demo="Как запросить кадровую справку?"><b>Документы и справки</b><span>Как запросить кадровую справку?</span></button>
+      </div></section>
         <div id="employee-workspace-empty" class="workspace-empty employee-empty" hidden><h3>Здесь пока нет данных. Обращения и регламенты появятся после начала работы.</h3><button type="button" data-admin-only data-open-builder>Открыть Конструктор</button></div><div class="employee-grid">
         <div class="panel request-panel">
-           <div class="panel-title"><div><h2>Новое обращение</h2></div></div>
+           <div class="panel-title"><div><h2>Опишите вашу ситуацию</h2><p class="muted">Сохраним сообщение и ответы в одном обращении.</p></div></div>
           <form id="ticket-form">
             <label for="email">Рабочая почта</label><p id="identity-hint" class="muted" hidden>Ответ появится здесь. Обращение привязано к вашей учётной записи.</p>
-            <input id="email" type="email" value="student.demo@example.org" required>
+            <input id="email" type="email" required>
             <label for="problem">Что случилось?</label>
-            <textarea id="problem" maxlength="12000" rows="5" aria-describedby="problem-hint" placeholder="Например: через 10 минут занятие, а проектор не показывает изображение." required></textarea>
+            <textarea id="problem" maxlength="12000" rows="5" aria-describedby="problem-hint" placeholder="Что не работает, где это происходит и как мешает работе?" required></textarea>
             <p id="problem-hint" class="field-help">Укажите, что не работает, какую ошибку видите и что уже пробовали.</p>
             <section id="intake-panel" class="intake-panel" aria-labelledby="intake-title" hidden>
             <div class="intake-heading"><div><h3 id="intake-title">Подготовим заявку</h3><p>Эти ответы получит специалист вместе с вашим сообщением.</p></div><span class="intake-marker">Уточнение</span></div>
             <div id="intake-fields" class="intake-fields"></div>
             <p class="field-help">Не указывайте пароли, коды доступа и документы. Если ответа нет, напишите «Не знаю».</p>
             <button id="intake-skip" type="button" class="intake-skip">Передать без оставшихся уточнений</button>
+            <button id="intake-cancel" type="button" class="secondary-button">Вернуться к описанию</button>
             </section>
             <p id="ticket-error" class="form-error" role="alert" hidden></p>
             <button class="primary-button" type="submit"><span>Продолжить</span></button>
             <p id="ticket-progress" class="field-help" role="status" hidden>Анализируем проблему и проверяем базу регламентов…</p>
           </form>
-          <div class="demo-block"><div class="demo-heading"><span>Примеры обращений</span><small>Сценарии для университета</small></div><div class="demo-grid">
-            <button type="button" data-demo="Через 10 минут занятие, проектор не показывает изображение."><b>Оборудование в аудитории</b><span>Уточним место, неисправность и влияние на занятие</span></button>
-            <button type="button" data-demo="Не получается войти в личный кабинет Финуниверситета."><b>Доступ к сервису</b><span>Выясним сервис, ошибку и выполненные проверки</span></button>
-            <button type="button" data-demo="Как получить справку об обучении в Финуниверситете?"><b>Справка об обучении</b><span>Проверим доступную инструкцию</span></button>
-          </div></div>
         </div>
         <div class="result-column"><div id="analysis-result" class="panel result-panel empty" tabindex="-1" aria-label="Результат обращения"><div class="empty-state"><h2>Что будет после отправки</h2><ol class="request-steps"><li><strong>Подготовим обращение</strong><span>Для оборудования и доступа уточним недостающие сведения.</span></li><li><strong>Проверим регламенты</strong><span>Если есть готовая инструкция, покажем её здесь.</span></li><li><strong>Сохраним контекст</strong><span>Специалист увидит проблему и все ваши ответы. Решение инструкции подтвердите вы.</span></li></ol></div></div>
            <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="Номер или текст проблемы" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div><div class="ticket-paging"><p id="history-page-note" class="muted"></p><button id="history-newest" type="button" class="secondary-button" hidden>К последним</button><button id="history-older" type="button" class="secondary-button" hidden>Более ранние</button></div></div>
@@ -185,6 +188,6 @@
     </section>
    </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=university-reliability-1"></script>
+    <script src="/app.js?v=organization-flow-1"></script>
 </body>
 </html>
