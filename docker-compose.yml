@@ -45,10 +45,13 @@ services:
       GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat}
       GIGACHAT_INSECURE_TLS: ${GIGACHAT_INSECURE_TLS:-false}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      YANDEX_API_KEY: ${YANDEX_API_KEY:-}
+      YANDEX_FOLDER_ID: ${YANDEX_FOLDER_ID:-}
+      YANDEX_MODEL: ${YANDEX_MODEL:-aliceai-llm}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_GOOGLE_BASE_URL: ${AI_GOOGLE_BASE_URL:-}
-      AI_MODEL: ${AI_MODEL:-gemini-3.8-flash}
+      AI_MODEL: ${AI_MODEL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
       MAX_API_URL: ${MAX_API_URL:-https://platform-api2.max.ru}

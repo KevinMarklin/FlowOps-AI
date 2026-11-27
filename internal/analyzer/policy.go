@@ -23,7 +23,7 @@ func providerAllowed(name string) bool {
 	for _, value := range strings.Split(os.Getenv("FLOWOPS_AI_PROVIDERS"), ",") {
 		value = strings.TrimSpace(value)
 		switch value {
-		case "gigachat", "gemini", "compatible":
+		case "yandex", "gigachat", "gemini", "compatible":
 		default:
 			return false
 		}
@@ -36,6 +36,9 @@ func providerAllowed(name string) bool {
 
 func (a *Analyzer) approvedProviders() []approvedProvider {
 	var providers []approvedProvider
+	if providerAllowed("yandex") && strings.TrimSpace(os.Getenv("YANDEX_API_KEY")) != "" {
+		providers = append(providers, approvedProvider{"Alice AI (Yandex AI Studio)", func() string { _, model, _ := yandexConfig(); return model }, a.analyzeWithYandex})
+	}
 	giga := loadGigaChatConfig()
 	if giga.authKey != "" && !giga.insecure && providerAllowed("gigachat") {
 		providers = append(providers, approvedProvider{"GigaChat (РФ контур)", func() string { return giga.model }, a.analyzeWithGigaChat})

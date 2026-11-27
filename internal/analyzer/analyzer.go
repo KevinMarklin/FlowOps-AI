@@ -453,13 +453,21 @@ func (a *Analyzer) analyzeWithAI(ctx context.Context, rawText string, builderCon
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
+	return a.analyzeWithCompatible(ctx, rawText, builderConfig, baseURL, model, os.Getenv("AI_API_KEY"), "")
+}
+
+func (a *Analyzer) analyzeWithCompatible(ctx context.Context, rawText string, builderConfig settings.BuilderConfig, baseURL, model, key, project string) (Result, error) {
 	payload := map[string]any{"model": model, "temperature": 0, "max_tokens": 512, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": classificationPolicyFor(builderConfig)}, {"role": "user", "content": classificationInput(rawText)}}}
 	body, _ := json.Marshal(payload)
 	req, err := newProviderRequest(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("AI_API_KEY"))
+	req.Header.Set("Authorization", "Bearer "+key)
+	if project != "" {
+		req.Header.Set("OpenAI-Project", project)
+		req.Header.Set("x-data-logging-enabled", "false")
+	}
 	req.Header.Set("Content-Type", "application/json")
 	started := time.Now()
 	resp, err := a.client.Do(req)
