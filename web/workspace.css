@@ -139,3 +139,17 @@ button:disabled{opacity:.55;cursor:not-allowed}
 
 .ticket-card .reply-composer[hidden]{display:none}
 .ticket-closure-reason{font-size:13px;color:var(--muted);line-height:1.6}
+
+#operator .operator-heading{margin-bottom:24px}
+#operator .queue-heading-summary{margin-top:18px}
+#operator .queue-heading-summary h2{font-size:16px;margin:0 0 6px}
+#operator .queue-heading-summary p{font-size:12px;color:var(--muted);margin:0}
+#operator .queue-filter-panel{padding:20px;background:#edf5f6;border-radius:12px;margin-bottom:24px}
+#operator .queue-filter-fields{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.3fr) minmax(0,.9fr) minmax(0,1fr);gap:12px;align-items:end}
+#operator .queue-filter-fields label{font-size:12px;font-weight:500;color:var(--muted);min-width:0}
+#operator .queue-filter-fields :is(input,select){display:block;box-sizing:border-box;width:100%;min-width:0;min-height:44px;margin:8px 0 0;border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#fff;color:var(--ink);font:inherit;font-size:13px}
+#operator .queue-filter-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-top:16px}
+[data-theme=dark] #operator .queue-filter-panel{background:#1a2c3b}
+[data-theme=dark] #operator .queue-filter-fields :is(input,select){background:#101e2a;color:#e0edf7;border-color:#638392}
+@media(max-width:1250px){#operator .queue-filter-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){#operator .queue-filter-panel{padding:16px}#operator .queue-filter-fields{grid-template-columns:minmax(0,1fr)}#operator .queue-filter-actions>button{flex:1}}
