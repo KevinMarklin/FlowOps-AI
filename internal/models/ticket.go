@@ -58,6 +58,7 @@ type FeedbackRequest struct {
 }
 
 type UpdateTicketRequest struct {
+	ClosureReason *string `json:"closure_reason"`
 	Status        *string `json:"status"`
 	Department    *string `json:"department"`
 	Priority      *string `json:"priority"`

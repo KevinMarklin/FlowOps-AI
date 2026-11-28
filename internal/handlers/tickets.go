@@ -375,6 +375,14 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	var reason string
+	if request.ClosureReason != nil {
+		reason = strings.TrimSpace(*request.ClosureReason)
+		if request.Status == nil || *request.Status != "closed" || !hasValue(reason, "solved", "duplicate", "cancelled", "no_response", "out_of_scope", "other") || request.OperatorReply != nil {
+			writeError(w, 400, "invalid closure reason")
+			return
+		}
+	}
 	fields := make([]string, 0, 3)
 	args := make([]any, 0, 5)
 	if request.Status != nil {
@@ -416,7 +424,7 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "operator reply exceeds limits or is empty")
 		return
 	}
-	if err := h.applyUpdate(r.Context(), id, query, args, request.OperatorReply); err != nil {
+	if err := h.applyUpdate(r.Context(), id, query, args, request.OperatorReply, reason); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "ticket not found")
 		} else {
@@ -457,7 +465,7 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	h.Detail(w, r)
 }
 
-func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, args []any, reply *string) error {
+func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, args []any, reply *string, closureReasons ...string) error {
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -502,6 +510,11 @@ func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, 
 	}
 	if newStatus == "closed" || newStatus == "resolved" || newStatus == "auto_resolved" {
 		if _, err = tx.Exec(ctx, `UPDATE ticket_work_sessions SET active_seconds=active_seconds+LEAST(30,GREATEST(0,EXTRACT(EPOCH FROM NOW()-last_seen_at))),running=FALSE,last_seen_at=NOW() WHERE tenant_id=$1 AND ticket_id=$2 AND running=TRUE`, security.TenantID(ctx), id); err != nil {
+			return err
+		}
+	}
+	if newStatus == "closed" && len(closureReasons) > 0 && closureReasons[0] != "" {
+		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) VALUES($1,'TICKET_CLOSED',$2,$3,$4)`, security.TenantID(ctx), security.RequesterID(ctx), id, closureReasons[0]); err != nil {
 			return err
 		}
 	}

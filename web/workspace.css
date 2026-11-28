@@ -119,3 +119,20 @@ button:disabled{opacity:.55;cursor:not-allowed}
 #ticket-detail .dialogue-header{margin-bottom:16px}
 #ticket-detail .ticket-dialogue textarea{height:128px;max-height:320px;overflow-y:auto}
 @media(max-width:600px){#ticket-detail .ticket-card{padding:18px}#ticket-detail .dialogue-message{max-width:100%}}
+
+.ticket-card .reply-composer{display:flex;flex-direction:column;align-items:stretch;gap:12px}
+.reply-composer .rag-check{order:1}
+.reply-composer [data-rag-department]{order:2}
+.reply-composer .reply-label{order:3;margin:0}
+.reply-composer :is([data-rag-title],[data-rag-ttl],[data-rag-keywords]){order:4}
+.reply-composer .reply-button{order:5;align-self:flex-start}
+.ticket-controls button.close,.close-ticket-choice button.close{color:#323940;background:#eaa5a5}
+.close-ticket-choice{padding:24px;width:min(360px,calc(100vw - 32px));box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--paper,#fff);color:var(--ink)}
+.close-ticket-choice::backdrop{background:transparent}
+.close-ticket-choice h3{margin:0 0 16px}
+.close-ticket-choice label{display:block;font-size:13px}
+.close-ticket-choice select{display:block;width:100%;margin-top:8px}
+.close-ticket-choice button{min-height:44px;padding:10px 16px;border-radius:6px}
+.closure-reason-counts>div{display:flex;justify-content:space-between;gap:20px;padding:10px 0;border-bottom:1px solid var(--line)}
+.closure-reason-counts dd{margin:0;font-variant-numeric:tabular-nums}
+[data-theme=dark] .close-ticket-choice{background:#1a2c3b;color:#e0edf7}

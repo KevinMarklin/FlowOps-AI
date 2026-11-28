@@ -78,7 +78,7 @@
     $$('#builder input, #builder textarea').forEach(field => { field.value = ''; });
     const snippet = $('#widget-snippet-box'); if (snippet) snippet.hidden = true;
     const curl = $('#crm-curl'); if (curl) curl.textContent = '';
-    ++ticketRouteVersion; leaveTicketContent();
+    ++ticketRouteVersion; leaveTicketContent(); $('#closure-reasons')?.remove();
     const toastBox = $('#toast'); if (toastBox) { toastBox.textContent = ''; toastBox.classList.remove('show'); }
     if (initialAnalysis) $('#analysis-result')?.replaceWith(initialAnalysis.cloneNode(true));
   }
@@ -121,6 +121,9 @@
     try {
       const stats = await api('/api/stats', { cache: 'no-store' });
       renderMetrics(stats);
+      let reasons = $('#closure-reasons');
+      if (!reasons) { reasons=document.createElement('section');reasons.id='closure-reasons';reasons.className='panel builder-block';$('#metrics').after(reasons); }
+      reasons.innerHTML = '<h2>Причины закрытия тикетов</h2>' + (Object.entries(stats.closure_reasons || {}).length ? '<dl class="closure-reason-counts">'+Object.entries(stats.closure_reasons).map(([reason,count])=>`<div><dt>${escapeHTML(closureReasonLabels[reason]||reason)}</dt><dd>${Number(count)||0}</dd></div>`).join('')+'</dl>' : '<p class="muted">Закрытых тикетов пока нет.</p>');
       status.textContent = `Обновлено ${new Date(stats.observed_at).toLocaleTimeString('ru-RU')} · каждые 5 с`;
       status.classList.remove('stale');
     } catch (error) {
@@ -1013,7 +1016,7 @@
       $('#ticket-detail-title').textContent = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
       if (canTab('operator')) {
         const template = document.createElement('template');
-        template.innerHTML = ticketCard(ticket);
+        template.innerHTML = ticketCard(ticket, 'detail');
         const card = template.content.querySelector('.ticket-card');
         $('#ticket-detail-content').append(card);
         bindTicketControls(card);
@@ -1055,7 +1058,8 @@
     if(dot){dot.dataset.unread=String(Boolean(unread));dot.setAttribute('aria-hidden',String(!unread));}
   }
 
-  function ticketCard(ticket) {
+  const closureReasonLabels = {solved:'Вопрос решён',duplicate:'Дубликат обращения',cancelled:'Отменено сотрудником',no_response:'Нет ответа сотрудника',out_of_scope:'Вне зоны поддержки',other:'Другая причина',unspecified:'Причина не указана'};
+  function ticketCard(ticket, scope = 'queue') {
     const departmentCodes = [...new Set([...(state.departmentCodes || ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General']), ticket.department].filter(Boolean))];
     const priorityCodes = ['high', 'medium', 'low'];
     const piiBadge =
@@ -1068,10 +1072,10 @@
       )
       .join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes
       .map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`)
-      .join('')}</select></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="operator-reply reply-composer"><label class="reply-label">Ответ сотруднику<textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..." rows="4"></textarea></label><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+      .join('')}</select></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="operator-reply reply-composer"><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
       .filter(item => item !== 'General')
       .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
-      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></div><div class="ticket-bottom"><div class="ticket-controls"><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article></details>`;
+      .join('')}</select><label class="reply-label">Ответ сотруднику<textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..." rows="4"></textarea></label><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить</button></div><div class="ticket-bottom"><div class="ticket-controls"><button type="button" class="close" data-action="close" popovertarget="close-ticket-${scope}-${ticket.id}">Закрыть тикет</button><div id="close-ticket-${scope}-${ticket.id}" class="close-ticket-choice" popover><h3>Причина закрытия</h3><label>Выберите причину<select data-close-reason><option value="">Выберите…</option>${Object.entries(closureReasonLabels).filter(([key])=>key!=='unspecified').map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}</select></label><p class="field-help">Клик снаружи или Escape отменяет выбор.</p><button type="button" class="close" data-confirm-close>Закрыть тикет</button></div></div></div></article></details>`;
   }
 
   function bindTicketControls(card) {
@@ -1107,7 +1111,14 @@
     on(card, 'input', () => { if (String(workState.id) === id) { workState.activity = Date.now(); if (!workState.running) trackWork(id, 'start'); } });
     on($('[data-reply]', card), 'focus', () => { if (!workState.running || String(workState.id) !== id) trackWork(id, 'start'); });
     renderWork();
-    on(close, 'click', event => updateTicket(id, { status: 'closed' }, event.currentTarget));
+    const choice = card.querySelector('.close-ticket-choice');
+    on(choice, 'toggle', event => { if (event.newState === 'closed') choice.querySelector('[data-close-reason]').value = ''; });
+    on(card.querySelector('[data-confirm-close]'), 'click', async event => {
+      const reason = choice.querySelector('[data-close-reason]');
+      if (!reason.value) { reason.focus(); toast('Выберите причину закрытия'); return; }
+      const saved = await updateTicket(id, {status:'closed',closure_reason:reason.value}, event.currentTarget);
+      if (saved && choice.isConnected) choice.hidePopover();
+    });
     const toggle = card.querySelector('[data-rag-toggle]');
     on(toggle, 'change', () => {
       card
@@ -1615,8 +1626,10 @@
       if (ticket) ticket.status = changes.status || ticket.status;
       await loadOperator(true);
       toast(changes.status === 'closed' ? `Тикет #${id} закрыт` : `Тикет #${id} взят в работу`);
+      return true;
     } catch (error) {
       toast(error.message);
+      return false;
     } finally {
       if (button) {
         button.classList.remove('is-loading');
@@ -1880,6 +1893,12 @@
       if (location.pathname.startsWith('/tickets/')) renderTicketRoute();
       else { leaveTicketRoute(); $(`.tab[data-tab="${canTab('operator')?'operator':'employee'}"]`)?.click(); }
     });
+
+    $$('dialog').forEach(dialog => on(dialog, 'click', event => {
+      if (event.target !== dialog) return;
+      const box = dialog.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
+    }));
 
     restoreSession();
 

@@ -12,11 +12,12 @@ import (
 )
 
 type statsResponse struct {
-	OperatorActiveSeconds   float64 `json:"operator_active_seconds"`
-	OperatorMeasuredTickets int     `json:"operator_measured_tickets"`
-	OperatorAverageSeconds  float64 `json:"operator_average_seconds"`
-	RoutingCorrectedTickets int     `json:"routing_corrected_tickets"`
-	RoutingCorrections      int     `json:"routing_corrections"`
+	ClosureReasons          map[string]int `json:"closure_reasons"`
+	OperatorActiveSeconds   float64        `json:"operator_active_seconds"`
+	OperatorMeasuredTickets int            `json:"operator_measured_tickets"`
+	OperatorAverageSeconds  float64        `json:"operator_average_seconds"`
+	RoutingCorrectedTickets int            `json:"routing_corrected_tickets"`
+	RoutingCorrections      int            `json:"routing_corrections"`
 
 	Total                int            `json:"total"`
 	AutoResolved         int            `json:"auto_resolved"`
@@ -128,6 +129,26 @@ func (h *TicketsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = tx.QueryRow(r.Context(), `SELECT COUNT(DISTINCT a.ticket_id),COUNT(*) FROM audit_logs a JOIN tickets t ON t.id=a.ticket_id AND t.tenant_id=a.tenant_id WHERE a.tenant_id=$1 AND a.event_type='TICKET_ROUTING_CORRECTED'`, security.TenantID(r.Context())).Scan(&stats.RoutingCorrectedTickets, &stats.RoutingCorrections); err != nil {
 		writeError(w, 500, "failed to load routing corrections")
+		return
+	}
+	stats.ClosureReasons = map[string]int{}
+	rows, err = tx.Query(r.Context(), `SELECT COALESCE((SELECT details FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_CLOSED' ORDER BY a.created_at DESC,a.id DESC LIMIT 1),'unspecified'),COUNT(*) FROM tickets t WHERE t.tenant_id=$1 AND t.status='closed' GROUP BY 1`, security.TenantID(r.Context()))
+	if err != nil {
+		writeError(w, 500, "failed to load closure reasons")
+		return
+	}
+	for rows.Next() {
+		var reason string
+		var count int
+		if err = rows.Scan(&reason, &count); err != nil {
+			break
+		}
+		stats.ClosureReasons[reason] = count
+	}
+	rowErr = rows.Err()
+	rows.Close()
+	if err != nil || rowErr != nil {
+		writeError(w, 500, "failed to read closure reasons")
 		return
 	}
 	if err = tx.Commit(r.Context()); err != nil {
