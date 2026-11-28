@@ -1940,7 +1940,6 @@
     }));
 
     selectSettingsPanel();
-    on(document, 'click', event => { if (!event.target.closest('#settings-nav')) $('#settings-nav').open = false; });
     on(document, 'keydown', event => { if (event.key === 'Escape' && $('#settings-nav').open) { $('#settings-nav').open = false; $('#settings-nav summary').focus(); } });
 
     restoreSession();
