@@ -752,13 +752,14 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid ticket id")
 		return
 	}
-	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
+	const query = `SELECT id, COALESCE(user_email,''), COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
+COALESCE((SELECT a.details FROM audit_logs a WHERE a.tenant_id=tickets.tenant_id AND a.ticket_id=tickets.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=tickets.created_at ORDER BY a.created_at DESC,a.id DESC LIMIT 1),'')
 FROM tickets WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.ClosureReason,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")

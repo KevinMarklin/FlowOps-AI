@@ -1066,7 +1066,7 @@
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div><div class="ticket-assignment"><select data-field="department" aria-label="Отдел">${departmentCodes
+    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}" data-closure-reason="${escapeHTML(ticket.closure_reason || '')}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div><div class="ticket-assignment"><select data-field="department" aria-label="Отдел">${departmentCodes
       .map(
         item => `<option value="${escapeHTML(item)}" ${item === ticket.department ? 'selected' : ''}>${escapeHTML(departments[item] || item)}</option>`
       )
@@ -1098,10 +1098,17 @@
     card.querySelectorAll('[data-rag-keywords], [data-rag-title], [data-rag-ttl]').forEach(field => field.hidden = !ragEnabled);
     const close = card.querySelector('[data-action="close"]');
     const status = card.dataset.status;
-    if (status === 'closed') {
+    if (status === 'closed' || status === 'auto_resolved') {
       if (close) {
         close.disabled = true;
         close.textContent = 'Закрыт';
+        close.removeAttribute('popovertarget');
+        const reason = document.createElement('span'); reason.className = 'ticket-closure-reason';
+        const ticket = state.tickets.find(item => String(item.id) === id);
+        const code = card.dataset.closureReason || ticket?.closure_reason || '';
+        reason.textContent = `Причина: ${closureReasonLabels[code] || (status === 'auto_resolved' ? 'Решено по регламенту' : 'Не указана')}`;
+        close.after(reason);
+        card.querySelector('.reply-composer').hidden = true;
       }
     }
     card.querySelectorAll('select[data-field]').forEach(select =>

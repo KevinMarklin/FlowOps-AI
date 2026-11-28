@@ -6,6 +6,7 @@ import (
 )
 
 type Ticket struct {
+	ClosureReason         string          `json:"closure_reason"`
 	UnreadEmployeeMessage bool            `json:"unread_employee_message"`
 	Messages              []TicketMessage `json:"messages,omitempty"`
 	DeliveryStatus        string          `json:"delivery_status"`

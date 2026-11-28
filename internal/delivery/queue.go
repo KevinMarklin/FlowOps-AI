@@ -108,7 +108,7 @@ func RefreshTicket(ctx context.Context, tx pgx.Tx, ticketID int) error {
 	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND (d.reply_version=t.reply_version OR d.conversation_message_id IS NOT NULL)) THEN 'sent'
 	 ELSE 'not_required' END AS result FROM tickets t WHERE t.id=$1)
 	UPDATE tickets SET delivery_status=summary.result,
-	status=CASE WHEN requester_closed THEN status WHEN status IN ('resolved','closed') THEN CASE WHEN summary.result IN ('sent','not_required') THEN 'closed' ELSE 'resolved' END ELSE status END
+	status=CASE WHEN requester_closed THEN status WHEN EXISTS(SELECT 1 FROM audit_logs a WHERE a.tenant_id=tickets.tenant_id AND a.ticket_id=tickets.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=tickets.created_at) THEN 'closed' WHEN status IN ('resolved','closed') THEN CASE WHEN summary.result IN ('sent','not_required') THEN 'closed' ELSE 'resolved' END ELSE status END
 	FROM summary WHERE tickets.id=$1`, ticketID)
 	return err
 }

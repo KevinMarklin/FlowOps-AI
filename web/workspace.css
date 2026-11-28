@@ -136,3 +136,6 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .closure-reason-counts>div{display:flex;justify-content:space-between;gap:20px;padding:10px 0;border-bottom:1px solid var(--line)}
 .closure-reason-counts dd{margin:0;font-variant-numeric:tabular-nums}
 [data-theme=dark] .close-ticket-choice{background:#1a2c3b;color:#e0edf7}
+
+.ticket-card .reply-composer[hidden]{display:none}
+.ticket-closure-reason{font-size:13px;color:var(--muted);line-height:1.6}
