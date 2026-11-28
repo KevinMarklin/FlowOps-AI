@@ -894,7 +894,7 @@
     const query = ($('#queue-search')?.value || '').trim(), epoch = state.queueEpoch, generation = sessionGeneration;
     try {
       const cursor = state.operatorBefore;
-      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}&q=${encodeURIComponent(query)}`);
+      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}&q=${encodeURIComponent(query)}&queue_status=${encodeURIComponent($('#status-filter')?.value || '')}`);
       if (cursor !== state.operatorBefore || query !== ($('#queue-search')?.value || '').trim() || epoch !== state.queueEpoch || generation !== sessionGeneration) return;
       updateTicketPaging('queue', tickets, 100, cursor);
       state.tickets = tickets;
@@ -981,7 +981,7 @@
     const tickets = state.tickets.filter(
       ticket =>
         (!department || !department.value || ticket.department === department.value) &&
-        (!status || !status.value || ticket.status === status.value) &&
+        (!status || !status.value || ticket.display_status === status.value) &&
         (!priority || ticket.priority === priority)
     );
     const count = $('#queue-count');
@@ -1048,7 +1048,7 @@
   function ticketRowSummary(ticket, indicator = false) {
     const title = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
     const status = statusLabel(ticket.status);
-    const compactStatus={new:'Новый',awaiting_confirmation:'Ждёт подтверждения',assigned_to_operator:'В работе',auto_resolved:'Закрыт',resolved:'Есть ответ',closed:'Закрыт'}[ticket.status]||status;
+    const compactStatus=({new:'Новый',in_progress:'В работе',closed:'Закрыт'}[ticket.display_status]) || {new:'Новый',awaiting_confirmation:'Ждёт подтверждения',assigned_to_operator:'В работе',auto_resolved:'Закрыт',resolved:'Есть ответ',closed:'Закрыт'}[ticket.status]||status;
     const date = new Date(ticket.created_at).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'});
     return `<span class="ticket-row-status" title="${escapeHTML(status)}">${escapeHTML(compactStatus)}</span><a class="ticket-row-title" href="/tickets/${ticket.id}" title="${escapeHTML(title)}">${escapeHTML(title)}</a><time class="ticket-row-date" datetime="${escapeHTML(ticket.created_at)}">${escapeHTML(date)}</time>${indicator?`<span class="ticket-unread-dot" data-unread="${Boolean(ticket.unread_employee_message)}" role="img" aria-label="Новое обращение или сообщение сотрудника" aria-hidden="${!ticket.unread_employee_message}"></span>`:''}`;
   }
@@ -1066,7 +1066,7 @@
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}" data-closure-reason="${escapeHTML(ticket.closure_reason || '')}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div><div class="ticket-assignment"><select data-field="department" aria-label="Отдел">${departmentCodes
+    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}" data-closure-reason="${escapeHTML(ticket.closure_reason || '')}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.requester_email || (/^(tg:|max:)/.test(ticket.user_email || '') ? 'Почта не привязана' : ticket.user_email) || 'Email не указан')}</span></div><div class="ticket-assignment"><select data-field="department" aria-label="Отдел">${departmentCodes
       .map(
         item => `<option value="${escapeHTML(item)}" ${item === ticket.department ? 'selected' : ''}>${escapeHTML(departments[item] || item)}</option>`
       )
@@ -1830,7 +1830,7 @@
     on($('#queue-newest'), 'click', () => { state.operatorBefore = 0; loadOperator(true); });
     on($('#clear-queue'), 'click', clearQueue);
     on($('#department-filter'), 'change', renderTickets);
-    on($('#status-filter'), 'change', renderTickets);
+    on($('#status-filter'), 'change', () => {state.queueEpoch++;state.operatorBefore=0;loadOperator(true);});
     on($('#priority-filter'), 'change', renderTickets);
     on($('#queue-search'), 'input', () => {state.queueEpoch++;state.operatorBefore=0;clearTimeout(state.queueSearchTimer);state.queueSearchTimer=setTimeout(()=>loadOperator(true),250);});
     on($('#history-search'), 'input', () => {state.historyBefore=0;clearTimeout(state.historySearchTimer);state.historySearchTimer=setTimeout(loadHistory,250);});

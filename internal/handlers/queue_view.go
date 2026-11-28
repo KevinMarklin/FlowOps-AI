@@ -25,3 +25,11 @@ func (h *TicketsHandler) ClearQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"hidden_count": result.RowsAffected()})
 }
+
+// UI lifecycle is separate from routing and automated-answer states.
+const ticketDisplayStatusSQL = `CASE WHEN t.status IN ('closed','auto_resolved') THEN 'closed'
+ WHEN NULLIF(BTRIM(t.operator_reply),'') IS NOT NULL
+ OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='operator')
+ OR EXISTS(SELECT 1 FROM ticket_work_sessions w WHERE w.tenant_id=t.tenant_id AND w.ticket_id=t.id)
+ THEN 'in_progress' ELSE 'new' END`
+const ticketRequesterEmailSQL = `COALESCE((SELECT NULLIF(m.email,'') FROM workspace_members m WHERE m.tenant_id=t.tenant_id AND m.id=t.requester_id),'')`

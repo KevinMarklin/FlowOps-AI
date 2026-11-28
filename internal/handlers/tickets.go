@@ -698,6 +698,11 @@ func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(strings.ReplaceAll(strings.ToLower(search), "ё", "е")) + "%"
 
+	queueStatus := r.URL.Query().Get("queue_status")
+	if queueStatus != "" && !hasValue(queueStatus, "new", "in_progress", "closed") {
+		writeError(w, 400, "invalid queue status")
+		return
+	}
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
@@ -705,13 +710,15 @@ SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE
          NOT EXISTS(SELECT 1 FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6)
          OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.id>COALESCE((SELECT r.last_message_id FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6),0))
        ))
+, ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `
 FROM tickets t WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
 AND ($8<>'' OR NOT $7 OR NOT EXISTS(SELECT 1 FROM ticket_queue_hidden h WHERE h.tenant_id=t.tenant_id AND h.ticket_id=t.id AND h.operator_id=$6 AND NOT EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.source_key<>'initial' AND m.id>h.last_employee_message_id)))
-AND ($8='' OR ($10::bigint>0 AND t.id=$10) OR ($10::bigint=0 AND (translate(concat_ws(E'\n',user_email,subject,raw_text,extracted_summary,operator_reply),'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9 OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND translate(m.body,'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9))))
+AND ($8='' OR ($10::bigint>0 AND t.id=$10) OR ($10::bigint=0 AND (translate(concat_ws(E'\n',user_email,subject,raw_text,extracted_summary,operator_reply,` + ticketRequesterEmailSQL + `),'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9 OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND translate(m.body,'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9))))
+AND ($11='' OR (` + ticketDisplayStatusSQL + `)=$11)
 ORDER BY id DESC LIMIT $5`
 
 	reader := webDialogueActor(r.Context())
-	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1, reader.id, reader.operator, search, pattern, searchID)
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1, reader.id, reader.operator, search, pattern, searchID, queueStatus)
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
@@ -725,7 +732,7 @@ ORDER BY id DESC LIMIT $5`
 		if err := rows.Scan(
 			&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 			&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes,
-			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.UnreadEmployeeMessage,
+			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.UnreadEmployeeMessage, &ticket.DisplayStatus, &ticket.RequesterEmail,
 		); err != nil {
 			h.logger.Error("failed to scan ticket")
 			writeError(w, http.StatusInternalServerError, "failed to read tickets")
@@ -754,12 +761,12 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 	const query = `SELECT id, COALESCE(user_email,''), COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
-COALESCE((SELECT a.details FROM audit_logs a WHERE a.tenant_id=tickets.tenant_id AND a.ticket_id=tickets.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=tickets.created_at ORDER BY a.created_at DESC,a.id DESC LIMIT 1),'')
-FROM tickets WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
+COALESCE((SELECT a.details FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=t.created_at ORDER BY a.created_at DESC,a.id DESC LIMIT 1),''), ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `
+FROM tickets t WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.ClosureReason,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.ClosureReason, &ticket.DisplayStatus, &ticket.RequesterEmail,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")
