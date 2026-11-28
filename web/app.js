@@ -52,17 +52,18 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'notifications', 'governance', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
-    operator: ['operator', 'notifications', 'knowledge', 'knowledge-review', 'employee'],
-    analyst: ['analytics','optimization'],
-    employee: ['employee']
+    admin: ['admin', 'workflows','workflow-tasks','assets','process-analytics','reports', 'notifications', 'governance', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
+    operator: ['operator','workflow-tasks', 'notifications', 'knowledge', 'knowledge-review', 'employee'],
+    analyst: ['analytics','optimization','process-analytics','reports','workflow-tasks'],
+    employee: ['employee','workflow-tasks']
   };
-  const canTab = name => (roleTabs[state.user?.role] || []).includes(name);
+  const canTab = name => {if(!(roleTabs[state.user?.role]||[]).includes(name))return false;const p=state.user?.permissions;if(!p)return true;const required={'workflows':['automation_manage'],'assets':['units_manage'],'workflow-tasks':['ticket_view'],'process-analytics':['analytics_view'],'reports':['analytics_view','data_export'],'analytics':['analytics_view'],'structure':['units_manage'],'knowledge':['knowledge_manage'],'knowledge-review':['knowledge_manage'],'channels':['integrations_manage']};if(name==='governance')return ['automation_manage','ai_configure','roles_manage'].some(x=>p.includes(x));return (required[name]||[]).every(x=>p.includes(x));};
 
   function clearWorkspaceData() {
 	window.FlowOpsSupportUI?.clear();
     window.FlowOpsPlatform?.clear();
  window.FlowOpsGovernance?.clear();
+ window.FlowOpsOperations?.clear();
  window.FlowOpsNotifications?.clear();
  window.FlowOpsIntakeFields?.clear();
     window.FlowOpsAnalytics?.clear();
@@ -263,6 +264,7 @@
     applyRoleUI();
     window.FlowOpsPlatform?.refreshPublic();
  window.FlowOpsIntakeFields?.refresh();
+ window.FlowOpsOperations?.restoreContext();
     const gate = $('#auth-gate');
     const label = $('#workspace-name-label');
     const userLabel = $('#user-name-label');
@@ -882,7 +884,7 @@
     try {
       if (!await previewIntake(submittedProblem.trim()) || problem.value !== submittedProblem || !isCurrentSubmission()) return;
       if (progress) progress.textContent = 'Сохраняем обращение и проверяем базу регламентов…';
-      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails,typeof window!=='undefined'?(await window.FlowOpsIntakeFields?.payload()||{}):{});
+      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails,typeof window!=='undefined'?({...await window.FlowOpsIntakeFields?.payload(),...await window.FlowOpsOperations?.intakeContext()}):{});
       if (!isCurrentSubmission()) return;
       const ticket = await api('/api/tickets', {
         method: 'POST', headers: { 'Idempotency-Key': request.key }, body: request.body
@@ -1053,6 +1055,7 @@
         window.FlowOpsCopilot?.attach(card,ticket);
       } else if (state.user?.role === 'employee') { window.FlowOpsSupportUI?.open(ticket.id); window.FlowOpsAnalytics?.attachTimeline($('#ticket-detail-content'),ticket); }
  window.FlowOpsTicketFields?.attach($('#ticket-detail-content'),ticket);
+ window.FlowOpsOperations?.attach($('#ticket-detail-content'),ticket);
     } catch (error) {
       if (version === ticketRouteVersion && generation === sessionGeneration) $('#ticket-detail-status').textContent = error.message;
     }
@@ -1819,6 +1822,7 @@
         if (tab.dataset.tab === 'knowledge') loadKnowledge();
         if (tab.dataset.tab === 'knowledge-review') window.FlowOpsKnowledge?.refresh();
         if (tab.dataset.tab === 'notifications') window.FlowOpsNotifications?.refresh();
+ if (['workflows','workflow-tasks','assets','process-analytics','reports'].includes(tab.dataset.tab)) window.FlowOpsOperations?.refresh(tab.dataset.tab);
  if (tab.dataset.tab === 'governance') window.FlowOpsGovernance?.refresh();
  if (tab.dataset.tab === 'structure') window.FlowOpsStructure?.refresh();
         if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();

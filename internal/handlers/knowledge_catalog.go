@@ -36,7 +36,7 @@ func (h *KnowledgeHandler) importLegacyCatalog(ctx context.Context, tenant strin
 		sum := sha256.Sum256([]byte("legacy\x00" + tenant + "\x00" + doc.Filename))
 		id := hex.EncodeToString(sum[:16])
 		digest := sha256.Sum256([]byte(doc.Content))
-		document := ArticleDocument{Title: doc.Title, Department: doc.Department, Keywords: doc.Keywords, Content: doc.Content, ReviewDue: doc.ExpiresAt, Sources: []KnowledgeSource{{Type: "import", ID: "legacy-file:" + doc.Filename, Digest: hex.EncodeToString(digest[:])}}}
+		document := ArticleDocument{Title: doc.Title, Department: doc.Department, Keywords: doc.Keywords, Content: doc.Content, Kind: doc.Kind, ExpiresAt: doc.ExpiresAt, ReviewDue: doc.ExpiresAt, Sources: []KnowledgeSource{{Type: "import", ID: "legacy-file:" + doc.Filename, Digest: hex.EncodeToString(digest[:])}}}
 		state := "published"
 		var published any = int64(1)
 		if doc.IncidentState == "resolved" || (doc.ExpiresAt != nil && doc.ExpiresAt.Before(time.Now())) {

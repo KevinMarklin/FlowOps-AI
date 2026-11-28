@@ -30,7 +30,7 @@ func (h *TicketsHandler) CustomFields(w http.ResponseWriter, r *http.Request) {
 	var revision int64
 	if r.Method == "GET" {
 		var snapshot, metadata []byte
-		if err := h.db.QueryRow(ctx, `SELECT COALESCE(NULLIF(form_snapshot,'{}'),(SELECT jsonb_set(definition,'{revision}',to_jsonb(f.revision)) FROM organization_ticket_forms f WHERE f.tenant_id=t.tenant_id),'{}'),jsonb_build_object('category',category,'ticket_type',ticket_type,'priority_id',custom_priority,'tags',tags,'assignee_id',assignee_id,'workflow_status',workflow_status) FROM tickets t WHERE tenant_id=$1 AND id=$2`, tenant, id).Scan(&snapshot, &metadata); err != nil {
+		if err := h.db.QueryRow(ctx, `SELECT COALESCE(NULLIF(form_snapshot,'{}'),(SELECT jsonb_set(definition,'{revision}',to_jsonb(f.revision)) FROM organization_ticket_forms f WHERE f.tenant_id=t.tenant_id),'{}'),jsonb_build_object('category',category,'ticket_type',ticket_type,'priority_id',custom_priority,'tags',tags,'assignee_id',assignee_id,'workflow_status',workflow_status,'asset',asset_snapshot) FROM tickets t WHERE tenant_id=$1 AND id=$2`, tenant, id).Scan(&snapshot, &metadata); err != nil {
 			writeError(w, 404, "Тикет не найден")
 			return
 		}

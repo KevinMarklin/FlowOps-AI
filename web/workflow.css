@@ -88,3 +88,5 @@ body[data-role="employee"] .topbar .api-status{display:none}
 .topbar #user-name-label{display:block;white-space:normal;overflow-wrap:anywhere;line-height:1.5;min-width:0}
 @media(max-width:1150px){.topbar{height:auto;min-height:80px;padding-block:14px}.topbar-right{min-width:0;flex-wrap:wrap;justify-content:flex-end;row-gap:8px}.topbar #user-name-label{max-width:220px}}
 @media(max-width:600px){.topbar{flex-wrap:wrap}.topbar-right{width:100%;justify-content:flex-start}.topbar #user-name-label{flex:1 1 120px;max-width:none}.topbar .logout-button{margin-left:auto}}
+
+body[data-role="employee"] .tabs{display:flex;position:static;width:auto;flex-direction:row;gap:8px;max-height:none;overflow-x:auto;padding:0 0 16px;margin-bottom:8px;border-right:0;border-bottom:1px solid var(--line)}body[data-role="employee"] .tabs>.tab{flex:0 0 auto;width:auto;max-width:none;min-width:160px;margin:0;padding:14px 20px}

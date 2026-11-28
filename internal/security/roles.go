@@ -102,8 +102,29 @@ func AllowRequest(role, method, path string) bool {
 	if role == "admin" {
 		return true
 	}
+	if strings.HasPrefix(path, "/api/v1/assets/") && strings.HasSuffix(path, "/context") {
+		return method == "GET"
+	}
+	if path == "/api/v1/workflow-tasks" {
+		return method == "GET"
+	}
+	if strings.HasPrefix(path, "/api/v1/workflow-tasks/") {
+		return method == "POST"
+	}
+	if path == "/api/v1/workflows" {
+		return role == "operator" && method == "GET"
+	}
+	if strings.HasPrefix(path, "/api/v1/workflow-runs/") {
+		return role == "operator" && method == "POST"
+	}
+	if strings.HasPrefix(path, "/api/analytics/reports") {
+		return role == "analyst" && (method == "GET" || method == "POST" || method == "PUT")
+	}
 	if path == "/api/analytics/dashboards" || strings.HasPrefix(path, "/api/analytics/dashboards/") {
 		return role == "analyst" && (method == "GET" || method == "POST" || method == "PUT" || method == "DELETE")
+	}
+	if path == "/api/v1/kb/checks" {
+		return role == "operator" && (method == "GET" || method == "POST")
 	}
 	if path == "/api/v1/kb/articles" {
 		return role == "operator" && (method == "GET" || method == "POST")
@@ -118,7 +139,7 @@ func AllowRequest(role, method, path string) bool {
 	if path == "/api/optimization" {
 		return role == "analyst" && method == "GET"
 	}
-	if path == "/api/analytics/explore" {
+	if path == "/api/analytics/explore" || path == "/api/analytics/processes" {
 		return role == "analyst" && method == http.MethodGet
 	}
 	if path == "/api/stats" {
@@ -144,6 +165,9 @@ func AllowRequest(role, method, path string) bool {
 		}
 		if len(parts) == 1 {
 			return method == http.MethodGet || (role == "operator" && method == http.MethodPatch)
+		}
+		if len(parts) == 2 && parts[1] == "workflows" {
+			return method == "GET" || role == "operator" && method == "POST"
 		}
 		if len(parts) == 2 && parts[1] == "fields" {
 			return method == "GET" || method == "PUT"

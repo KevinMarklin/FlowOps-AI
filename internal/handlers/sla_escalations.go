@@ -27,7 +27,7 @@ func (h *TicketsHandler) EvaluateSLA(ctx context.Context) error {
  ), assignments AS(
  UPDATE tickets t SET assignee_id=e.recipient_id FROM (SELECT DISTINCT ON(tenant_id,ticket_id) * FROM events ORDER BY tenant_id,ticket_id,id DESC) e
  WHERE t.tenant_id=e.tenant_id AND t.id=e.ticket_id AND e.recipient_id<>'' AND EXISTS(SELECT 1 FROM workspace_members m WHERE m.tenant_id=e.tenant_id AND m.id=e.recipient_id AND m.is_active AND m.role IN ('operator','admin') AND flowops_ticket_visible(m.tenant_id,m.id,t.department,t.requester_id,t.id)) RETURNING t.id
- ) INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) SELECT tenant_id,'SLA_ESCALATED','system',ticket_id,'level='||level_id FROM events`)
+ ), journalled AS(INSERT INTO ticket_events(tenant_id,ticket_id,event_type,payload) SELECT tenant_id,ticket_id,'sla_escalated',jsonb_build_object('level_id',level_id,'recipient_id',recipient_id) FROM events RETURNING id) INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) SELECT tenant_id,'SLA_ESCALATED','system',ticket_id,'level='||level_id FROM events`)
 	return err
 }
 func (h *TicketsHandler) SLANotifications(w http.ResponseWriter, r *http.Request) {

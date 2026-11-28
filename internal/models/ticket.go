@@ -45,6 +45,7 @@ type TicketUpload struct {
 	Content  []byte `json:"content"`
 }
 type CreateTicketRequest struct {
+	AssetID      string                  `json:"asset_id,omitempty"`
 	FormID       string                  `json:"form_id,omitempty"`
 	Attachments  map[string]TicketUpload `json:"attachments,omitempty"`
 	PriorityID   string                  `json:"priority_id,omitempty"`

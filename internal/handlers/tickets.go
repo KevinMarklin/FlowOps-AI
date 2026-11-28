@@ -26,6 +26,7 @@ import (
 )
 
 type TicketsHandler struct {
+	creationSlots       chan struct{}
 	structuredGenerator func(context.Context, string, string) (string, bool, error)
 	db                  *pgxpool.Pool
 	logger              *slog.Logger
@@ -38,6 +39,9 @@ type TicketsHandler struct {
 
 func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
 	handler := &TicketsHandler{db: db, logger: logger, analyzer: ticketAnalyzer}
+	if db != nil {
+		handler.creationSlots = make(chan struct{}, max(1, int(db.Config().MaxConns)/2))
+	}
 	if ticketAnalyzer != nil {
 		handler.structuredGenerator = ticketAnalyzer.GenerateStructured
 	}
@@ -120,6 +124,20 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	assetSnapshot, assetErr := h.resolveAsset(r, request.AssetID, gate.query)
+	if assetErr != nil {
+		writeError(w, 400, assetErr.Error())
+		return
+	}
+	if request.AssetID != "" {
+		var asset OrganizationAsset
+		_ = json.Unmarshal(assetSnapshot, &asset)
+		request.RawText += "\n\nОбъект: " + asset.Name + " (" + asset.Kind + "). " + asset.Description
+		if len(request.RawText) > security.MaxTicketBytes {
+			writeError(w, 400, "Обращение с контекстом слишком большое")
+			return
+		}
+	}
 	var formRaw []byte
 	var form TicketFormDefinition
 	formErr := gate.query.QueryRow(ctx, `SELECT definition,revision FROM organization_ticket_forms WHERE tenant_id=$1`, security.TenantID(ctx)).Scan(&formRaw, &form.Revision)
@@ -217,12 +235,12 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	status := initialTicketStatus(analysis)
 
-	const query = `WITH inserted AS (INSERT INTO tickets (requester_id,tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,category,ticket_type,custom_priority,tags,custom_data,form_snapshot,form_id)
-VALUES ($11,$1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10,$12,$13,$15,$16,$14,$17,$19)
+	const query = `WITH inserted AS (INSERT INTO tickets (requester_id,tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,category,ticket_type,custom_priority,tags,custom_data,form_snapshot,form_id,asset_id,asset_snapshot)
+VALUES ($11,$1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10,$12,$13,$15,$16,$14,$17,$19,$20,$21)
 RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status), fields_saved AS (INSERT INTO ticket_custom_fields(tenant_id,ticket_id,revision,values) SELECT $1,id,1,$14::jsonb FROM inserted)  , attachments_saved AS (INSERT INTO ticket_attachments(id,tenant_id,ticket_id,author_id,filename,mime,content) SELECT a->>'id',$1,i.id,$11,a->>'filename',a->>'mime',decode(a->>'content','base64') FROM inserted i CROSS JOIN jsonb_array_elements($18::jsonb) a) SELECT * FROM inserted`
 
 	var ticket models.Ticket
-	err := gate.query.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context()), request.Category, request.TicketType, fieldsJSON, request.PriorityID, tagsJSON, formSnapshot, attachmentJSON, request.FormID).Scan(
+	err := gate.query.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context()), request.Category, request.TicketType, fieldsJSON, request.PriorityID, tagsJSON, formSnapshot, attachmentJSON, request.FormID, request.AssetID, assetSnapshot).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
 		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,

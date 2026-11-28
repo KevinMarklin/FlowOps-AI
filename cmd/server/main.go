@@ -23,6 +23,7 @@ import (
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
 	"flowops-ai/internal/settings"
+	"flowops-ai/internal/workflows"
 )
 
 func main() {
@@ -115,6 +116,29 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			if err := ticketsHandler.EvaluateSLA(ctx); err != nil {
 				logger.Error("SLA evaluation failed")
+			}
+			cancel()
+		}
+	}()
+	go func() {
+		engine := workflows.Engine{DB: pool, Callbacks: callbacks}
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			if err := engine.Tick(ctx); err != nil {
+				logger.Error("Workflow evaluation failed")
+			}
+			cancel()
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			if err := ticketsHandler.GenerateScheduledReports(ctx); err != nil {
+				logger.Error("Scheduled report generation failed")
 			}
 			cancel()
 		}
@@ -270,6 +294,24 @@ func main() {
 	mux.HandleFunc("POST /api/tickets/{id}/work", ticketsHandler.Work)
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)
 	mux.HandleFunc("POST /api/tickets/queue/clear", ticketsHandler.ClearQueue)
+	mux.HandleFunc("GET /api/v1/assets", ticketsHandler.Assets)
+	mux.HandleFunc("POST /api/v1/assets", ticketsHandler.Assets)
+	mux.HandleFunc("PUT /api/v1/assets/{id}", ticketsHandler.Assets)
+	mux.HandleFunc("GET /api/v1/assets/{id}/context", ticketsHandler.Assets)
+	mux.HandleFunc("GET /api/v1/assets/{id}/qr", ticketsHandler.Assets)
+	mux.HandleFunc("GET /api/v1/workflows", ticketsHandler.WorkflowDefinitions)
+	mux.HandleFunc("POST /api/v1/workflows", ticketsHandler.WorkflowDefinitions)
+	mux.HandleFunc("PUT /api/v1/workflows/{id}", ticketsHandler.WorkflowDefinitions)
+	mux.HandleFunc("GET /api/tickets/{id}/workflows", ticketsHandler.TicketWorkflows)
+	mux.HandleFunc("POST /api/tickets/{id}/workflows", ticketsHandler.TicketWorkflows)
+	mux.HandleFunc("GET /api/v1/workflow-tasks", ticketsHandler.WorkflowTasks)
+	mux.HandleFunc("POST /api/v1/workflow-tasks/{id}", ticketsHandler.WorkflowTasks)
+	mux.HandleFunc("POST /api/v1/workflow-runs/{id}/cancel", ticketsHandler.CancelWorkflow)
+	mux.HandleFunc("GET /api/analytics/reports", ticketsHandler.ReportSchedules)
+	mux.HandleFunc("POST /api/analytics/reports", ticketsHandler.ReportSchedules)
+	mux.HandleFunc("PUT /api/analytics/reports/{id}", ticketsHandler.ReportSchedules)
+	mux.HandleFunc("POST /api/analytics/reports/{id}/run", ticketsHandler.ReportSchedules)
+	mux.HandleFunc("GET /api/analytics/reports/artifacts/{artifact}", ticketsHandler.ReportSchedules)
 	mux.HandleFunc("GET /api/analytics/dashboards", ticketsHandler.Dashboards)
 	mux.HandleFunc("POST /api/analytics/dashboards", ticketsHandler.Dashboards)
 	mux.HandleFunc("PUT /api/analytics/dashboards/{id}", ticketsHandler.ChangeDashboard)
@@ -278,6 +320,7 @@ func main() {
 	mux.HandleFunc("GET /api/optimization", ticketsHandler.Opportunities)
 	mux.HandleFunc("PUT /api/optimization/{id}", ticketsHandler.DecideOpportunity)
 	mux.HandleFunc("GET /api/analytics/explore", ticketsHandler.Analytics)
+	mux.HandleFunc("GET /api/analytics/processes", ticketsHandler.ProcessAnalytics)
 	mux.HandleFunc("GET /api/tickets/{id}/copilot", ticketsHandler.Copilot)
 	mux.HandleFunc("POST /api/tickets/{id}/copilot", ticketsHandler.Copilot)
 	mux.HandleFunc("GET /api/tickets/{id}/events", ticketsHandler.ProcessEvents)
@@ -288,6 +331,8 @@ func main() {
 	mux.HandleFunc("PUT /api/v1/kb/articles/{id}", knowledgeHandler.ChangeArticle)
 	mux.HandleFunc("GET /api/v1/kb/articles/{id}/versions", knowledgeHandler.ArticleVersions)
 	mux.HandleFunc("POST /api/v1/kb/from-tickets", ticketsHandler.DraftArticleFromTickets)
+	mux.HandleFunc("GET /api/v1/kb/checks", ticketsHandler.KnowledgeChecks)
+	mux.HandleFunc("POST /api/v1/kb/checks", ticketsHandler.KnowledgeChecks)
 	mux.HandleFunc("GET /api/knowledge", knowledgeHandler.List)
 	mux.HandleFunc("POST /api/knowledge", knowledgeHandler.Create)
 	mux.HandleFunc("PATCH /api/knowledge/{filename}", knowledgeHandler.Update)

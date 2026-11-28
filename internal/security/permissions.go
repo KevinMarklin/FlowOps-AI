@@ -26,6 +26,27 @@ func requiredPermissions(w http.ResponseWriter, r *http.Request) ([]string, bool
 		return result, true
 	}
 	switch {
+	case strings.HasPrefix(path, "/api/v1/assets/") && strings.HasSuffix(path, "/context"):
+		result = append(result, "ticket_create")
+	case strings.HasPrefix(path, "/api/v1/assets"):
+		result = append(result, "units_manage")
+	case strings.HasPrefix(path, "/api/v1/workflow-tasks"):
+		if method == "GET" {
+			result = append(result, "ticket_view")
+		} else {
+			result = append(result, "ticket_edit")
+		}
+	case strings.HasPrefix(path, "/api/v1/workflows") || strings.HasPrefix(path, "/api/v1/workflow-runs"):
+		result = append(result, "automation_manage")
+		if method != "GET" {
+			result = append(result, "ticket_edit", "ticket_assign")
+		}
+	case strings.HasSuffix(path, "/workflows"):
+		if method == "GET" {
+			result = append(result, "ticket_view")
+		} else {
+			result = append(result, "automation_manage", "ticket_edit", "ticket_assign")
+		}
 	case path == "/api/tickets":
 		if method == "POST" {
 			result = append(result, "ticket_create")
@@ -81,7 +102,7 @@ func requiredPermissions(w http.ResponseWriter, r *http.Request) ([]string, bool
 		}
 	case strings.HasPrefix(path, "/api/analytics") || path == "/api/stats":
 		result = append(result, "analytics_view")
-		if r.URL.Query().Get("format") != "" {
+		if r.URL.Query().Get("format") != "" || strings.HasPrefix(path, "/api/analytics/reports") && (method != "GET" || strings.Contains(path, "/artifacts/")) {
 			result = append(result, "data_export")
 		}
 	case strings.HasPrefix(path, "/api/v1/members"):

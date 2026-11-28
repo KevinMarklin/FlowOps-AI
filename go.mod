@@ -5,6 +5,7 @@ go 1.26.11
 require (
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/crypto v0.59.0
 	golang.org/x/text v0.44.0
 )

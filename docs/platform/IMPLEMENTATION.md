@@ -21,14 +21,14 @@ This file records shipped stages and explicit remaining scope. See REQUEST.md fo
 
 - [x] Baseline architecture/data-flow review.
 - [x] Organization profile/timezone/contact configuration, working calendar, economic inputs and customizable closure reasons with optimistic revisions.
-- [ ] Structured process events, calendars and SLA.
+- [x] Structured process events, calendars and SLA.
 - [x] Server-side analytical exploration and report exports.
-- [ ] Persisted dashboards and report templates/schedules.
-- [ ] Organization hierarchy, custom roles, taxonomy/forms and rule-based routing.
+- [x] Persisted dashboards and report templates/schedules.
+- [x] Organization hierarchy, custom roles, taxonomy/forms and rule-based routing.
 - [x] Optimization detection, evidence and recommendation workflow.
 - [x] Knowledge gaps, draft generation, approval and version lifecycle.
 - [x] Officially sourced demonstrational Financial University configuration and wider template catalog.
-- [ ] Copilot, durable workflows and context QR resources.
+- [x] Copilot, durable workflows and context QR resources.
 - [ ] Complete security/performance/end-to-end acceptance review.
 
 ## Evidence constraints
@@ -121,3 +121,20 @@ This stage covers REQUEST sections 3.3–3.7, rather than the remaining sections
 UI: Settings → Rights and processes contains role, taxonomy/form, routing, SLA and AI editors. Employees choose a form on intake; a ticket exposes its saved fields, metadata and attachments. SLA has its own inbox. Existing settings navigation stays expanded on outside clicks.
 
 Validation: regression coverage includes actual feedback middleware, explicit-resource visibility/queue clearing, atomic mandatory uploads, duplicate/conditional forms, invalidated routes, bot channel routing, historical first-response SLA, durable escalation, empty JSON settings and persisted AI quotas across analyzer instances. Browser verified creating a named form and ticket #13 with its required field in an isolated synthetic database. A real Yandex structured call was verified separately with public synthetic input. Full Go suite (including isolated PostgreSQL integration tests), go vet and 24 existing JS checks passed before release. No user ticket data is used for fixtures.
+
+
+### Stage 10 — second selected part: workflows, QR, process analytics, reports and knowledge checks
+
+- Durable workflow definitions and immutable run snapshots. The validated DAG supports conditions, collection/completeness, assignment, linked tasks, departmental transfer, approvals, in-app notifications, observed-event waits, allowlisted HTTP POST and completion. Parallel branches have independent task states and join through dependencies. False branches propagate a skip; a join with an active branch may proceed. Conditions latch when a step starts. Failures stop later effects immediately; bounded retries, overall deadlines and cancellation persist. Runtime authorization is rechecked for the initiating account. Explicit task assignees may decide their own task without obtaining full access to another employee's ticket. A completion notification remains acknowledgeable after its run ends.
+- Local workflow effects and checkpoints commit together. Before external dispatch, preceding local effects commit. HTTP retries use a stable run/step Idempotency-Key. The allowlisted receiver must implement deduplication; the application does not claim distributed exactly-once execution against arbitrary servers. Configuration remains unavailable to AI; Copilot can only suggest an existing active process for a separate human launch.
+- Tenant-bound assets with revisions, deactivation and PNG QR export. QR encodes the public site address and opaque asset ID, never credentials or private asset context. Context is loaded after authentication and scope checks; scanning opens intake, and the saved ticket retains a context snapshot. FLOWOPS_PUBLIC_URL configures the address (localhost is the development default). The PNG encoder is [go-qrcode](https://github.com/skip2/go-qrcode), pinned in go.mod/go.sum.
+- Process analytics aggregates observed routes, status intervals, waits, route loops and workflow-step intervals on the server. It separates calendar duration from recorded active work, reports history coverage and supports observational before/after cohorts. Parallel intervals are explicitly non-additive. Routing loops also create evidence-backed signals in the optimization center. New assignment, pause/resume, classification, genuine employee-message, escalation and workflow events preserve context without reconstructing nonexistent past transitions.
+- Saved report templates and minute-polled recurring generation use the same analytical handler/exporters as interactive CSV/XLSX/PDF. Owner permissions are checked at generation and download; revoked owners pause their schedules. Claims, artifact storage and schedule advancement are transactional. Manual generation works for inactive templates. Reports remain on the site; this stage sends no report email or external message.
+- Knowledge metadata includes responsible owner, applicability, permanent/temporary/personal kind and validity dates. Expired and personal materials cannot enter governed RAG; personal cases cannot be published as reusable regulations. A bounded explicit Yandex check compares selected published revisions, validates every source ID, persists findings for human review and rejects changed source revisions. Empty findings are not a guarantee of consistency. Publication remains separate.
+- Distinct concurrent ticket creation now reserves database capacity for tenant AI policy and governed knowledge reads instead of allowing creation transactions to occupy the entire pool.
+
+Interfaces: Settings → Business processes / Objects and QR codes; main navigation → Tasks and approvals / Process analytics / Reports. Ticket pages show run progress, launch and cancellation. The knowledge approval page exposes metadata and conflict-review history. Employee navigation now includes the assigned-task surface.
+
+Verification: database-backed tests cover parallel approvals, duplicate starts, latched conditions, empty multi-values, genuine-message waits, terminal failure, scoped assigned-task access, QR tenant isolation/deactivation, durable report output and revocation, exact observed route intervals/loops, expired/personal knowledge exclusion, source-ID validation and bounded concurrent creation. Browser tests on the synthetic preview verified a named process, QR object, QR-context ticket #14, process launch→completion→notification acknowledgement, a generated CSV artifact and employee task navigation. Final mobile visual recheck was blocked by the browser approval service usage limit; it was not replaced with another browser automation mechanism.
+
+Release checks for Stage 10: complete `go test ./... -count=1 -timeout=240s` with isolated PostgreSQL passed (handlers 100.062s), `go vet ./...` passed, and 24 JavaScript regressions passed. Runtime and standalone operations migrations were compared. The bounded 4-connection / 8-request creation scenario passed.

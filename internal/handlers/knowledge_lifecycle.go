@@ -25,12 +25,16 @@ type KnowledgeSource struct {
 	Text   string `json:"text,omitempty"`
 }
 type ArticleDocument struct {
-	Title      string            `json:"title"`
-	Department string            `json:"department"`
-	Keywords   []string          `json:"keywords"`
-	Content    string            `json:"content"`
-	Sources    []KnowledgeSource `json:"sources"`
-	ReviewDue  *time.Time        `json:"review_due,omitempty"`
+	Kind          string            `json:"kind,omitempty"`
+	OwnerID       string            `json:"owner_id,omitempty"`
+	Applicability string            `json:"applicability,omitempty"`
+	ExpiresAt     *time.Time        `json:"expires_at,omitempty"`
+	Title         string            `json:"title"`
+	Department    string            `json:"department"`
+	Keywords      []string          `json:"keywords"`
+	Content       string            `json:"content"`
+	Sources       []KnowledgeSource `json:"sources"`
+	ReviewDue     *time.Time        `json:"review_due,omitempty"`
 }
 type ManagedArticle struct {
 	ID                string          `json:"id"`
@@ -52,6 +56,13 @@ func articlePrincipal(w http.ResponseWriter, r *http.Request) (security.Principa
 	return p, true
 }
 func validArticle(d ArticleDocument) error {
+	if !hasValue(d.Kind, "", "permanent", "incident", "personal") || len(d.OwnerID) > 128 || len([]rune(d.Applicability)) > 1000 {
+		return errors.New("Некорректный тип или область применимости")
+	}
+	if d.Kind == "incident" && d.ExpiresAt == nil {
+		return errors.New("Для временной инструкции укажите срок действия")
+	}
+
 	if d.Department == "" || !validDepartment(d.Department) {
 		return errors.New("Некорректный отдел")
 	}
@@ -90,15 +101,30 @@ func (h *KnowledgeHandler) configureManagedKnowledge() {
 			if err = json.Unmarshal(raw, &d); err != nil {
 				return nil, err
 			}
-			if d.ReviewDue != nil && d.ReviewDue.Before(time.Now()) {
+			if d.Kind == "personal" || d.ExpiresAt != nil && !d.ExpiresAt.After(time.Now()) || d.ReviewDue != nil && d.ReviewDue.Before(time.Now()) {
 				continue
 			}
-			docs = append(docs, knowledge.Document{Filename: "kb-managed-" + id + ".md", Path: "kb-managed-" + id + ".md", Title: d.Title, Department: d.Department, Keywords: d.Keywords, Content: d.Content, Kind: "permanent", IncidentState: "active"})
+			docs = append(docs, knowledge.Document{Filename: "kb-managed-" + id + ".md", Path: "kb-managed-" + id + ".md", Title: d.Title, Department: d.Department, Keywords: d.Keywords, Content: d.Content, Kind: func() string {
+				if d.Kind == "incident" {
+					return "incident"
+				}
+				return "permanent"
+			}(), IncidentState: "active", ExpiresAt: d.ExpiresAt})
 		}
 		return docs, rows.Err()
 	})
 }
 func (h *KnowledgeHandler) validateArticleSources(ctx context.Context, d *ArticleDocument) error {
+	explicitOwner := d.OwnerID != ""
+	if d.OwnerID == "" {
+		d.OwnerID = security.RequesterID(ctx)
+	}
+	if explicitOwner && d.OwnerID != "owner" {
+		var found bool
+		if err := h.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE tenant_id=$1 AND id=$2 AND is_active AND role IN ('operator','admin'))`, security.TenantID(ctx), d.OwnerID).Scan(&found); err != nil || !found {
+			return errors.New("Ответственный недоступен")
+		}
+	}
 	for i := range d.Sources {
 		source := &d.Sources[i]
 		if source.Type == "ticket" {
@@ -201,7 +227,7 @@ func (h *KnowledgeHandler) Articles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "Некорректная страница")
 		return
 	}
-	rows, err := h.db.Query(r.Context(), `SELECT id,author_id,state,revision,published_revision,document,approved_by,updated_at FROM kb_articles WHERE tenant_id=$1 AND ($2='' OR state=$2) AND ($4='' OR STRPOS(LOWER(document->>'title'),LOWER($4))>0) ORDER BY updated_at DESC,id DESC LIMIT 101 OFFSET $3`, security.TenantID(r.Context()), state, offset, search)
+	rows, err := h.db.Query(r.Context(), `SELECT id,author_id,state,revision,published_revision,CASE WHEN $5 THEN COALESCE((SELECT document FROM kb_article_versions v WHERE v.tenant_id=kb_articles.tenant_id AND v.article_id=kb_articles.id AND v.revision=kb_articles.published_revision),document) ELSE document END,approved_by,updated_at FROM kb_articles WHERE tenant_id=$1 AND (NOT $5 OR published_revision IS NOT NULL AND state NOT IN ('archived','stale')) AND ($2='' OR state=$2) AND ($4='' OR STRPOS(LOWER(document->>'title'),LOWER($4))>0) ORDER BY updated_at DESC,id DESC LIMIT 101 OFFSET $3`, security.TenantID(r.Context()), state, offset, search, r.URL.Query().Get("published_only") == "true")
 	if err != nil {
 		writeError(w, 503, "Не удалось загрузить статьи")
 		return
@@ -298,6 +324,14 @@ func (h *KnowledgeHandler) ChangeArticle(w http.ResponseWriter, r *http.Request)
 		}
 		if err = validArticle(a.Document); err != nil {
 			writeError(w, 400, err.Error())
+			return
+		}
+		if a.Document.Kind == "personal" {
+			writeError(w, 400, "Персональное решение хранится в истории и не публикуется как регламент")
+			return
+		}
+		if a.Document.ExpiresAt != nil && !a.Document.ExpiresAt.After(time.Now()) {
+			writeError(w, 400, "Срок действия истёк")
 			return
 		}
 		if a.Document.ReviewDue != nil && !a.Document.ReviewDue.After(time.Now()) {
