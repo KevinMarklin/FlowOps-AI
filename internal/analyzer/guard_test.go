@@ -39,6 +39,18 @@ func TestModelContractRejectsAdversarialOutputs(t *testing.T) {
 	}
 }
 
+func TestKnowledgePreservesMatchedCurrentDepartment(t *testing.T) {
+	base, err := knowledge.Load(filepath.Join("..", "..", "testdata", "pilot", "knowledge_base"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(base)
+	r := a.attachSafeAnswer(context.Background(), Result{Department: "HR", Priority: "low"}, "Вчера был вопрос про VPN, он решён. Сейчас хочу оформить отпуск.")
+	if r.Department != "HR" || r.RAGAnswer == nil || !strings.Contains(*r.RAGAnswer, "hr_certificates") {
+		t.Fatalf("current HR request overridden by historical VPN: %+v", r)
+	}
+}
+
 func TestDirectInjectionNeverCallsProviderOrReturnsAnswer(t *testing.T) {
 	allowTestProviders(t)
 	base, err := knowledge.Load(t.TempDir())

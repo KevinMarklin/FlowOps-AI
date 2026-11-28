@@ -186,9 +186,9 @@ func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText 
 		return result
 	}
 	doc := base.FindRelevant(rawText, result.Department)
-	// A topic match in an approved regulation is stronger evidence than the
-	// classifier's department guess. Never select a department the tenant disabled.
-	if candidate := base.FindRelevant(rawText, "Unassigned"); candidate != nil {
+	// Preserve a matching source in the classified current department. Search
+	// across departments only when it has no source, avoiding historical-topic overrides.
+	if candidate := base.FindRelevant(rawText, "Unassigned"); doc == nil && candidate != nil {
 		allowed := candidate.Department == "General" || len(configs) == 0 || configs[0].Departments == nil
 		if len(configs) > 0 {
 			for _, department := range configs[0].Departments {
