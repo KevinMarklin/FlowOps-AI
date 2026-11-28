@@ -52,18 +52,19 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'workflows','workflow-tasks','assets','process-analytics','reports', 'notifications', 'governance', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
+    admin: ['admin', 'one-c', 'workflows','workflow-tasks','assets','process-analytics','reports', 'notifications', 'governance', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
     operator: ['operator','workflow-tasks', 'notifications', 'knowledge', 'knowledge-review', 'employee'],
     analyst: ['analytics','optimization','process-analytics','reports','workflow-tasks'],
     employee: ['employee','workflow-tasks']
   };
-  const canTab = name => {if(!(roleTabs[state.user?.role]||[]).includes(name))return false;const p=state.user?.permissions;if(!p)return true;const required={'workflows':['automation_manage'],'assets':['units_manage'],'workflow-tasks':['ticket_view'],'process-analytics':['analytics_view'],'reports':['analytics_view','data_export'],'analytics':['analytics_view'],'structure':['units_manage'],'knowledge':['knowledge_manage'],'knowledge-review':['knowledge_manage'],'channels':['integrations_manage']};if(name==='governance')return ['automation_manage','ai_configure','roles_manage'].some(x=>p.includes(x));return (required[name]||[]).every(x=>p.includes(x));};
+  const canTab = name => {if(!(roleTabs[state.user?.role]||[]).includes(name))return false;const p=state.user?.permissions;if(!p)return true;const required={'workflows':['automation_manage'],'assets':['units_manage'],'workflow-tasks':['ticket_view'],'process-analytics':['analytics_view'],'reports':['analytics_view','data_export'],'analytics':['analytics_view'],'structure':['units_manage'],'knowledge':['knowledge_manage'],'knowledge-review':['knowledge_manage'],'one-c':['integrations_manage'],'channels':['integrations_manage']};if(name==='governance')return ['automation_manage','ai_configure','roles_manage'].some(x=>p.includes(x));return (required[name]||[]).every(x=>p.includes(x));};
 
   function clearWorkspaceData() {
 	window.FlowOpsSupportUI?.clear();
     window.FlowOpsPlatform?.clear();
  window.FlowOpsGovernance?.clear();
  window.FlowOpsOperations?.clear();
+ window.FlowOpsOneC?.clear();
  window.FlowOpsNotifications?.clear();
  window.FlowOpsIntakeFields?.clear();
     window.FlowOpsAnalytics?.clear();
@@ -119,7 +120,7 @@
     if (!canTab('knowledge')) $('#knowledge-list').replaceChildren();
     if (!canTab('admin')) { $('#members-list').replaceChildren(); $('#audit-list').replaceChildren(); $('#member-issued').replaceChildren(); }
     const settingsNav = $('#settings-nav');
-    if (settingsNav) { settingsNav.hidden = !['knowledge','builder','channels','platform'].some(canTab); if (settingsNav.hidden) settingsNav.open = false; }
+    if (settingsNav) { settingsNav.hidden = ![...settingsNav.querySelectorAll('.tab')].some(tab=>canTab(tab.dataset.tab)); if (settingsNav.hidden) settingsNav.open = false; }
     const current = $('.tab.active');
     if (selectDefault || !current || !canTab(current.dataset.tab)) {
       const target = roleTabs[role]?.[0];
@@ -324,8 +325,7 @@
       hideAuth(me);
       setAPIStatus(true); renderChannels(['Web']); $('#api-status').textContent = 'Сервис доступен';
       $('#login-password').value = ''; $('#activation-password').value = ''; $('#activation-confirm').value = ''; $('#operator-token').value = '';
-      if (location.pathname.startsWith('/tickets/')) renderTicketRoute();
-      else document.querySelector('.tab.active')?.click();
+      restoreSectionRoute();
       return true;
     } catch { showAuth('Не удалось подключиться к сервису. Проверьте соединение.'); return false; }
   }
@@ -1022,6 +1022,18 @@
     $$('.ticket-card', list).forEach(bindTicketControls);
   }
 
+  let restoringSectionRoute = false;
+  function restoreSectionRoute() {
+    if (location.pathname.startsWith('/tickets/')) { renderTicketRoute(); return; }
+    const route = window.FlowOpsRoutes.match(location.pathname);
+    let tab = route && canTab(route.tab) ? $(`.tab[data-tab="${route.tab}"]${route.panel ? `[data-settings-panel="${route.panel}"]` : ''}`) : $('.tab.active');
+    if (!tab || !canTab(tab.dataset.tab)) tab = $(`.tab[data-tab="${roleTabs[state.user?.role]?.[0]}"]`);
+    restoringSectionRoute = true;
+    try { tab?.click(); } finally { restoringSectionRoute = false; }
+    // Keep QR parameters on the intake URL; inaccessible routes resolve to a permitted section.
+    const path = window.FlowOpsRoutes.path(tab?.dataset.tab, tab?.dataset.settingsPanel);
+    if (path && (!route || !canTab(route.tab))) history.replaceState({}, '', path + (location.pathname === '/' ? location.search : ''));
+  }
   let ticketRouteVersion = 0;
   function navigateTicket(id) {
     history.pushState({}, '', `/tickets/${Number(id)}`);
@@ -1036,6 +1048,7 @@
     $$('.view').forEach(view => view.classList.remove('active'));
     $('#ticket-detail').classList.add('active');
     $('#ticket-detail-title').textContent = `Тикет #${match[1]}`;
+    $('[data-ticket-back]').href = window.FlowOpsRoutes.path(canTab('operator') ? 'operator' : canTab('employee') ? 'employee' : roleTabs[state.user?.role]?.[0]);
     $('#ticket-detail-status').textContent = 'Загрузка тикета…';
     try {
       const ticket = await api(`/api/tickets/${match[1]}`);
@@ -1804,7 +1817,11 @@
       on(tab, 'click', () => {
         if (!canTab(tab.dataset.tab)) return;
         const wasBuilder = $('#builder')?.classList.contains('active');
-        if (location.pathname.startsWith('/tickets/')) { history.pushState({}, '', '/'); leaveTicketRoute(); }
+        leaveTicketRoute();
+        const sectionPath = window.FlowOpsRoutes.path(tab.dataset.tab, tab.dataset.settingsPanel);
+        const asset = new URLSearchParams(location.search).get('asset');
+        const path = sectionPath && sectionPath + (tab.dataset.tab === 'employee' && asset ? '?asset=' + encodeURIComponent(asset) : '');
+        if (!restoringSectionRoute && path && location.pathname + location.search !== path) history.pushState({}, '', path);
         $$('.tab, .view').forEach(element => element.classList.remove('active'));
         tab.classList.add('active');
         if (tab.closest('#settings-nav')) $('#settings-nav').open = true;
@@ -1826,6 +1843,7 @@
  if (tab.dataset.tab === 'governance') window.FlowOpsGovernance?.refresh();
  if (tab.dataset.tab === 'structure') window.FlowOpsStructure?.refresh();
         if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();
+        if (tab.dataset.tab === 'one-c') window.FlowOpsOneC?.refresh();
         if (tab.dataset.tab === 'channels') {
           loadWidgetConfig();
           loadAPIKeys();
@@ -1930,8 +1948,8 @@
 
     on(document, 'click', event => {
       if (event.target.closest('[data-ticket-back]')) {
-        event.preventDefault(); history.pushState({}, '', '/'); leaveTicketRoute();
-        $(`.tab[data-tab="${canTab('operator')?'operator':'employee'}"]`)?.click(); return;
+        event.preventDefault(); leaveTicketRoute();
+        $(`.tab[data-tab="${canTab('operator')?'operator':canTab('employee')?'employee':roleTabs[state.user?.role]?.[0]}"]`)?.click(); return;
       }
       const analyticsLink = event.target.closest('[data-analytics-ticket]');
       if(analyticsLink && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){event.preventDefault();navigateTicket(analyticsLink.dataset.analyticsTicket);return;}
@@ -1941,8 +1959,7 @@
       if (id) { event.preventDefault(); navigateTicket(id); }
     });
     on(window, 'popstate', () => {
-      if (location.pathname.startsWith('/tickets/')) renderTicketRoute();
-      else { leaveTicketRoute(); $(`.tab[data-tab="${canTab('operator')?'operator':'employee'}"]`)?.click(); }
+      if (hasSession()) restoreSectionRoute();
     });
 
     $$('dialog').forEach(dialog => on(dialog, 'click', event => {

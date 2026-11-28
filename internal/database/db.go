@@ -224,6 +224,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, OperationsSchema); err != nil {
 		return fmt.Errorf("apply operations: %w", err)
 	}
+	if _, err := pool.Exec(ctx, OneCSchema); err != nil {
+		return fmt.Errorf("apply 1C connections: %w", err)
+	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 

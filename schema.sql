@@ -672,3 +672,11 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS ticket_initial_classification ON tickets;
 CREATE TRIGGER ticket_initial_classification AFTER INSERT ON tickets FOR EACH ROW EXECUTE FUNCTION flowops_capture_initial_classification();
+
+
+CREATE TABLE IF NOT EXISTS onec_connections (
+ tenant_id TEXT PRIMARY KEY,
+ config JSONB NOT NULL,
+ secret_ciphertext TEXT NOT NULL DEFAULT '',
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

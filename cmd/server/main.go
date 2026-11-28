@@ -278,6 +278,11 @@ func main() {
 	mux.HandleFunc("PUT /api/v1/settings/channels", integrationsHandler.ChannelSettings)
 	mux.HandleFunc("DELETE /api/v1/settings/channels/{channel}", integrationsHandler.DeleteChannel)
 	mux.HandleFunc("POST /api/v1/settings/channels/{channel}/check", integrationsHandler.CheckChannel)
+	mux.HandleFunc("GET /api/v1/integrations/1c", integrationsHandler.OneC)
+	mux.HandleFunc("PUT /api/v1/integrations/1c", integrationsHandler.OneC)
+	mux.HandleFunc("POST /api/v1/integrations/1c/check", integrationsHandler.OneC)
+	mux.HandleFunc("GET /api/v1/integrations/1c/data", integrationsHandler.OneC)
+	registerSectionRoutes(mux)
 	mux.Handle("GET /widget.js", noStoreFileServer(http.Dir("web")))
 	mux.Handle("GET /", noStoreFileServer(http.Dir("web")))
 	mux.HandleFunc("GET /tickets/{id}", func(w http.ResponseWriter, r *http.Request) {
