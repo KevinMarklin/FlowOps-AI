@@ -52,7 +52,7 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'operator', 'analytics', 'knowledge', 'builder', 'channels', 'employee'],
+    admin: ['admin', 'operator', 'analytics', 'knowledge', 'builder', 'channels', 'platform', 'employee'],
     operator: ['operator', 'knowledge', 'employee'],
     analyst: ['analytics'],
     employee: ['employee']
@@ -61,6 +61,7 @@
 
   function clearWorkspaceData() {
 	window.FlowOpsSupportUI?.clear();
+    window.FlowOpsPlatform?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
     if ($('#settings-nav')) $('#settings-nav').open = false;
@@ -110,7 +111,7 @@
     if (!canTab('knowledge')) $('#knowledge-list').replaceChildren();
     if (!canTab('admin')) { $('#members-list').replaceChildren(); $('#audit-list').replaceChildren(); $('#member-issued').replaceChildren(); }
     const settingsNav = $('#settings-nav');
-    if (settingsNav) { settingsNav.hidden = !['knowledge','builder','channels'].some(canTab); if (settingsNav.hidden) settingsNav.open = false; }
+    if (settingsNav) { settingsNav.hidden = !['knowledge','builder','channels','platform'].some(canTab); if (settingsNav.hidden) settingsNav.open = false; }
     const current = $('.tab.active');
     if (selectDefault || !current || !canTab(current.dataset.tab)) {
       const target = roleTabs[role]?.[0];
@@ -252,6 +253,7 @@
     bindTabMember(state.user?.id);
     const workspaceID = $('#workspace-id-display'); if (workspaceID) workspaceID.textContent = me?.tenant_id || '';
     applyRoleUI();
+    window.FlowOpsPlatform?.refreshPublic();
     const gate = $('#auth-gate');
     const label = $('#workspace-name-label');
     const userLabel = $('#user-name-label');
@@ -1068,7 +1070,7 @@
     if(dot){dot.dataset.unread=String(Boolean(unread));dot.setAttribute('aria-hidden',String(!unread));}
   }
 
-  const closureReasonLabels = {solved:'Вопрос решён',duplicate:'Дубликат обращения',cancelled:'Отменено сотрудником',no_response:'Нет ответа сотрудника',out_of_scope:'Вне зоны поддержки',other:'Другая причина',unspecified:'Причина не указана'};
+  let closureReasonLabels = {solved:'Вопрос решён',duplicate:'Дубликат обращения',cancelled:'Отменено сотрудником',no_response:'Нет ответа сотрудника',out_of_scope:'Вне зоны поддержки',other:'Другая причина',unspecified:'Причина не указана'};
   function ticketCard(ticket, scope = 'queue') {
     const departmentCodes = [...new Set([...(state.departmentCodes || ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General']), ticket.department].filter(Boolean))];
     const priorityCodes = ['high', 'medium', 'low'];
@@ -1797,6 +1799,7 @@
         if (tab.dataset.tab === 'analytics') loadAnalytics();
         if (tab.dataset.tab === 'admin') { loadMembers(); loadAudit(); }
         if (tab.dataset.tab === 'knowledge') loadKnowledge();
+        if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();
         if (tab.dataset.tab === 'channels') {
           loadWidgetConfig();
           loadAPIKeys();
@@ -1948,7 +1951,10 @@
     }, 5000);
   }
 
-  window.FlowOpsSupport={request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
+  window.FlowOpsSupport={organizationChanged:c=>{
+    if(c.name)$('#workspace-name-label').textContent=c.name;
+    if(Array.isArray(c.closure_reasons)){closureReasonLabels={unspecified:'Причина не указана',...Object.fromEntries(c.closure_reasons.map(x=>[x.id,x.label]))};}
+  },request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
     const ticket=state.tickets.find(item=>String(item.id)===String(id));if(ticket)ticket.unread_employee_message=unread;setTicketUnread(id,unread);
   },changed:(id,status,messages)=>{
     for(const ticket of [...state.tickets,...state.historyTickets]){if(String(ticket.id)!==String(id))continue;ticket.status=status;const operator=messages.filter(message=>message.role==='operator').at(-1);if(operator)ticket.operator_reply=operator.body;}

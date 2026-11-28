@@ -378,7 +378,7 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var reason string
 	if request.ClosureReason != nil {
 		reason = strings.TrimSpace(*request.ClosureReason)
-		if request.Status == nil || *request.Status != "closed" || !hasValue(reason, "solved", "duplicate", "cancelled", "no_response", "out_of_scope", "other") || request.OperatorReply != nil {
+		if request.Status == nil || *request.Status != "closed" || !h.validClosureReason(r.Context(), reason) || request.OperatorReply != nil {
 			writeError(w, 400, "invalid closure reason")
 			return
 		}

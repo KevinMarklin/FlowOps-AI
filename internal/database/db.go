@@ -196,6 +196,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, ConversationsSchema); err != nil {
 		return fmt.Errorf("apply conversation migration: %w", err)
 	}
+	if _, err := pool.Exec(ctx, PlatformSchema); err != nil {
+		return fmt.Errorf("apply platform settings: %w", err)
+	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 
@@ -207,7 +210,7 @@ func SyncDefaultWorkspace(ctx context.Context, pool *pgxpool.Pool, token string)
 	}
 	hash := sha256.Sum256([]byte(token))
 	_, err := pool.Exec(ctx, `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES('default','FlowOps AI', $1, $2)
-	ON CONFLICT (tenant_id) DO UPDATE SET token_prefix=EXCLUDED.token_prefix,token_hash=EXCLUDED.token_hash,name=EXCLUDED.name`, tokenPrefix(token), hex.EncodeToString(hash[:]))
+	ON CONFLICT (tenant_id) DO UPDATE SET token_prefix=EXCLUDED.token_prefix,token_hash=EXCLUDED.token_hash`, tokenPrefix(token), hex.EncodeToString(hash[:]))
 	if err != nil {
 		return fmt.Errorf("synchronize default workspace: %w", err)
 	}
