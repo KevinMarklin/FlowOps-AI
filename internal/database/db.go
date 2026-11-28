@@ -18,6 +18,7 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse database config: %w", err)
 	}
 	config.ConnConfig.RuntimeParams["client_encoding"] = "UTF8"
+	config.ConnConfig.RuntimeParams["timezone"] = "UTC"
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -198,6 +199,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	}
 	if _, err := pool.Exec(ctx, PlatformSchema); err != nil {
 		return fmt.Errorf("apply platform settings: %w", err)
+	}
+	if _, err := pool.Exec(ctx, ProcessSchema); err != nil {
+		return fmt.Errorf("apply process events: %w", err)
 	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }

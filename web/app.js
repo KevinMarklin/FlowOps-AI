@@ -62,6 +62,7 @@
   function clearWorkspaceData() {
 	window.FlowOpsSupportUI?.clear();
     window.FlowOpsPlatform?.clear();
+    window.FlowOpsAnalytics?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
     if ($('#settings-nav')) $('#settings-nav').open = false;
@@ -126,6 +127,7 @@
 
   let analyticsLoading = false;
   async function loadAnalytics() {
+    if(window.FlowOpsAnalytics)return window.FlowOpsAnalytics.refresh();
     if (!hasSession() || !canTab('analytics') || analyticsLoading) return;
     analyticsLoading = true;
     const status = $('#metrics-status');
@@ -1035,7 +1037,8 @@
         window.FlowOpsSupportUI?.openOperator(ticket.id);
         card.querySelector('.work-status').before($('#operator-dialogue'));
         card.querySelector('[data-open-dialogue]')?.remove();
-      } else if (state.user?.role === 'employee') window.FlowOpsSupportUI?.open(ticket.id);
+        window.FlowOpsAnalytics?.attachTimeline(card,ticket);
+      } else if (state.user?.role === 'employee') { window.FlowOpsSupportUI?.open(ticket.id); window.FlowOpsAnalytics?.attachTimeline($('#ticket-detail-content'),ticket); }
     } catch (error) {
       if (version === ticketRouteVersion && generation === sessionGeneration) $('#ticket-detail-status').textContent = error.message;
     }
@@ -1907,6 +1910,8 @@
         event.preventDefault(); history.pushState({}, '', '/'); leaveTicketRoute();
         $(`.tab[data-tab="${canTab('operator')?'operator':'employee'}"]`)?.click(); return;
       }
+      const analyticsLink = event.target.closest('[data-analytics-ticket]');
+      if(analyticsLink && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){event.preventDefault();navigateTicket(analyticsLink.dataset.analyticsTicket);return;}
       const summary = event.target.closest('.ticket-row-summary');
       if (!summary || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       const id = summary.closest('[data-ticket-id]')?.dataset.ticketId;
@@ -1953,6 +1958,7 @@
 
   window.FlowOpsSupport={organizationChanged:c=>{
     if(c.name)$('#workspace-name-label').textContent=c.name;
+    window.FlowOpsAnalytics?.setTimezone(c.timezone);
     if(Array.isArray(c.closure_reasons)){closureReasonLabels={unspecified:'Причина не указана',...Object.fromEntries(c.closure_reasons.map(x=>[x.id,x.label]))};}
   },request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
     const ticket=state.tickets.find(item=>String(item.id)===String(id));if(ticket)ticket.unread_employee_message=unread;setTicketUnread(id,unread);

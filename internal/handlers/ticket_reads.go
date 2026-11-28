@@ -27,7 +27,7 @@ func (h *TicketsHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "Некорректное сообщение")
 		return
 	}
-	tx, err := h.db.Begin(r.Context())
+	tx, err := h.beginTicketTx(r.Context())
 	if err != nil {
 		writeDialogueError(w, err)
 		return

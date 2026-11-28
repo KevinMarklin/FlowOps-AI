@@ -87,6 +87,9 @@ func AllowRequest(role, method, path string) bool {
 	if role == "admin" {
 		return true
 	}
+	if path == "/api/analytics/explore" {
+		return role == "analyst" && method == http.MethodGet
+	}
 	if path == "/api/stats" {
 		return role == "analyst" && method == http.MethodGet
 	}
@@ -120,7 +123,7 @@ func AllowRequest(role, method, path string) bool {
 			}
 			return parts[1] == "feedback" || (role == "operator" && (parts[1] == "reply" || parts[1] == "work"))
 		}
-		if len(parts) == 2 && parts[1] == "messages" && method == http.MethodGet {
+		if len(parts) == 2 && (parts[1] == "messages" || parts[1] == "events") && method == http.MethodGet {
 			return true
 		}
 		if len(parts) == 4 && parts[1] == "messages" && parts[3] == "rating" {

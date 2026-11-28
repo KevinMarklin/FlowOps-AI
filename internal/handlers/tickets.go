@@ -307,7 +307,7 @@ func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
 	if request.Resolved {
 		status = "auto_resolved"
 	}
-	tx, err := h.db.Begin(r.Context())
+	tx, err := h.beginTicketTx(r.Context())
 	if err != nil {
 		writeError(w, 500, "failed to record feedback")
 		return
@@ -466,7 +466,7 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, args []any, reply *string, closureReasons ...string) error {
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -761,12 +761,12 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 	const query = `SELECT id, COALESCE(user_email,''), COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
-COALESCE((SELECT a.details FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=t.created_at ORDER BY a.created_at DESC,a.id DESC LIMIT 1),''), ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `
+COALESCE((SELECT a.details FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=t.created_at ORDER BY a.created_at DESC,a.id DESC LIMIT 1),''), ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `, first_response_due_at,resolution_due_at
 FROM tickets t WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.ClosureReason, &ticket.DisplayStatus, &ticket.RequesterEmail,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.ClosureReason, &ticket.DisplayStatus, &ticket.RequesterEmail, &ticket.FirstResponseDueAt, &ticket.ResolutionDueAt,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")

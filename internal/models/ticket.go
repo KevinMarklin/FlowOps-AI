@@ -6,6 +6,8 @@ import (
 )
 
 type Ticket struct {
+	FirstResponseDueAt    *time.Time      `json:"first_response_due_at,omitempty"`
+	ResolutionDueAt       *time.Time      `json:"resolution_due_at,omitempty"`
 	DisplayStatus         string          `json:"display_status"`
 	RequesterEmail        string          `json:"requester_email"`
 	ClosureReason         string          `json:"closure_reason"`

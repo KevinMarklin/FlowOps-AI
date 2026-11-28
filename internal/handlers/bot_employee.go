@@ -70,7 +70,7 @@ func (h *TicketsHandler) BotFeedback(ctx context.Context, sender string, id int,
 	if resolved {
 		status = "auto_resolved"
 	}
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return models.Ticket{}, err
 	}

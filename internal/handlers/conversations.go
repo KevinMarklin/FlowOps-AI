@@ -71,7 +71,7 @@ func actorKey(a dialogueActor) string {
 }
 
 func (h *TicketsHandler) readDialogue(ctx context.Context, id int, a dialogueActor, before int64) (models.Ticket, error) {
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return models.Ticket{}, err
 	}
@@ -202,7 +202,7 @@ func (h *TicketsHandler) appendDialogue(ctx context.Context, id int, a dialogueA
 			preparedAnswer = h.analyzer.Analyze(ctx, contextText).RAGAnswer
 		}
 	}
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return models.Ticket{}, err
 	}
@@ -303,7 +303,7 @@ func (h *TicketsHandler) Decision(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketsHandler) decideDialogue(ctx context.Context, id int, a dialogueActor, resolved bool) (models.Ticket, error) {
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return models.Ticket{}, err
 	}
@@ -369,7 +369,7 @@ func (h *TicketsHandler) rateDialogue(ctx context.Context, id int, message int64
 	if score < 1 || score > 5 || len([]rune(comment)) > 1000 {
 		return errRatingInput
 	}
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return err
 	}
