@@ -8,7 +8,7 @@
   <script src="/theme.js?v=1"></script>
   <link rel="stylesheet" href="/styles.css?v=7">
   <link rel="stylesheet" href="/overrides.css?v=7">
-  <link rel="stylesheet" href="/workspace.css?v=7">
+  <link rel="stylesheet" href="/workspace.css?v=8">
   <link rel="stylesheet" href="/workflow.css?v=4">
   <link rel="stylesheet" href="/user-settings.css?v=pilot-1">
   <link rel="stylesheet" href="/university.css?v=2">
@@ -104,7 +104,7 @@
           </form>
         </div>
         <div class="result-column"><div id="analysis-result" class="panel result-panel empty" tabindex="-1" aria-label="Результат обращения"><div class="empty-state"><h2>Что будет после отправки</h2><ol class="request-steps"><li><strong>Подготовим обращение</strong><span>Для оборудования и доступа уточним недостающие сведения.</span></li><li><strong>Проверим регламенты</strong><span>Если есть готовая инструкция, покажем её здесь.</span></li><li><strong>Сохраним контекст</strong><span>Специалист увидит проблему и все ваши ответы. Решение инструкции подтвердите вы.</span></li></ol></div></div>
-           <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="Номер или текст проблемы" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div><div class="ticket-paging"><p id="history-page-note" class="muted"></p><button id="history-newest" type="button" class="secondary-button" hidden>К последним</button><button id="history-older" type="button" class="secondary-button" hidden>Более ранние</button></div></div>
+           <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="ID, слово или фраза" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div><div class="ticket-paging"><p id="history-page-note" class="muted"></p><button id="history-newest" type="button" class="secondary-button" hidden>К последним</button><button id="history-older" type="button" class="secondary-button" hidden>Более ранние</button></div></div>
          </div>
        </div>
       </section>
@@ -167,8 +167,8 @@
     <section id="operator" class="view">
       <div class="page-heading operator-heading"><div><h1>Очередь обращений</h1></div><div class="heading-note"><span class="pulse"></span> Живая очередь</div></div>
 
-       <div class="queue-search-row"><label class="search-field" for="queue-search">Поиск в очереди<input id="queue-search" type="search" placeholder="Номер, текст или почта сотрудника" autocomplete="off"></label><label for="priority-filter">Приоритет<select id="priority-filter"><option value="">Любой приоритет</option><option value="high">Высокий</option><option value="medium">Средний</option><option value="low">Низкий</option></select></label></div><div class="queue-toolbar"><div><h2>Обращения команды</h2><p id="queue-count" role="status">Загрузка тикетов...</p></div><div class="filters"><select id="department-filter" aria-label="Фильтр по отделу"><option value="">Все отделы</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option><option>Unassigned</option></select><select id="status-filter" aria-label="Фильтр по статусу"><option value="">Все статусы</option><option value="new">Новый</option><option value="awaiting_confirmation">Ожидает подтверждения</option><option value="assigned_to_operator">У оператора</option><option value="auto_resolved">Решен ИИ</option><option value="resolved">Решено специалистом</option><option value="closed">Закрыто</option></select><button id="refresh-queue" class="secondary-button">↻ Обновить</button><button data-admin-only id="reset-data" class="danger-button">Очистить базу</button></div></div>
-       <div id="operator-empty" class="workspace-empty" hidden><h3>Здесь пока нет данных. Обращения и регламенты появятся после начала работы.</h3><button type="button" data-admin-only data-open-builder>Открыть Конструктор</button></div><div id="ticket-list" class="ticket-list"></div><div class="ticket-paging"><p id="queue-page-note" class="muted"></p><button id="queue-newest" type="button" class="secondary-button" hidden>К последним</button><button id="queue-older" type="button" class="secondary-button" hidden>Более ранние</button></div>
+       <div class="queue-search-row"><label class="search-field" for="queue-search">Поиск в очереди<input id="queue-search" type="search" placeholder="ID, слово или фраза" autocomplete="off"></label><label for="priority-filter">Приоритет<select id="priority-filter"><option value="">Любой приоритет</option><option value="high">Высокий</option><option value="medium">Средний</option><option value="low">Низкий</option></select></label></div><div class="queue-toolbar"><div><h2>Обращения команды</h2><p id="queue-count" role="status">Загрузка тикетов...</p></div><div class="filters"><select id="department-filter" aria-label="Фильтр по отделу"><option value="">Все отделы</option><option>IT</option><option>Billing</option><option>HR</option><option>Accounting</option><option>Facilities</option><option>Unassigned</option></select><select id="status-filter" aria-label="Фильтр по статусу"><option value="">Все статусы</option><option value="new">Новый</option><option value="awaiting_confirmation">Ожидает подтверждения</option><option value="assigned_to_operator">У оператора</option><option value="auto_resolved">Решен ИИ</option><option value="resolved">Решено специалистом</option><option value="closed">Закрыто</option></select><button id="refresh-queue" class="secondary-button">↻ Обновить</button><button id="clear-queue" type="button" class="secondary-button" title="Скрыть текущие тикеты только для меня. Они останутся доступны через поиск.">Очистить мой список</button></div></div>
+       <div id="operator-empty" class="workspace-empty" hidden><h3>Личный список тикетов пуст</h3><p>Новые обращения появятся здесь. Скрытые тикеты можно найти по ID, слову или фразе.</p></div><div id="ticket-list" class="ticket-list"></div><div class="ticket-paging"><p id="queue-page-note" class="muted"></p><button id="queue-newest" type="button" class="secondary-button" hidden>К последним</button><button id="queue-older" type="button" class="secondary-button" hidden>Более ранние</button></div>
     </section>
 
     <section id="knowledge" class="view">
@@ -190,7 +190,7 @@
     </section>
    </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=ticket-rows-1"></script>
-    <script src="/dialogue.js?v=3"></script>
+    <script src="/app.js?v=personal-queue-1"></script>
+    <script src="/dialogue.js?v=4"></script>
 </body>
 </html>

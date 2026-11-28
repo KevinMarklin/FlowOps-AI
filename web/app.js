@@ -8,6 +8,7 @@
     currentTicketId: null,
     employeePoll: null,
     operatorLoading: false,
+    queueEpoch: 0,
     replyDrafts: new Map(),
     ticketRowsOpen: new Set(),
     historyTickets: [],
@@ -639,7 +640,8 @@
     const element = $('#channel-indicators');
     if (!element) return;
     const labels = { Web: 'Сайт', Telegram: 'Telegram', MAX: 'MAX', Email: 'Почта' };
-    element.innerHTML = active
+    element.hidden=!active.some(channel=>channel!=='Web');
+    element.innerHTML = active.filter(channel=>channel!=='Web')
       .map(
         channel =>
           `<span class="channel-indicator" title="Канал подключён"><i></i>${escapeHTML(labels[channel] || channel)}</span>`
@@ -671,16 +673,16 @@
     if (older) { older.hidden = tickets.length < size; older.dataset.before = tickets.length ? String(tickets[tickets.length - 1].id) : ''; }
     if (newest) newest.hidden = !cursor;
     const note = $(`#${prefix}-page-note`);
-    if (note) note.textContent = cursor ? 'Более ранние обращения. Поиск работает на этой странице.' : 'Последние обращения. Поиск работает на этой странице.';
+    if (note) note.textContent = 'Поиск по ID, слову или фразе работает по всей доступной истории.';
   }
 
   async function loadHistory() {
     if (!hasSession() || !canTab('employee')) return;
     try {
       const email = $('#email');
-      const cursor = state.historyBefore;
-      const tickets = await api(`/api/tickets?limit=20&before_id=${cursor}`);
-      if (cursor !== state.historyBefore) return;
+      const cursor = state.historyBefore, query = ($('#history-search')?.value || '').trim(), generation = sessionGeneration;
+      const tickets = await api(`/api/tickets?limit=20&before_id=${cursor}&q=${encodeURIComponent(query)}`);
+      if (cursor !== state.historyBefore || query !== ($('#history-search')?.value || '').trim() || generation !== sessionGeneration) return;
       updateTicketPaging('history', tickets, 20, cursor);
       state.tickets = tickets;
       const value = email ? email.value.trim() : '';
@@ -704,7 +706,7 @@
     if (!list) return;
     if (tickets) state.historyTickets = tickets;
     const query = ($('#history-search')?.value || '').trim().toLocaleLowerCase('ru');
-    tickets = state.historyTickets.filter(ticket => !query || `${ticket.id} ${ticket.extracted_summary || ''} ${ticket.raw_text || ''}`.toLocaleLowerCase('ru').includes(query)).slice(0, 20);
+    tickets = state.historyTickets.slice(0, 20);
     list.innerHTML = tickets.length
       ? tickets
           .map(
@@ -884,16 +886,17 @@
   async function loadOperator(forceRender = false) {
     if (!hasSession() || !canTab('operator') || state.operatorLoading) return;
     state.operatorLoading = true;
+    const query = ($('#queue-search')?.value || '').trim(), epoch = state.queueEpoch, generation = sessionGeneration;
     try {
       const cursor = state.operatorBefore;
-      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}`);
-      if (cursor !== state.operatorBefore) return;
+      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}&q=${encodeURIComponent(query)}`);
+      if (cursor !== state.operatorBefore || query !== ($('#queue-search')?.value || '').trim() || epoch !== state.queueEpoch || generation !== sessionGeneration) return;
       updateTicketPaging('queue', tickets, 100, cursor);
       state.tickets = tickets;
       tickets.forEach(ticket=>setTicketUnread(ticket.id,ticket.unread_employee_message));
       if (forceRender === true || !$('#ticket-list')?.contains(document.activeElement)) renderTickets();
       const emptyOperator = $('#operator-empty');
-      if (emptyOperator) emptyOperator.hidden = tickets.length !== 0;
+      if (emptyOperator) {emptyOperator.hidden = tickets.length !== 0; $('h3',emptyOperator).textContent=query?'По запросу ничего не найдено':'Личный список тикетов пуст';}
       setAPIStatus(true);
     } catch (error) {
       setAPIStatus(false);
@@ -905,6 +908,7 @@
       toast(error.message);
     } finally {
       state.operatorLoading = false;
+      if (generation === sessionGeneration && (query !== ($('#queue-search')?.value || '').trim() || epoch !== state.queueEpoch)) loadOperator(true);
     }
   }
 
@@ -973,8 +977,7 @@
       ticket =>
         (!department || !department.value || ticket.department === department.value) &&
         (!status || !status.value || ticket.status === status.value) &&
-        (!priority || ticket.priority === priority) &&
-        (!query || `${ticket.id} ${ticket.user_email || ''} ${ticket.subject || ''} ${ticket.extracted_summary || ''} ${ticket.raw_text || ''}`.toLocaleLowerCase('ru').includes(query))
+        (!priority || ticket.priority === priority)
     );
     const count = $('#queue-count');
     if (count) count.textContent = `Найдено: ${tickets.length} из ${state.tickets.length}`;
@@ -1026,7 +1029,7 @@
     const id = card.dataset.id;
     const row=card.closest('.ticket-row');
     row?.addEventListener('toggle',()=>{const key=`queue:${id}`;if(row.open)state.ticketRowsOpen.add(key);else state.ticketRowsOpen.delete(key);});
-    const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.dataset.openDialogue='';dialogueButton.textContent='Открыть переписку';
+    const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.dataset.openDialogue='';dialogueButton.textContent='Раскрыть диалог';
     dialogueButton.addEventListener('click',()=>window.FlowOpsSupportUI?.openOperator(id));$('.ticket-controls',card)?.prepend(dialogueButton);
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
     const draft = state.replyDrafts.get(id);
@@ -1579,16 +1582,20 @@
     }
   }
 
-  async function resetData() {
-    if (!confirm('Удалить все тикеты и сбросить нумерацию?')) return;
+  async function clearQueue() {
+    const button=$('#clear-queue'); if(button.disabled)return;
+    button.disabled=true;
+    const generation=sessionGeneration;
     try {
-      await api('/api/tickets/reset', { method: 'DELETE' });
+      await api('/api/tickets/queue/clear', {method:'POST',body:'{}'});
+      if(generation!==sessionGeneration)return;
+      state.queueEpoch++;state.operatorBefore=0;state.tickets=[];
+      $('#queue-search').value='';renderTickets();
+      window.FlowOpsSupportUI?.hideOperator();
       await loadOperator(true);
-      await loadHistory();
-      toast('База тикетов очищена');
-    } catch (error) {
-      toast(error.message);
-    }
+      toast('Личный список очищен. Тикеты доступны через поиск.');
+    } catch(error) {if(generation===sessionGeneration)toast(error.message);}
+    finally {if(generation===sessionGeneration)button.disabled=false;}
   }
 
   async function loadKnowledge() {
@@ -1756,12 +1763,12 @@
     on($('#history-newest'), 'click', () => { state.historyBefore = 0; loadHistory(); });
     on($('#queue-older'), 'click', () => { state.operatorBefore = Number($('#queue-older').dataset.before) || 0; loadOperator(true); });
     on($('#queue-newest'), 'click', () => { state.operatorBefore = 0; loadOperator(true); });
-    on($('#reset-data'), 'click', resetData);
+    on($('#clear-queue'), 'click', clearQueue);
     on($('#department-filter'), 'change', renderTickets);
     on($('#status-filter'), 'change', renderTickets);
     on($('#priority-filter'), 'change', renderTickets);
-    on($('#queue-search'), 'input', renderTickets);
-    on($('#history-search'), 'input', () => renderHistory());
+    on($('#queue-search'), 'input', () => {state.queueEpoch++;state.operatorBefore=0;clearTimeout(state.queueSearchTimer);state.queueSearchTimer=setTimeout(()=>loadOperator(true),250);});
+    on($('#history-search'), 'input', () => {state.historyBefore=0;clearTimeout(state.historySearchTimer);state.historySearchTimer=setTimeout(loadHistory,250);});
     on($('#knowledge-form'), 'submit', submitKnowledge);
     on($('#refresh-knowledge'), 'click', loadKnowledge);
 

@@ -213,3 +213,10 @@ CREATE TABLE IF NOT EXISTS ticket_operator_reads (
  last_message_id BIGINT NOT NULL DEFAULT 0,
  PRIMARY KEY(tenant_id,ticket_id,operator_id)
 );
+CREATE TABLE IF NOT EXISTS ticket_queue_hidden (
+ tenant_id TEXT NOT NULL,
+ ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+ operator_id TEXT NOT NULL,
+ last_employee_message_id BIGINT NOT NULL DEFAULT 0,
+ PRIMARY KEY(tenant_id,ticket_id,operator_id)
+);

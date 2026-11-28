@@ -95,3 +95,5 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .auth-card .activation-details{margin-top:15px;padding-top:0;border:0}
 .auth-card .activation-details>summary{font-size:12px;text-align:center;font-weight:400;text-decoration:underline;text-underline-offset:4px}
 .auth-notice{margin:0 0 18px;padding:12px 14px;border-radius:8px;background:#e8f4f2;color:#0b5367;font-size:13px;line-height:1.6}
+
+.channel-indicators[hidden]{display:none}

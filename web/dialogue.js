@@ -25,7 +25,7 @@
     const view = {root,operator,id:0,loading:false,sending:false,messages:new Map(),drafts:new Map(),pending:new Map(),version:0,readCursor:-1};
     views.set(name,view);
     if(operator){
-      const close=document.createElement('button');close.type='button';close.className='secondary-button';close.dataset.dialogueCollapse='';close.textContent='Свернуть переписку';
+      const close=document.createElement('button');close.type='button';close.className='secondary-button';close.dataset.dialogueCollapse='';close.textContent='Свернуть диалог';
       close.addEventListener('click',()=>{
         root.hidden=true;
         const card=document.querySelector(`#ticket-list .ticket-card[data-id="${view.id}"]`);
@@ -59,7 +59,7 @@
       root.querySelectorAll('[data-dialogue-decision]').forEach(button=>button.disabled=false);
       root.querySelector('[data-dialogue-messages]').replaceChildren();
       root.querySelector('textarea').value=view.drafts.get(id)||'';
-      root.querySelector('[data-dialogue-title]').textContent=`Переписка #${id}`;
+      root.querySelector('[data-dialogue-title]').textContent=operator?`Тикет #${id}`:`Переписка #${id}`;
       root.querySelector('[data-dialogue-form]').hidden=true;
       root.querySelector('[data-dialogue-decisions]').hidden=true;
       root.querySelector('[data-dialogue-older]').hidden=true;
@@ -164,6 +164,6 @@
   }
 
   function clear(){replyRequests.clear();for(const view of views.values()){view.version++;view.id=0;view.loading=false;view.sending=false;view.messages.clear();view.drafts.clear();view.pending.clear();view.root.remove();}views.clear();}
-  window.FlowOpsSupportUI={open,openOperator:id=>open(id,true),clear,replyRequest,replySent:id=>replyRequests.delete(String(id))};
+  window.FlowOpsSupportUI={hideOperator:()=>{const view=views.get('operator-dialogue');if(view)view.root.hidden=true;},open,openOperator:id=>open(id,true),clear,replyRequest,replySent:id=>replyRequests.delete(String(id))};
   setInterval(()=>{if(document.hidden||!api()?.identity())return;for(const view of views.values()){if(!view.root.hidden&&view.root.closest('.view')?.classList.contains('active'))load(view);}},5000);
 })();

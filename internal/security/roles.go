@@ -63,6 +63,9 @@ func LookupPrincipal(ctx context.Context, db *pgxpool.Pool, token string) (Princ
 
 // AllowRequest is deny-by-default. UI navigation never grants access.
 func AllowRequest(role, method, path string) bool {
+	if path == "/api/tickets/reset" {
+		return false
+	}
 	if !ValidRole(role) {
 		return false
 	}
@@ -89,6 +92,9 @@ func AllowRequest(role, method, path string) bool {
 	}
 	if path == "/api/tickets" {
 		return method == http.MethodGet || method == http.MethodPost
+	}
+	if path == "/api/tickets/queue/clear" {
+		return role == "operator" && method == http.MethodPost
 	}
 	if strings.HasPrefix(path, "/api/tickets/") {
 		parts := strings.Split(strings.TrimPrefix(path, "/api/tickets/"), "/")

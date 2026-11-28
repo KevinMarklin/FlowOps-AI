@@ -594,29 +594,6 @@ func (h *TicketsHandler) validateIngest(r models.IngestRequest) error {
 	return nil
 }
 
-func (h *TicketsHandler) Reset(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.db.Exec(r.Context(), `DELETE FROM ticket_deliveries WHERE ticket_id IN (SELECT id FROM tickets WHERE tenant_id=$1)`, security.TenantID(r.Context())); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
-		return
-	}
-	if _, err := h.db.Exec(r.Context(), `DELETE FROM tickets WHERE tenant_id=$1`, security.TenantID(r.Context())); err != nil {
-		h.logger.Error("failed to reset tickets", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
-		return
-	}
-	base, err := h.analyzerBase(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reset knowledge base")
-		return
-	}
-	if err := base.Reset(); err != nil {
-		h.logger.Error("failed to reset knowledge base", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to reset knowledge base")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"reset": true})
-}
-
 func (h *TicketsHandler) Audit(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `SELECT id, created_at, event_type, actor, ticket_id, COALESCE(details, '') FROM audit_logs WHERE tenant_id=$1 ORDER BY created_at DESC, id DESC LIMIT 30`, security.TenantID(r.Context()))
 	if err != nil {
@@ -695,6 +672,19 @@ func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(search)) > 500 {
+		writeError(w, 400, "Поисковый запрос слишком длинный")
+		return
+	}
+	idText := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(search), "id"))
+	idText = strings.TrimSpace(strings.TrimLeft(idText, "#№: "))
+	searchID, _ := strconv.ParseInt(idText, 10, 32)
+	if searchID < 0 {
+		searchID = 0
+	}
+	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(strings.ReplaceAll(strings.ToLower(search), "ё", "е")) + "%"
+
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
        rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
@@ -703,10 +693,12 @@ SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE
          OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.id>COALESCE((SELECT r.last_message_id FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6),0))
        ))
 FROM tickets t WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
+AND ($8<>'' OR NOT $7 OR NOT EXISTS(SELECT 1 FROM ticket_queue_hidden h WHERE h.tenant_id=t.tenant_id AND h.ticket_id=t.id AND h.operator_id=$6 AND NOT EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.source_key<>'initial' AND m.id>h.last_employee_message_id)))
+AND ($8='' OR ($10::bigint>0 AND t.id=$10) OR ($10::bigint=0 AND (translate(concat_ws(E'\n',user_email,subject,raw_text,extracted_summary,operator_reply),'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9 OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND translate(m.body,'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9))))
 ORDER BY id DESC LIMIT $5`
 
 	reader := webDialogueActor(r.Context())
-	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1, reader.id, reader.operator)
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1, reader.id, reader.operator, search, pattern, searchID)
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
