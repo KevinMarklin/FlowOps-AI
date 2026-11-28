@@ -1013,16 +1013,16 @@
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..."></textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
-      .filter(item => item !== 'General')
-      .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
-      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
+    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div><div class="ticket-assignment"><select data-field="department" aria-label="Отдел">${departmentCodes
       .map(
         item => `<option value="${escapeHTML(item)}" ${item === ticket.department ? 'selected' : ''}>${escapeHTML(departments[item] || item)}</option>`
       )
       .join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes
       .map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`)
-      .join('')}</select><button type="button" data-action="take">Взять в работу</button><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article></details>`;
+      .join('')}</select></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="operator-reply reply-composer"><label class="reply-label">Ответ сотруднику<textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..." rows="4"></textarea></label><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+      .filter(item => item !== 'General')
+      .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
+      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></div><div class="ticket-bottom"><div class="ticket-controls"><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article></details>`;
   }
 
   function bindTicketControls(card) {
@@ -1034,7 +1034,6 @@
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
     const draft = state.replyDrafts.get(id);
     const fields = $$(draftFields, card);
-    if (draft && $('[data-reply]', card)) $('.reply-composer', card).open = true;
     if (draft) fields.forEach((field, index) => {
       if (field.type === 'checkbox') field.checked = draft[index];
       else field.value = draft[index];
@@ -1044,12 +1043,9 @@
     on(card, 'change', saveDraft);
     const ragEnabled = card.querySelector('[data-rag-toggle]')?.checked;
     card.querySelectorAll('[data-rag-keywords], [data-rag-title], [data-rag-ttl]').forEach(field => field.hidden = !ragEnabled);
-    const take = card.querySelector('[data-action="take"]');
     const close = card.querySelector('[data-action="close"]');
     const status = card.dataset.status;
-    if (take) take.textContent = 'Работать с обращением';
     if (status === 'closed') {
-      if (take) take.disabled = true;
       if (close) {
         close.disabled = true;
         close.textContent = 'Закрыт';
@@ -1058,9 +1054,6 @@
     card.querySelectorAll('select[data-field]').forEach(select =>
       on(select, 'change', () => updateTicket(id, { [select.dataset.field]: select.value }))
     );
-    on(take, 'click', async () => {
-      if (await trackWork(id, 'start')) { const composer = $('.reply-composer', card); if (composer) composer.open = true; $('[data-reply]', card)?.focus(); }
-    });
     on($('[data-action="work-pause"]', card), 'click', () => trackWork(id, 'pause'));
     on(card, 'input', () => { if (String(workState.id) === id) { workState.activity = Date.now(); if (!workState.running) trackWork(id, 'start'); } });
     on($('[data-reply]', card), 'focus', () => { if (!workState.running || String(workState.id) !== id) trackWork(id, 'start'); });
