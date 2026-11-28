@@ -72,6 +72,9 @@ func AllowRequest(role, method, path string) bool {
 	if path == "/api/v1/auth/me" && method == http.MethodGet {
 		return true
 	}
+	if path == "/api/v1/organization/units" {
+		return method == "GET" || role == "admin" && method == "POST"
+	}
 	if path == "/api/v1/organization" {
 		return method == http.MethodGet
 	}
@@ -129,6 +132,9 @@ func AllowRequest(role, method, path string) bool {
 		}
 		if len(parts) == 1 {
 			return method == http.MethodGet || (role == "operator" && method == http.MethodPatch)
+		}
+		if len(parts) == 2 && parts[1] == "copilot" {
+			return role == "operator" && (method == "GET" || method == "POST")
 		}
 		if len(parts) == 2 && method == http.MethodPost {
 			if parts[1] == "read" {

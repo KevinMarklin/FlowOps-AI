@@ -25,7 +25,7 @@ func TestOrganizationRegistrationSeedsIsolatedWorkspace(t *testing.T) {
 	if invalid.Code != 400 {
 		t.Fatalf("invalid type: %d", invalid.Code)
 	}
-	for _, kind := range []string{"education", "bakery", "bank", "other", ""} {
+	for _, kind := range []string{"education", "bakery", "bank", "other", "financial_university", "blank", ""} {
 		body, _ := json.Marshal(map[string]string{"name": "Organization " + kind, "organization_type": kind})
 		result := httptest.NewRecorder()
 		handler.Create(result, httptest.NewRequest("POST", "/api/v1/workspaces", strings.NewReader(string(body))))
@@ -77,7 +77,18 @@ func TestOrganizationRegistrationSeedsIsolatedWorkspace(t *testing.T) {
 		if profile.Code != 200 || !strings.Contains(profile.Body.String(), `"type":"`+template.Type+`"`) {
 			t.Fatalf("profile: %d %s", profile.Code, profile.Body.String())
 		}
+		if _, err := db.Exec(context.Background(), `UPDATE workspaces SET template_snapshot=jsonb_set(template_snapshot,'{heading}','"Preserved heading"') WHERE tenant_id=$1`, created.Tenant); err != nil {
+			t.Fatal(err)
+		}
+		saved := httptest.NewRecorder()
+		security.ProtectOperatorTenants(mux, db).ServeHTTP(saved, request.Clone(request.Context()))
+		if !strings.Contains(saved.Body.String(), "Preserved heading") {
+			t.Fatal("template snapshot was ignored", saved.Body.String())
+		}
 		// Repeated migrations preserve edits and never add or rewrite starter files.
+		if len(template.Documents) == 0 {
+			continue
+		}
 		first := filepath.Join("knowledge_base", created.Tenant, template.Documents[0].Slug+".md")
 		if err := os.WriteFile(first, []byte("# Organization's edited regulation"), 0600); err != nil {
 			t.Fatal(err)

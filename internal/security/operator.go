@@ -139,11 +139,18 @@ func NewWorkspaceHandler(db *pgxpool.Pool) *WorkspaceHandler {
 func (h *WorkspaceHandler) Me(w http.ResponseWriter, r *http.Request) {
 	tenant := TenantID(r.Context())
 	var name, organizationType string
-	if err := h.db.QueryRow(r.Context(), `SELECT name,organization_type FROM workspaces WHERE tenant_id=$1`, tenant).Scan(&name, &organizationType); err != nil {
+	var snapshot []byte
+	if err := h.db.QueryRow(r.Context(), `SELECT name,organization_type,template_snapshot FROM workspaces WHERE tenant_id=$1`, tenant).Scan(&name, &organizationType, &snapshot); err != nil {
 		http.Error(w, `{"error":"workspace not found"}`, http.StatusUnauthorized)
 		return
 	}
 	organization, _ := settings.Organization(organizationType)
+	if len(snapshot) > 2 {
+		if err := json.Unmarshal(snapshot, &organization); err != nil {
+			ingestError(w, 500, "Не удалось прочитать шаблон организации")
+			return
+		}
+	}
 	config, err := settings.LoadBuilderConfig(r.Context(), func(ctx context.Context) ([]byte, error) {
 		var raw []byte
 		err := h.db.QueryRow(ctx, `SELECT builder_config FROM app_settings WHERE tenant_id=$1 AND id=TRUE`, tenant).Scan(&raw)
@@ -241,7 +248,8 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash,organization_type) VALUES($1,$2,$3,$4,$5)`, tenant, strings.TrimSpace(input.Name), token[:11], hex.EncodeToString(hash[:]), organization.Type)
+	snapshot, _ := json.Marshal(organization)
+	_, err = tx.Exec(r.Context(), `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash,organization_type,template_snapshot) VALUES($1,$2,$3,$4,$5,$6)`, tenant, strings.TrimSpace(input.Name), token[:11], hex.EncodeToString(hash[:]), organization.Type, snapshot)
 	if err != nil {
 		http.Error(w, `{"error":"workspace creation failed"}`, 500)
 		return

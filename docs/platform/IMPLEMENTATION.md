@@ -22,12 +22,12 @@ This file records shipped stages and explicit remaining scope. See REQUEST.md fo
 - [x] Baseline architecture/data-flow review.
 - [x] Organization profile/timezone/contact configuration, working calendar, economic inputs and customizable closure reasons with optimistic revisions.
 - [ ] Structured process events, calendars and SLA.
-- [ ] Server-side analytical exploration and report exports.
+- [x] Server-side analytical exploration and report exports.
 - [ ] Persisted dashboards and report templates/schedules.
 - [ ] Organization hierarchy, custom roles, taxonomy/forms and rule-based routing.
-- [ ] Optimization detection, evidence and recommendation workflow.
-- [ ] Knowledge gaps, draft generation, approval and version lifecycle.
-- [ ] Officially sourced Financial University configuration and wider template catalog.
+- [x] Optimization detection, evidence and recommendation workflow.
+- [x] Knowledge gaps, draft generation, approval and version lifecycle.
+- [x] Officially sourced demonstrational Financial University configuration and wider template catalog.
 - [ ] Copilot, durable workflows and context QR resources.
 - [ ] Complete security/performance/end-to-end acceptance review.
 
@@ -76,3 +76,19 @@ Economic improvements: department-specific rates now drive estimated time values
 Validation: full Go suite and 21 JS tests passed after catching and correcting an overbroad KB path permission; new IDOR/evidence/revision/approval/RAG tests; concurrent snapshot isolation test; real browser verified accepted recommendation + task and full draft→review→publish→edit→archive→restore cycle against isolated DB. PDF/XLSX regression preserved.
 
 Remaining: automatic semantic scheduling, conflicting-instruction semantic review, confirmed before/after causal impact, organization hierarchy/custom scopes, copilot, durable workflows, QR and report scheduling. Manual legacy publication remains the pre-existing explicit human action; AI import does not publish. Existing built-in roles remain authoritative until the custom-role extension is delivered.
+
+### Stage 5 — sourced templates and specialist Copilot
+
+Added the explicitly demonstrational Financial University employee template, three verified official unit names, source URLs/verification dates and safe instructions requiring local confirmation. Added IT, manufacturing, retail, medical, logistics and empty-start templates. New workspaces retain their own template snapshot; existing workspaces are not reseeded. Arbitrary valid routing codes are preserved instead of silently becoming General. Empty organizations do not display unrelated example prompts.
+
+Copilot API: GET/POST /api/tickets/{id}/copilot for operators/admins only. Context includes approved knowledge and up to five keyword-matched solved tickets, bounded and PII-masked. Real structured-model summaries, response drafts, clarifying questions and routing suggestions validate source IDs and department codes. No automatic send, status or routing mutation. Missing model returns 503; the interface exposes sources and honest unavailable state. Inserting a draft requires a separate human send.
+
+Validation: full Go suite, template/tenant/snapshot/Copilot IDOR/model-source tests and live Copilot context/unavailable-provider browser check passed. No unverified university limits or deadlines are presented as official policy.
+
+### Stage 6 — organization hierarchy and memberships
+
+Migration: tenant-bound organization_units and organization_unit_members with composite foreign keys and stable routing codes. Arbitrary kind/depth, parent changes with cycle detection, multi-unit memberships and manager/deputy/responsible relations. Administrator mutations serialize through the workspace lock and use optimistic revisions. Deactivation recursively disables descendants and removes their managed routing queues; existing tickets/history remain. Member IDs are excluded from non-admin reads.
+
+API: GET/POST /api/v1/organization/units and PUT /{id}. Settings includes a responsive structure editor with parent selection, stable-code display and membership editing. Saved active routing codes update the existing department configuration and selector data.
+
+Validation: complete Go suite and 21 JS regressions passed; cycle/cross-tenant parent/member/routing/deactivation tests; explicit middleware route permission regression; live create/edit/member persistence and mobile overflow check. Browser verification caught and corrected administrator POST denied by the early read-only route rule. Structure does not yet grant scoped ticket/analytics access: built-in roles still govern resources. Custom roles/scopes, taxonomy, workflow/QR and schedules remain outstanding.

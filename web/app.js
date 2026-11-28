@@ -52,7 +52,7 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
+    admin: ['admin', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
     operator: ['operator', 'knowledge', 'knowledge-review', 'employee'],
     analyst: ['analytics','optimization'],
     employee: ['employee']
@@ -65,6 +65,7 @@
     window.FlowOpsAnalytics?.clear();
     window.FlowOpsOptimization?.clear();
     window.FlowOpsKnowledge?.clear();
+    window.FlowOpsStructure?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
     if ($('#settings-nav')) $('#settings-nav').open = false;
@@ -447,13 +448,16 @@
     const industry = $('#service-industry');
     if (industry) industry.textContent = organization?.name || 'Выберите близкую ситуацию';
     const examples = organization?.examples || ['Не получается войти в рабочий сервис.', 'Не работает оборудование на рабочем месте.', 'Как запросить кадровую справку?'];
-    const titles = {
+    const titles = organization?.example_titles || {
       education: ['Оборудование в аудитории', 'Учебные сервисы', 'Справка об обучении'],
       bakery: ['Оборудование пекарни', 'Касса и продажи', 'Поставки сырья'],
       bank: ['Внутренние системы', 'Безопасность', 'Кадровые документы'],
       other: ['Доступ к сервису', 'Оборудование', 'Документы и справки']
-    }[organization?.type] || ['Доступ к сервису', 'Оборудование', 'Документы и справки'];
+    }[organization?.type] || examples.map(text=>String(text).split('.')[0].slice(0,45));
+    const exampleSection=$('#employee .service-examples');if(exampleSection)exampleSection.hidden=examples.length===0;
+    let notice=$('#organization-template-notice');if(!notice){notice=document.createElement('p');notice.id='organization-template-notice';notice.className='field-help';$('#employee .page-heading').after(notice);}notice.textContent=organization?.notice||'';notice.hidden=!notice.textContent;
     $$('.service-examples [data-demo]').forEach((button, index) => {
+      button.hidden=!examples.length;if(!examples.length)return;
       button.dataset.demo = examples[index] || examples[0];
       $('b', button).textContent = titles[index];
       $('span', button).textContent = button.dataset.demo;
@@ -1041,6 +1045,7 @@
         card.querySelector('.work-status').before($('#operator-dialogue'));
         card.querySelector('[data-open-dialogue]')?.remove();
         window.FlowOpsAnalytics?.attachTimeline(card,ticket);
+        window.FlowOpsCopilot?.attach(card,ticket);
       } else if (state.user?.role === 'employee') { window.FlowOpsSupportUI?.open(ticket.id); window.FlowOpsAnalytics?.attachTimeline($('#ticket-detail-content'),ticket); }
     } catch (error) {
       if (version === ticketRouteVersion && generation === sessionGeneration) $('#ticket-detail-status').textContent = error.message;
@@ -1545,7 +1550,7 @@
       const count = response.count ?? articles.length;
       if (resultBox) {
         resultBox.hidden = false;
-        resultBox.innerHTML = `<div class="smart-import-summary">Создано черновиков: ${Number(count)} · источник: ${escapeHTML(response.provider || response.source || 'ai')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
+        resultBox.innerHTML = `<div class="smart-import-summary">Создано черновиков: ${Number(count)} · источник: ${escapeHTML(response.source==='fallback'?'разбор текста без ИИ':response.source==='gigachat'?'ИИ':response.provider||response.source||'не указан')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
           .map(
             item =>
               `<article class="smart-import-card"><strong>${escapeHTML(item.title || 'Регламент')}</strong><small>${escapeHTML(item.department || '')}${item.keywords?.length ? ` · ${escapeHTML(item.keywords.join(', '))}` : ''}</small><pre>${escapeHTML(item.content || '')}</pre></article>`
@@ -1807,6 +1812,7 @@
         if (tab.dataset.tab === 'admin') { loadMembers(); loadAudit(); }
         if (tab.dataset.tab === 'knowledge') loadKnowledge();
         if (tab.dataset.tab === 'knowledge-review') window.FlowOpsKnowledge?.refresh();
+        if (tab.dataset.tab === 'structure') window.FlowOpsStructure?.refresh();
         if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();
         if (tab.dataset.tab === 'channels') {
           loadWidgetConfig();
@@ -1961,7 +1967,7 @@
     }, 5000);
   }
 
-  window.FlowOpsSupport={organizationChanged:c=>{
+  window.FlowOpsSupport={departmentsChanged:applyDepartments,organizationChanged:c=>{
     if(c.name)$('#workspace-name-label').textContent=c.name;
     window.FlowOpsAnalytics?.setTimezone(c.timezone);
     if(Array.isArray(c.closure_reasons)){closureReasonLabels={unspecified:'Причина не указана',...Object.fromEntries(c.closure_reasons.map(x=>[x.id,x.label]))};}

@@ -629,6 +629,21 @@ func validDepartment(value string) bool {
 	return value == "IT" || value == "HR" || value == "Accounting" || value == "Facilities" || value == "General" || value == "Unassigned"
 }
 
+// ValidDepartmentName preserves organization-defined codes without allowing
+// path components, markup or control characters into metadata/front matter.
+func ValidDepartmentName(value string) bool {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) == 0 || len([]rune(value)) > 100 {
+		return false
+	}
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != ' ' && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 func NormalizeDepartment(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "billing", "биллинг", "финансы и биллинг", "оплата":
@@ -652,6 +667,10 @@ func NormalizeDepartment(value string) string {
 	case "general", "общее", "общее / без отдела", "не назначен", "unassigned", "":
 		return "General"
 	default:
+		normalized := strings.TrimSpace(value)
+		if ValidDepartmentName(normalized) {
+			return normalized
+		}
 		return "General"
 	}
 }
