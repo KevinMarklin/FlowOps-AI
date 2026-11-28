@@ -28,6 +28,7 @@ COPY --from=builder --chown=10001:10001 /app/server /app/server
 COPY --chown=10001:10001 web/ /app/web/
 COPY --chown=10001:10001 knowledge_base/ /app/knowledge_base/
 COPY --chown=10001:10001 schema.sql /app/schema.sql
+COPY --chown=10001:10001 LICENSE NOTICE THIRD_PARTY_NOTICES.md /app/
 
 USER 10001:10001
 

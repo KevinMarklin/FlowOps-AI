@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	documentation "flowops-ai/docs"
 	"flowops-ai/internal/analyzer"
 	"flowops-ai/internal/channels"
 	"flowops-ai/internal/database"
@@ -283,6 +284,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/integrations/1c/check", integrationsHandler.OneC)
 	mux.HandleFunc("GET /api/v1/integrations/1c/data", integrationsHandler.OneC)
 	registerSectionRoutes(mux)
+	documentation.Register(mux, "LICENSE")
 	mux.Handle("GET /widget.js", noStoreFileServer(http.Dir("web")))
 	mux.Handle("GET /", noStoreFileServer(http.Dir("web")))
 	mux.HandleFunc("GET /tickets/{id}", func(w http.ResponseWriter, r *http.Request) {

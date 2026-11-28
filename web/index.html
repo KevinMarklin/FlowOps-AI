@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/university.css?v=2">
   <link rel="stylesheet" href="/service-flow.css?v=1">
   <link rel="stylesheet" href="/dialogue.css?v=3">
+  <link rel="stylesheet" href="/documentation.css?v=1">
   <link rel="stylesheet" href="/ticket-rows.css?v=1">
   <link rel="icon" type="image/png" href="/assets/flowops-mark.png">
 </head>
@@ -45,6 +46,7 @@
         <button class="auth-submit" type="submit">Активировать доступ</button></form>
       </details>
 
+    <nav class="auth-doc-links" aria-label="Справка"><a href="/documentation">Документация</a><a href="/license">Лицензия Apache 2.0</a></nav>
     </div>
   </section>
   <header class="topbar">
@@ -225,6 +227,7 @@
 <section class="panel"><h2>Данные 1С</h2><p>Просмотр одной страницы данных без изменения базы 1С. В OData выберите опубликованный справочник; для HTTP укажите относительный путь JSON-ресурса.</p>
 <form id="onec-read"><label>Ресурс<input name="resource" required maxlength="160" placeholder="Catalog_Сотрудники" list="onec-resources"></label><datalist id="onec-resources"></datalist><div class="org-form-grid"><label>Пропустить записей<input name="skip" type="number" min="0" max="1000000" value="0"></label><label>Размер страницы<input name="limit" type="number" min="1" max="100" value="20"></label></div><button type="submit" class="secondary-button">Загрузить данные</button></form><pre id="onec-result" style="max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere" tabindex="0" aria-label="Результат запроса к 1С"></pre></section></section>
    </main>
+  <footer class="site-footer"><nav aria-label="Справочные ссылки"><a href="/documentation">Документация</a><a href="/license">Лицензия Apache 2.0</a><a href="/documentation/data">Обработка данных</a><a href="/documentation/troubleshooting">Помощь</a></nav><p>© 2026 Авторы FlowOps AI. Проект распространяется по Apache License 2.0. Сторонние компоненты сохраняют свои лицензии.</p><a href="https://github.com/KevinMarklin/FlowOps-AI" target="_blank" rel="noopener noreferrer">GitHub</a></footer>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/routes.js?v=1"></script><script src="/app.js?v=operations-1"></script>
     <script src="/dialogue.js?v=5"></script>
