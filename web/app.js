@@ -78,6 +78,7 @@
     $$('#builder input, #builder textarea').forEach(field => { field.value = ''; });
     const snippet = $('#widget-snippet-box'); if (snippet) snippet.hidden = true;
     const curl = $('#crm-curl'); if (curl) curl.textContent = '';
+    ++ticketRouteVersion; leaveTicketContent();
     const toastBox = $('#toast'); if (toastBox) { toastBox.textContent = ''; toastBox.classList.remove('show'); }
     if (initialAnalysis) $('#analysis-result')?.replaceWith(initialAnalysis.cloneNode(true));
   }
@@ -297,7 +298,8 @@
       hideAuth(me);
       setAPIStatus(true); renderChannels(['Web']); $('#api-status').textContent = 'Сервис доступен';
       $('#login-password').value = ''; $('#activation-password').value = ''; $('#activation-confirm').value = ''; $('#operator-token').value = '';
-      document.querySelector('.tab.active')?.click();
+      if (location.pathname.startsWith('/tickets/')) renderTicketRoute();
+      else document.querySelector('.tab.active')?.click();
       return true;
     } catch { showAuth('Не удалось подключиться к сервису. Проверьте соединение.'); return false; }
   }
@@ -989,6 +991,53 @@
     $$('.ticket-card', list).forEach(bindTicketControls);
   }
 
+  let ticketRouteVersion = 0;
+  function navigateTicket(id) {
+    history.pushState({}, '', `/tickets/${Number(id)}`);
+    renderTicketRoute();
+  }
+  async function renderTicketRoute() {
+    const version = ++ticketRouteVersion;
+    const match = location.pathname.match(/^\/tickets\/(\d+)\/?$/);
+    if (!match || !authReady) return;
+    const generation = sessionGeneration;
+    leaveTicketContent();
+    $$('.view').forEach(view => view.classList.remove('active'));
+    $('#ticket-detail').classList.add('active');
+    $('#ticket-detail-title').textContent = `Тикет #${match[1]}`;
+    $('#ticket-detail-status').textContent = 'Загрузка тикета…';
+    try {
+      const ticket = await api(`/api/tickets/${match[1]}`);
+      if (version !== ticketRouteVersion || generation !== sessionGeneration) return;
+      $('#ticket-detail-status').textContent = '';
+      $('#ticket-detail-title').textContent = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
+      if (canTab('operator')) {
+        const template = document.createElement('template');
+        template.innerHTML = ticketCard(ticket);
+        const card = template.content.querySelector('.ticket-card');
+        $('#ticket-detail-content').append(card);
+        bindTicketControls(card);
+        window.FlowOpsSupportUI?.openOperator(ticket.id);
+        card.querySelector('.work-status').before($('#operator-dialogue'));
+        card.querySelector('[data-open-dialogue]')?.remove();
+      } else if (state.user?.role === 'employee') window.FlowOpsSupportUI?.open(ticket.id);
+    } catch (error) {
+      if (version === ticketRouteVersion && generation === sessionGeneration) $('#ticket-detail-status').textContent = error.message;
+    }
+    window.scrollTo({top:0,behavior:'instant'});
+  }
+  function leaveTicketContent() {
+    const operator = $('#operator-dialogue');
+    if (operator) { operator.hidden = true; $('#ticket-list').before(operator); }
+    const employee = $('#employee-dialogue');
+    if (employee) { employee.hidden = true; $('#analysis-result').after(employee); }
+    $('#ticket-detail-content')?.replaceChildren();
+  }
+  function leaveTicketRoute() {
+    ++ticketRouteVersion;
+    leaveTicketContent();
+  }
+
   function ticketRowTitle(ticket) {
     return String(ticket.subject || ticket.extracted_summary || ticket.raw_text || 'Без темы').split(/\s*Уточнения (?:заявителя|пропущены)/i)[0].replace(/\s+/g,' ').trim() || 'Без темы';
   }
@@ -998,7 +1047,7 @@
     const status = statusLabel(ticket.status);
     const compactStatus={new:'Новый',awaiting_confirmation:'Ждёт подтверждения',assigned_to_operator:'В работе',auto_resolved:'Закрыт',resolved:'Есть ответ',closed:'Закрыт'}[ticket.status]||status;
     const date = new Date(ticket.created_at).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'});
-    return `<span class="ticket-row-status" title="${escapeHTML(status)}">${escapeHTML(compactStatus)}</span><strong class="ticket-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</strong><time class="ticket-row-date" datetime="${escapeHTML(ticket.created_at)}">${escapeHTML(date)}</time>${indicator?`<span class="ticket-unread-dot" data-unread="${Boolean(ticket.unread_employee_message)}" role="img" aria-label="Новое обращение или сообщение сотрудника" aria-hidden="${!ticket.unread_employee_message}"></span>`:''}`;
+    return `<span class="ticket-row-status" title="${escapeHTML(status)}">${escapeHTML(compactStatus)}</span><a class="ticket-row-title" href="/tickets/${ticket.id}" title="${escapeHTML(title)}">${escapeHTML(title)}</a><time class="ticket-row-date" datetime="${escapeHTML(ticket.created_at)}">${escapeHTML(date)}</time>${indicator?`<span class="ticket-unread-dot" data-unread="${Boolean(ticket.unread_employee_message)}" role="img" aria-label="Новое обращение или сообщение сотрудника" aria-hidden="${!ticket.unread_employee_message}"></span>`:''}`;
   }
 
   function setTicketUnread(id, unread) {
@@ -1030,7 +1079,7 @@
     const row=card.closest('.ticket-row');
     row?.addEventListener('toggle',()=>{const key=`queue:${id}`;if(row.open)state.ticketRowsOpen.add(key);else state.ticketRowsOpen.delete(key);});
     const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.dataset.openDialogue='';dialogueButton.textContent='Раскрыть диалог';
-    dialogueButton.addEventListener('click',()=>window.FlowOpsSupportUI?.openOperator(id));$('.ticket-controls',card)?.prepend(dialogueButton);
+    dialogueButton.addEventListener('click',()=>location.pathname===`/tickets/${id}`?window.FlowOpsSupportUI?.openOperator(id):navigateTicket(id));$('.ticket-controls',card)?.prepend(dialogueButton);
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
     const draft = state.replyDrafts.get(id);
     const fields = $$(draftFields, card);
@@ -1085,7 +1134,7 @@
       if (String(workState.id) === String(id)) await trackWork(id, 'pause');
       const toggle = card.querySelector('[data-rag-toggle]');
       if (toggle && toggle.checked) {
-        const ticket = state.tickets.find(item => String(item.id) === String(id));
+        const ticket = state.tickets.find(item => String(item.id) === String(id)) || {raw_text:''};
         const keywords = card.querySelector('[data-rag-keywords]');
         const department = card.querySelector('[data-rag-department]');
         const supplied = (keywords ? keywords.value : '')
@@ -1116,6 +1165,7 @@
       state.replyDrafts.delete(String(id));
       window.FlowOpsSupportUI.replySent(id);
       await loadOperator(true);
+      if (location.pathname === `/tickets/${id}`) renderTicketRoute();
     } catch (error) {
       toast(error.message);
     } finally {
@@ -1560,6 +1610,7 @@
     }
     try {
       await api(`/api/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(changes) });
+      if (location.pathname === `/tickets/${id}` && changes.status === 'closed') renderTicketRoute();
       const ticket = state.tickets.find(item => String(item.id) === String(id));
       if (ticket) ticket.status = changes.status || ticket.status;
       await loadOperator(true);
@@ -1700,6 +1751,7 @@
     $$('.tab').forEach(tab =>
       on(tab, 'click', () => {
         if (!canTab(tab.dataset.tab)) return;
+        if (location.pathname.startsWith('/tickets/')) { history.pushState({}, '', '/'); leaveTicketRoute(); }
         $$('.tab, .view').forEach(element => element.classList.remove('active'));
         tab.classList.add('active');
         $$('.tab').forEach(item => item.setAttribute('aria-current', item === tab ? 'page' : 'false'));
@@ -1814,6 +1866,21 @@
       });
     });
 
+    on(document, 'click', event => {
+      if (event.target.closest('[data-ticket-back]')) {
+        event.preventDefault(); history.pushState({}, '', '/'); leaveTicketRoute();
+        $(`.tab[data-tab="${canTab('operator')?'operator':'employee'}"]`)?.click(); return;
+      }
+      const summary = event.target.closest('.ticket-row-summary');
+      if (!summary || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const id = summary.closest('[data-ticket-id]')?.dataset.ticketId;
+      if (id) { event.preventDefault(); navigateTicket(id); }
+    });
+    on(window, 'popstate', () => {
+      if (location.pathname.startsWith('/tickets/')) renderTicketRoute();
+      else { leaveTicketRoute(); $(`.tab[data-tab="${canTab('operator')?'operator':'employee'}"]`)?.click(); }
+    });
+
     restoreSession();
 
     on(document, 'visibilitychange', () => { if (!document.hidden && authReady) checkAPI(); });
@@ -1822,7 +1889,7 @@
     setInterval(() => {
       if (!workState.running || workState.busy || !hasSession()) return;
       const focusedCard = document.activeElement?.closest('.ticket-card');
-      const active = !document.hidden && document.hasFocus() && $('#operator')?.classList.contains('active') && focusedCard?.dataset.id === String(workState.id) && Date.now() - workState.activity < 60000;
+      const active = !document.hidden && document.hasFocus() && ($('#operator')?.classList.contains('active') || $('#ticket-detail')?.classList.contains('active')) && focusedCard?.dataset.id === String(workState.id) && Date.now() - workState.activity < 60000;
       trackWork(workState.id, active ? 'heartbeat' : 'pause');
     }, 15000);
     on(window, 'blur', () => { if (workState.running) trackWork(workState.id, 'pause'); });

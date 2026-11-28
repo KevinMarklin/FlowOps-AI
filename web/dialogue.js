@@ -65,6 +65,10 @@
       root.querySelector('[data-dialogue-older]').hidden=true;
       error(view,'');
     }
+    const detail=document.querySelector('#ticket-detail.active');
+    if(detail)detail.querySelector('#ticket-detail-content').prepend(root);
+    else if(operator)document.querySelector('#ticket-list').before(root);
+    else document.querySelector('#analysis-result').after(root);
     root.hidden=false;load(view);
     if(operator)root.scrollIntoView({behavior:'auto',block:'start'});
   }

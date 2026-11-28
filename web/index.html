@@ -8,7 +8,7 @@
   <script src="/theme.js?v=1"></script>
   <link rel="stylesheet" href="/styles.css?v=7">
   <link rel="stylesheet" href="/overrides.css?v=7">
-  <link rel="stylesheet" href="/workspace.css?v=9">
+  <link rel="stylesheet" href="/workspace.css?v=10">
   <link rel="stylesheet" href="/workflow.css?v=4">
   <link rel="stylesheet" href="/user-settings.css?v=pilot-1">
   <link rel="stylesheet" href="/university.css?v=2">
@@ -104,9 +104,9 @@
           </form>
         </div>
         <div class="result-column"><div id="analysis-result" class="panel result-panel empty" tabindex="-1" aria-label="Результат обращения"><div class="empty-state"><h2>Что будет после отправки</h2><ol class="request-steps"><li><strong>Подготовим обращение</strong><span>Для оборудования и доступа уточним недостающие сведения.</span></li><li><strong>Проверим регламенты</strong><span>Если есть готовая инструкция, покажем её здесь.</span></li><li><strong>Сохраним контекст</strong><span>Специалист увидит проблему и все ваши ответы. Решение инструкции подтвердите вы.</span></li></ol></div></div>
-           <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="ID, слово или фраза" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div><div class="ticket-paging"><p id="history-page-note" class="muted"></p><button id="history-newest" type="button" class="secondary-button" hidden>К последним</button><button id="history-older" type="button" class="secondary-button" hidden>Более ранние</button></div></div>
          </div>
        </div>
+           <div class="panel history-panel"><div class="panel-title"><div><h2>Мои обращения</h2></div><button type="button" aria-label="Обновить историю" id="refresh-history" class="icon-button" title="Обновить">↻</button></div><label class="search-field" for="history-search">Найти обращение<input id="history-search" type="search" placeholder="ID, слово или фраза" autocomplete="off"></label><div id="history-list" class="history-list"><p class="muted">Здесь появятся ваши обращения и ответы специалистов.</p></div><div class="ticket-paging"><p id="history-page-note" class="muted"></p><button id="history-newest" type="button" class="secondary-button" hidden>К последним</button><button id="history-older" type="button" class="secondary-button" hidden>Более ранние</button></div></div>
       </section>
       <section id="builder" class="view">
         <div class="page-heading"><div><h1>Настройка сервиса</h1><p class="lede">Каналы, стиль общения, умный импорт регламентов и живая песочница.</p></div><div class="heading-note"><span class="pulse"></span> Настройки компании</div></div>
@@ -188,9 +188,10 @@
       <section class="panel builder-block team-panel"><div class="panel-title"><h2>Команда</h2><button id="refresh-members" type="button" class="secondary-button">Обновить</button></div><p class="muted">Доступ владельца хранится отдельно. Собственную роль менять нельзя. Отключение доступа действует со следующего запроса.</p><div class="table-wrap"><table class="keys-table"><thead><tr><th>Участник</th><th>Роль</th><th>Доступ</th><th>Действия</th></tr></thead><tbody id="members-list"></tbody></table></div></section>
       <section class="panel builder-block team-panel"><h2>Журнал действий</h2><div id="audit-list" class="audit-list"></div></section>
     </section>
+    <section id="ticket-detail" class="view"><a href="/" data-ticket-back class="secondary-button">← К списку обращений</a><div class="page-heading"><h1 id="ticket-detail-title">Тикет</h1></div><p id="ticket-detail-status" role="status"></p><div id="ticket-detail-content"></div></section>
    </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=ticket-composer-2"></script>
-    <script src="/dialogue.js?v=4"></script>
+    <script src="/app.js?v=ticket-routes-1"></script>
+    <script src="/dialogue.js?v=5"></script>
 </body>
 </html>

@@ -227,6 +227,10 @@ func main() {
 	mux.HandleFunc("POST /api/v1/settings/channels/{channel}/check", integrationsHandler.CheckChannel)
 	mux.Handle("GET /widget.js", noStoreFileServer(http.Dir("web")))
 	mux.Handle("GET /", noStoreFileServer(http.Dir("web")))
+	mux.HandleFunc("GET /tickets/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFile(w, r, "web/index.html")
+	})
 	mux.Handle("POST /api/tickets/{id}/feedback", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Feedback), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))
 	mux.HandleFunc("POST /api/tickets/{id}/reply", ticketsHandler.Reply)
 	mux.HandleFunc("GET /api/tickets/{id}/messages", ticketsHandler.Messages)
