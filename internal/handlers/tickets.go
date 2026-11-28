@@ -697,11 +697,16 @@ func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
+       ($7::boolean AND status NOT IN ('closed','auto_resolved') AND (
+         NOT EXISTS(SELECT 1 FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6)
+         OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.id>COALESCE((SELECT r.last_message_id FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6),0))
+       ))
+FROM tickets t WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
 ORDER BY id DESC LIMIT $5`
 
-	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1)
+	reader := webDialogueActor(r.Context())
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1, reader.id, reader.operator)
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
@@ -715,7 +720,7 @@ ORDER BY id DESC LIMIT $5`
 		if err := rows.Scan(
 			&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 			&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes,
-			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
+			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.UnreadEmployeeMessage,
 		); err != nil {
 			h.logger.Error("failed to scan ticket")
 			writeError(w, http.StatusInternalServerError, "failed to read tickets")

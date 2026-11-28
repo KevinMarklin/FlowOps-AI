@@ -14,6 +14,7 @@ func TestRolePermissionMatrix(t *testing.T) {
 		{"GET", "/api/tickets/42/messages", []string{"employee", "operator", "admin"}},
 		{"POST", "/api/tickets/42/messages", []string{"employee", "operator", "admin"}},
 		{"POST", "/api/tickets/42/decision", []string{"employee", "admin"}},
+		{"POST", "/api/tickets/42/read", []string{"operator", "admin"}},
 		{"POST", "/api/tickets/42/messages/8/rating", []string{"employee", "admin"}},
 		{"DELETE", "/api/tickets/42/messages", []string{"admin"}},
 		{"POST", "/api/tickets/42/feedback", []string{"employee", "operator", "admin"}},

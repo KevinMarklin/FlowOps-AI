@@ -9,6 +9,7 @@
     employeePoll: null,
     operatorLoading: false,
     replyDrafts: new Map(),
+    ticketRowsOpen: new Set(),
     historyTickets: [],
     user: null
   };
@@ -63,7 +64,7 @@
     clearPersonalCodes();
     workState = { id: null, seconds: 0, running: false, busy: false, activity: 0 };
     state.pendingTicket = null;
-    state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear();
+    state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear(); state.ticketRowsOpen.clear();
     state.historyTickets = []; state.historyBefore = 0; state.operatorBefore = 0;
     ['#history-search', '#queue-search'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
     ['#priority-filter', '#department-filter', '#status-filter'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
@@ -708,20 +709,21 @@
       ? tickets
           .map(
             ticket =>
-              `<details class="history-row" data-ticket-id="${ticket.id}"><summary><div><strong>#${ticket.id} · ${escapeHTML(ticket.extracted_summary || ticket.raw_text)}</strong><p>${channelTag(ticket.channel)} <span class="history-status">${escapeHTML(statusLabel(ticket.status))}</span></p></div>${priorityTag(ticket.priority)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${regulationMarkup(ticket.rag_answer)}</div>` : ''}${intakeContextMarkup(ticket.raw_text)}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
+              `<details class="history-row ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`history:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${regulationMarkup(ticket.rag_answer)}</div>` : ''}${intakeContextMarkup(ticket.raw_text)}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
           )
           .join('')
       : `<p class="muted">${query ? 'Ничего не найдено. Попробуйте другой номер или слово.' : 'Пока нет обращений. Опишите проблему в форме — ответ появится здесь.'}</p>`;
 
-    $$('.history-row', list).forEach(row =>
+    $$('.history-row', list).forEach(row => {
+      row.addEventListener('toggle',()=>{const key=`history:${row.dataset.ticketId}`;if(row.open)state.ticketRowsOpen.add(key);else state.ticketRowsOpen.delete(key);});
       on(row, 'click', event => {
         if (event.target.closest('button, a')) return;
         const ticket = state.tickets.find(item => String(item.id) === String(row.dataset.ticketId));
         if (!ticket) return;
         state.currentTicketId = ticket.id;
         renderAnalysis(ticket);
-      })
-    );
+      });
+    });
   }
 
   function renderAnalysis(ticket) {
@@ -888,6 +890,7 @@
       if (cursor !== state.operatorBefore) return;
       updateTicketPaging('queue', tickets, 100, cursor);
       state.tickets = tickets;
+      tickets.forEach(ticket=>setTicketUnread(ticket.id,ticket.unread_employee_message));
       if (forceRender === true || !$('#ticket-list')?.contains(document.activeElement)) renderTickets();
       const emptyOperator = $('#operator-empty');
       if (emptyOperator) emptyOperator.hidden = tickets.length !== 0;
@@ -983,6 +986,23 @@
     $$('.ticket-card', list).forEach(bindTicketControls);
   }
 
+  function ticketRowTitle(ticket) {
+    return String(ticket.subject || ticket.extracted_summary || ticket.raw_text || 'Без темы').split(/\s*Уточнения (?:заявителя|пропущены)/i)[0].replace(/\s+/g,' ').trim() || 'Без темы';
+  }
+
+  function ticketRowSummary(ticket, indicator = false) {
+    const title = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
+    const status = statusLabel(ticket.status);
+    const compactStatus={new:'Новый',awaiting_confirmation:'Ждёт подтверждения',assigned_to_operator:'В работе',auto_resolved:'Закрыт',resolved:'Есть ответ',closed:'Закрыт'}[ticket.status]||status;
+    const date = new Date(ticket.created_at).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'});
+    return `<span class="ticket-row-status" title="${escapeHTML(status)}">${escapeHTML(compactStatus)}</span><strong class="ticket-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</strong><time class="ticket-row-date" datetime="${escapeHTML(ticket.created_at)}">${escapeHTML(date)}</time>${indicator?`<span class="ticket-unread-dot" data-unread="${Boolean(ticket.unread_employee_message)}" role="img" aria-label="Новое обращение или сообщение сотрудника" aria-hidden="${!ticket.unread_employee_message}"></span>`:''}`;
+  }
+
+  function setTicketUnread(id, unread) {
+    const dot = document.querySelector(`#ticket-list .ticket-row[data-ticket-id="${Number(id)}"] .ticket-unread-dot`);
+    if(dot){dot.dataset.unread=String(Boolean(unread));dot.setAttribute('aria-hidden',String(!unread));}
+  }
+
   function ticketCard(ticket) {
     const departmentCodes = [...new Set([...(state.departmentCodes || ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General']), ticket.department].filter(Boolean))];
     const priorityCodes = ['high', 'medium', 'low'];
@@ -990,7 +1010,7 @@
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..."></textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..."></textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
       .filter(item => item !== 'General')
       .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
       .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
@@ -999,11 +1019,13 @@
       )
       .join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes
       .map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`)
-      .join('')}</select><button type="button" data-action="take">Взять в работу</button><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article>`;
+      .join('')}</select><button type="button" data-action="take">Взять в работу</button><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article></details>`;
   }
 
   function bindTicketControls(card) {
     const id = card.dataset.id;
+    const row=card.closest('.ticket-row');
+    row?.addEventListener('toggle',()=>{const key=`queue:${id}`;if(row.open)state.ticketRowsOpen.add(key);else state.ticketRowsOpen.delete(key);});
     const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.dataset.openDialogue='';dialogueButton.textContent='Открыть переписку';
     dialogueButton.addEventListener('click',()=>window.FlowOpsSupportUI?.openOperator(id));$('.ticket-controls',card)?.prepend(dialogueButton);
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
@@ -1816,7 +1838,9 @@
     }, 5000);
   }
 
-  window.FlowOpsSupport={request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,changed:(id,status,messages)=>{
+  window.FlowOpsSupport={request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
+    const ticket=state.tickets.find(item=>String(item.id)===String(id));if(ticket)ticket.unread_employee_message=unread;setTicketUnread(id,unread);
+  },changed:(id,status,messages)=>{
     for(const ticket of [...state.tickets,...state.historyTickets]){if(String(ticket.id)!==String(id))continue;ticket.status=status;const operator=messages.filter(message=>message.role==='operator').at(-1);if(operator)ticket.operator_reply=operator.body;}
     const current=state.tickets.find(ticket=>String(ticket.id)===String(id));if(current&&String(state.currentTicketId)===String(id))renderAnalysis(current);renderHistory();
   }};

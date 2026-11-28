@@ -6,23 +6,24 @@ import (
 )
 
 type Ticket struct {
-	Messages         []TicketMessage `json:"messages,omitempty"`
-	DeliveryStatus   string          `json:"delivery_status"`
-	ID               int             `json:"id"`
-	UserEmail        string          `json:"user_email"`
-	Channel          string          `json:"channel"`
-	Subject          string          `json:"subject,omitempty"`
-	CallbackURL      string          `json:"callback_url,omitempty"`
-	RawText          string          `json:"raw_text"`
-	Department       string          `json:"department"`
-	Priority         string          `json:"priority"`
-	ExtractedSummary *string         `json:"extracted_summary,omitempty"`
-	RAGAnswer        *string         `json:"rag_answer,omitempty"`
-	OperatorReply    *string         `json:"operator_reply"`
-	PIIMaskedCount   int             `json:"pii_masked_count"`
-	PIIMaskedTypes   []string        `json:"pii_masked_types"`
-	Status           string          `json:"status"`
-	CreatedAt        time.Time       `json:"created_at"`
+	UnreadEmployeeMessage bool            `json:"unread_employee_message"`
+	Messages              []TicketMessage `json:"messages,omitempty"`
+	DeliveryStatus        string          `json:"delivery_status"`
+	ID                    int             `json:"id"`
+	UserEmail             string          `json:"user_email"`
+	Channel               string          `json:"channel"`
+	Subject               string          `json:"subject,omitempty"`
+	CallbackURL           string          `json:"callback_url,omitempty"`
+	RawText               string          `json:"raw_text"`
+	Department            string          `json:"department"`
+	Priority              string          `json:"priority"`
+	ExtractedSummary      *string         `json:"extracted_summary,omitempty"`
+	RAGAnswer             *string         `json:"rag_answer,omitempty"`
+	OperatorReply         *string         `json:"operator_reply"`
+	PIIMaskedCount        int             `json:"pii_masked_count"`
+	PIIMaskedTypes        []string        `json:"pii_masked_types"`
+	Status                string          `json:"status"`
+	CreatedAt             time.Time       `json:"created_at"`
 }
 
 type TicketMessage struct {

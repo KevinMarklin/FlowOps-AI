@@ -10,6 +10,9 @@ The employee has two decisions: **Вопрос решён** and **Не помо�
 - `POST /api/tickets/{id}/messages`: `{body, client_message_id}`. Same actor/key/body retries are idempotent; changed bodies with an existing key conflict. Closed tickets reject new messages.
 - `POST /api/tickets/{id}/decision`: `{resolved}` from the requester.
 - `POST /api/tickets/{id}/messages/{message}/rating`: `{score, comment}` from the requester, only for assistant/operator messages.
+- `POST /api/tickets/{id}/read`: `{last_message_id}` for operators/admins. Acknowledge the exact viewed transcript; older acknowledgements cannot clear newer employee messages or regress the cursor.
+
+Ticket lists return `unread_employee_message` for the current operator. Open tickets without a read record and tickets with employee messages newer than the saved cursor display a yellow dot at the right edge of their compact row. Closed tickets have no dot. Read cursors are tenant-scoped and per operator. Opening a row exposes the existing controls; opening the transcript marks its received messages read. Expanded rows survive queue polling.
 
 All routes use existing session, CSRF, tenant and ownership checks. Operator reads include the employee's feedback. The previous reply/feedback APIs remain for existing integrations; the updated website and bot adapters use the conversation operations.
 

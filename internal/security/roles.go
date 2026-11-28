@@ -100,6 +100,9 @@ func AllowRequest(role, method, path string) bool {
 			return method == http.MethodGet || (role == "operator" && method == http.MethodPatch)
 		}
 		if len(parts) == 2 && method == http.MethodPost {
+			if parts[1] == "read" {
+				return role == "operator"
+			}
 			if parts[1] == "messages" || (parts[1] == "decision" && role == "employee") {
 				return true
 			}

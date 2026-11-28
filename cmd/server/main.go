@@ -232,6 +232,7 @@ func main() {
 	mux.HandleFunc("GET /api/tickets/{id}/messages", ticketsHandler.Messages)
 	mux.HandleFunc("POST /api/tickets/{id}/messages", ticketsHandler.Messages)
 	mux.HandleFunc("POST /api/tickets/{id}/decision", ticketsHandler.Decision)
+	mux.HandleFunc("POST /api/tickets/{id}/read", ticketsHandler.MarkRead)
 	mux.HandleFunc("POST /api/tickets/{id}/messages/{message}/rating", ticketsHandler.RateAnswer)
 	mux.HandleFunc("POST /api/tickets/{id}/work", ticketsHandler.Work)
 	mux.HandleFunc("PATCH /api/tickets/{id}", ticketsHandler.Update)

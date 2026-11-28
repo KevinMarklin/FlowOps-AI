@@ -22,7 +22,7 @@
     root.innerHTML = `<header class="dialogue-header"><div><h2 data-dialogue-title>Переписка</h2><p data-dialogue-status class="muted" role="status"></p></div><button type="button" class="secondary-button" data-dialogue-refresh>Обновить</button></header><button type="button" class="secondary-button" data-dialogue-older hidden>Более ранние сообщения</button><div class="dialogue-messages" data-dialogue-messages></div><p class="form-error" data-dialogue-error role="alert" hidden></p><form data-dialogue-form><label for="${name}-body">${operator?'Ответ сотруднику':'Ваше сообщение'}</label><textarea id="${name}-body" maxlength="6000" rows="3" required placeholder="Напишите сообщение…"></textarea><p class="field-help">Пока обращение открыто, переписка продолжается здесь. Не отправляйте пароли и коды доступа.</p><button type="submit" class="primary-button">Отправить сообщение</button></form><div class="dialogue-decisions" data-dialogue-decisions><button type="button" class="primary-button" data-dialogue-decision="true">Вопрос решён</button><button type="button" class="secondary-button" data-dialogue-decision="false">Не помогло</button></div>`;
     if (operator) document.querySelector('#operator #ticket-list').before(root);
     else document.getElementById('analysis-result').after(root);
-    const view = {root,operator,id:0,loading:false,sending:false,messages:new Map(),drafts:new Map(),pending:new Map(),version:0};
+    const view = {root,operator,id:0,loading:false,sending:false,messages:new Map(),drafts:new Map(),pending:new Map(),version:0,readCursor:-1};
     views.set(name,view);
     if(operator){
       const close=document.createElement('button');close.type='button';close.className='secondary-button';close.dataset.dialogueCollapse='';close.textContent='Свернуть переписку';
@@ -54,7 +54,7 @@
     const root=mount(operator), view=views.get(root.id); id=Number(id);
     if(view.id!==id){
       if(view.id)view.drafts.set(view.id,root.querySelector('[data-dialogue-form] textarea').value);
-      view.id=id;view.version++;view.messages.clear();view.loading=false;view.sending=false;
+      view.id=id;view.version++;view.messages.clear();view.loading=false;view.sending=false;view.readCursor=-1;
       root.querySelector('[data-dialogue-form] button').disabled=false;
       root.querySelectorAll('[data-dialogue-decision]').forEach(button=>button.disabled=false);
       root.querySelector('[data-dialogue-messages]').replaceChildren();
@@ -80,6 +80,14 @@
       for(const message of data.messages)view.messages.set(message.id,message);
       render(view,data,older);
       error(view,'');
+      if(view.operator&&!older&&!view.root.hidden&&view.root.closest('.view')?.classList.contains('active')){
+        const last=Math.max(0,...data.messages.map(message=>message.id));
+        if(last>view.readCursor){
+          const seen=await api().request(`/api/tickets/${view.id}/read`,{method:'POST',body:JSON.stringify({last_message_id:last})});
+          if(!current(view,version,generation,identity))return;
+          view.readCursor=last;api().read?.(view.id,seen.unread_employee_message);
+        }
+      }
     }catch(err){if(current(view,version,generation,identity))error(view,err.message);}
     finally{if(current(view,version,generation,identity))view.loading=false;}
   }
