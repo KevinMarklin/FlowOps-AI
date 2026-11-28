@@ -150,6 +150,25 @@ func (h *IntegrationsHandler) OrganizationUnits(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
+	retained := map[string]bool{}
+	membershipRows, loadErr := tx.Query(ctx, `SELECT member_id,relation FROM organization_unit_members WHERE tenant_id=$1 AND unit_id=$2`, tenant, id)
+	if loadErr != nil {
+		writeError(w, 503, "Не удалось проверить состав")
+		return
+	}
+	for membershipRows.Next() {
+		var memberID, relation string
+		if loadErr = membershipRows.Scan(&memberID, &relation); loadErr != nil {
+			break
+		}
+		retained[memberID+":"+relation] = true
+	}
+	rowsErr := membershipRows.Err()
+	membershipRows.Close()
+	if loadErr != nil || rowsErr != nil {
+		writeError(w, 503, "Не удалось проверить состав")
+		return
+	}
 	if _, err = tx.Exec(ctx, `DELETE FROM organization_unit_members WHERE tenant_id=$1 AND unit_id=$2`, tenant, id); err != nil {
 		writeError(w, 503, "Не удалось сохранить состав")
 		return
@@ -163,7 +182,7 @@ func (h *IntegrationsHandler) OrganizationUnits(w http.ResponseWriter, r *http.R
 		}
 		seen[key] = true
 		var exists bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE tenant_id=$1 AND id=$2 AND is_active)`, tenant, member.MemberID).Scan(&exists); err != nil || !exists {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE tenant_id=$1 AND id=$2 AND (is_active OR $3))`, tenant, member.MemberID, retained[key]).Scan(&exists); err != nil || !exists {
 			writeError(w, 400, "Участник не найден в организации")
 			return
 		}

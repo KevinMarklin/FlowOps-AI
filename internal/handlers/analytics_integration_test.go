@@ -104,3 +104,38 @@ func TestAnalyticsFilteredMetricsMissingDataAndPermissions(t *testing.T) {
 	}
 
 }
+
+func TestAnalyticsInitialAnswerUsesObservedResponseNotConfirmation(t *testing.T) {
+	db := replyTestDB(t)
+	ctx := context.Background()
+	base, _ := knowledge.Load(t.TempDir())
+	h := NewTicketsHandler(db, slog.New(slog.NewTextHandler(io.Discard, nil)), analyzer.New(base))
+	if _, err := db.Exec(ctx, `INSERT INTO app_settings(tenant_id,platform_config) VALUES('initial-sla','{"timezone":"UTC","sla":{"clock":"calendar","first_response_minutes":60,"resolution_minutes":240}}')`); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().UTC().Add(-2 * time.Hour)
+	var id int
+	if err := db.QueryRow(ctx, `INSERT INTO tickets(tenant_id,raw_text,channel,rag_answer,created_at,status) VALUES('initial-sla','Printer','web','Approved instruction',$1,'pending_confirmation') RETURNING id`, created).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	// An observed answer was available a minute after creation; confirmation came much later.
+	if _, err := db.Exec(ctx, `UPDATE ticket_events SET occurred_at=$2 WHERE ticket_id=$1 AND event_type='response_available'`, id, created.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE tickets SET status='closed' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/api/analytics/explore?sla=met", nil).WithContext(security.WithPrincipal(ctx, security.Principal{ID: "admin", Role: "admin", TenantID: "initial-sla"}))
+	w := httptest.NewRecorder()
+	h.Analytics(w, r)
+	var report AnalyticsReport
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || report.Metrics["total"].Value == nil || *report.Metrics["total"].Value != 1 {
+		t.Fatalf("initial answer incorrectly classified as SLA breach: %s", w.Body.String())
+	}
+	if got := report.Metrics["first_response_mean"].Value; got == nil || *got != 60 {
+		t.Fatalf("response time not based on observed answer: %s", w.Body.String())
+	}
+}

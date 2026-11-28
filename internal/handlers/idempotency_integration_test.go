@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,24 @@ import (
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
 )
+
+type yandexFixtureTransport struct {
+	target    *url.URL
+	transport http.RoundTripper
+}
+
+func (f yandexFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Host != "ai.api.cloud.yandex.net" {
+		return nil, errors.New("unexpected AI destination")
+	}
+	copy := r.Clone(r.Context())
+	endpoint := *r.URL
+	endpoint.Scheme = f.target.Scheme
+	endpoint.Host = f.target.Host
+	copy.URL = &endpoint
+	copy.Host = f.target.Host
+	return f.transport.RoundTrip(copy)
+}
 
 func TestConcurrentCreateReusesTicketAndModelResult(t *testing.T) {
 	db := replyTestDB(t)
@@ -34,9 +53,12 @@ func TestConcurrentCreateReusesTicketAndModelResult(t *testing.T) {
 	}))
 	defer server.Close()
 	original := http.DefaultTransport
-	http.DefaultTransport = server.Client().Transport
+	target, _ := url.Parse(server.URL)
+	http.DefaultTransport = yandexFixtureTransport{target: target, transport: server.Client().Transport}
 	t.Cleanup(func() { http.DefaultTransport = original })
-	t.Setenv("FLOWOPS_AI_PROVIDERS", "compatible")
+	t.Setenv("FLOWOPS_AI_PROVIDERS", "yandex")
+	t.Setenv("YANDEX_API_KEY", "synthetic")
+	t.Setenv("YANDEX_FOLDER_ID", "synthetic-folder")
 	t.Setenv("AI_API_KEY", "synthetic")
 	t.Setenv("AI_BASE_URL", server.URL)
 	t.Setenv("GEMINI_API_KEY", "")

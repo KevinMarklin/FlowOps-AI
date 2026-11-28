@@ -71,6 +71,14 @@ func TestStructureCyclesTenantMembershipAndRouting(t *testing.T) {
 	if !found {
 		t.Fatal("structure not integrated with routing")
 	}
+	if _, err = db.Exec(ctx, `UPDATE workspace_members SET is_active=FALSE WHERE id='person-a'`); err != nil {
+		t.Fatal(err)
+	}
+	child.Members = []UnitMembership{{MemberID: "person-a", Relation: "manager"}}
+	child.Name = "Renamed with inactive membership"
+	if code, _, body = call("structure-a", "admin", "PUT", child.ID, child); code != 200 {
+		t.Fatal("inactive existing member blocked rename", body)
+	}
 	parent.Active = false
 	if code, _, body = call("structure-a", "admin", "PUT", parent.ID, parent); code != 200 {
 		t.Fatal(body)

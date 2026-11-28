@@ -117,7 +117,7 @@ func readAnalyticsFilters(r *http.Request, c settings.PlatformConfig) (Analytics
 
 const analyticsBaseSQL = `WITH cohort AS (
  SELECT t.*, ` + ticketDisplayStatusSQL + ` display_status,
- (SELECT MIN(m.created_at) FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role IN ('operator','assistant') AND m.source_key NOT IN ('legacy-reply','initial-answer')) first_response_at,
+ LEAST((SELECT MIN(m.created_at) FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role IN ('operator','assistant') AND m.source_key NOT IN ('legacy-reply','initial-answer')),(SELECT MIN(e.occurred_at) FROM ticket_events e WHERE e.tenant_id=t.tenant_id AND e.ticket_id=t.id AND e.event_type='response_available' AND e.origin='observed')) first_response_at,
  COALESCE((SELECT MAX(e.occurred_at) FROM ticket_events e WHERE e.tenant_id=t.tenant_id AND e.ticket_id=t.id AND e.event_type='closed'),(SELECT MAX(a.created_at) FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=t.created_at)) closed_at,
  (SELECT COUNT(*) FROM ticket_events e WHERE e.tenant_id=t.tenant_id AND e.ticket_id=t.id AND e.event_type='reopened') reopens,
  (SELECT COUNT(*) FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_ROUTING_CORRECTED' AND a.created_at>=t.created_at) redirects,

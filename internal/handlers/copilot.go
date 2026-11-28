@@ -47,7 +47,7 @@ func (h *TicketsHandler) copilotContext(ctx context.Context, id int) (CopilotCon
 	if len([]rune(query)) > 300 {
 		query = string([]rune(query)[:300])
 	}
-	rows, err := h.db.Query(ctx, `SELECT id,COALESCE(NULLIF(subject,''),extracted_summary,'Решённое обращение'),COALESCE(operator_reply,rag_answer,'') FROM tickets WHERE tenant_id=$1 AND id<>$2 AND status IN ('closed','auto_resolved') AND NULLIF(BTRIM(COALESCE(operator_reply,rag_answer,'')),'') IS NOT NULL AND to_tsvector('russian',raw_text) @@ plainto_tsquery('russian',$3) ORDER BY ts_rank(to_tsvector('russian',raw_text),plainto_tsquery('russian',$3)) DESC,id DESC LIMIT 5`, security.TenantID(ctx), id, query)
+	rows, err := h.db.Query(ctx, `SELECT id,COALESCE(NULLIF(subject,''),extracted_summary,'Решённое обращение'),COALESCE(operator_reply,rag_answer,'') FROM tickets WHERE tenant_id=$1 AND id<>$2 AND status IN ('closed','auto_resolved') AND NULLIF(BTRIM(COALESCE(operator_reply,rag_answer,'')),'') IS NOT NULL AND to_tsvector('russian',raw_text) @@ to_tsquery('russian',array_to_string(ARRAY(SELECT quote_literal(lexeme) FROM unnest(tsvector_to_array(to_tsvector('russian',$3))) AS terms(lexeme)),' | ')) ORDER BY ts_rank(to_tsvector('russian',raw_text),to_tsquery('russian',array_to_string(ARRAY(SELECT quote_literal(lexeme) FROM unnest(tsvector_to_array(to_tsvector('russian',$3))) AS terms(lexeme)),' | '))) DESC,id DESC LIMIT 5`, security.TenantID(ctx), id, query)
 	if err != nil {
 		return result, "", err
 	}

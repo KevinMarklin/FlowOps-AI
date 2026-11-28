@@ -89,4 +89,24 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS work_process_events ON ticket_work_sessions;
 CREATE TRIGGER work_process_events AFTER INSERT OR UPDATE ON ticket_work_sessions FOR EACH ROW EXECUTE FUNCTION flowops_capture_work_event();
+
+CREATE UNIQUE INDEX IF NOT EXISTS ticket_first_response_observed ON ticket_events(tenant_id,ticket_id) WHERE event_type='response_available';
+CREATE OR REPLACE FUNCTION flowops_capture_initial_response() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+ IF COALESCE(NEW.channel,'web') IN ('web','api') AND NULLIF(BTRIM(NEW.rag_answer),'') IS NOT NULL THEN
+  INSERT INTO ticket_events(tenant_id,ticket_id,event_type,actor,payload) VALUES(NEW.tenant_id,NEW.id,'response_available','system',jsonb_build_object('channel',COALESCE(NEW.channel,'web'),'source','initial_answer')) ON CONFLICT DO NOTHING;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ticket_initial_response_observed ON tickets;
+CREATE TRIGGER ticket_initial_response_observed AFTER INSERT ON tickets FOR EACH ROW EXECUTE FUNCTION flowops_capture_initial_response();
+CREATE OR REPLACE FUNCTION flowops_capture_delivered_response() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.state='sent' AND OLD.state IS DISTINCT FROM 'sent' AND NEW.kind='channel' THEN
+  INSERT INTO ticket_events(tenant_id,ticket_id,event_type,actor,payload) SELECT tenant_id,id,'response_available','delivery',jsonb_build_object('channel',NEW.channel,'delivery_id',NEW.id) FROM tickets WHERE id=NEW.ticket_id ON CONFLICT DO NOTHING;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS ticket_response_delivery_observed ON ticket_deliveries;
+CREATE TRIGGER ticket_response_delivery_observed AFTER UPDATE OF state ON ticket_deliveries FOR EACH ROW EXECUTE FUNCTION flowops_capture_delivered_response();
 `

@@ -163,6 +163,34 @@ func authorizePrincipal(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool
 		ingestError(w, http.StatusForbidden, "Недостаточно прав для этого действия")
 		return false
 	}
+	if p.Role != "admin" {
+		var restricted bool
+		if err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM organization_member_roles m JOIN organization_access_roles a ON a.tenant_id=m.tenant_id AND a.id=m.role_id WHERE m.tenant_id=$1 AND m.member_id=$2 AND a.scope<>'organization')`, p.TenantID, p.ID).Scan(&restricted); err != nil {
+			ingestError(w, 503, "Не удалось проверить область доступа")
+			return false
+		}
+		if restricted {
+			path := r.URL.Path
+			if strings.HasPrefix(path, "/api/analytics") || path == "/api/stats" || strings.HasPrefix(path, "/api/optimization") || strings.HasPrefix(path, "/api/knowledge") || strings.HasPrefix(path, "/api/v1/kb/") || strings.HasSuffix(path, "/copilot") {
+				ingestError(w, 403, "Для этого раздела требуется доступ ко всей организации")
+				return false
+			}
+			if strings.HasPrefix(path, "/api/tickets/") {
+				id, err := strconv.Atoi(strings.Split(strings.TrimPrefix(path, "/api/tickets/"), "/")[0])
+				if err == nil {
+					var visible bool
+					if err = db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM tickets WHERE tenant_id=$1 AND id=$3 AND flowops_ticket_visible(tenant_id,$2,department,requester_id))`, p.TenantID, p.ID, id).Scan(&visible); err != nil {
+						ingestError(w, 503, "Не удалось проверить обращение")
+						return false
+					}
+					if !visible {
+						ingestError(w, 404, "Обращение не найдено")
+						return false
+					}
+				}
+			}
+		}
+	}
 	if p.Role == "employee" && strings.HasPrefix(r.URL.Path, "/api/tickets/") {
 		id := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/tickets/"), "/")[0]
 		var exists bool

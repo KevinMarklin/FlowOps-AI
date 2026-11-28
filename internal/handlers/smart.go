@@ -82,7 +82,7 @@ func (h *SmartHandler) SmartImport(w http.ResponseWriter, r *http.Request) {
 	if analyzer.ExternalModelInputAllowed(input.RawText) {
 		articles, usedLLM, err = h.generateArticles(r.Context(), masked.MaskedText, input.DefaultDepartment)
 	}
-	source := "gigachat"
+	source := "yandex"
 	if err != nil && usedLLM {
 		articles = fallbackArticles(masked.MaskedText, input.DefaultDepartment)
 		source = "fallback"

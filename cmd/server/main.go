@@ -68,7 +68,7 @@ func main() {
 		logger.Error("failed to load knowledge base", "error", err)
 		os.Exit(1)
 	}
-	knowledgeHandler := handlers.NewKnowledgeHandler(knowledgeBase, pool)
+	knowledgeHandler := handlers.NewKnowledgeHandler(knowledgeBase, pool).WithGovernedWrites()
 	if err := knowledgeBase.PurgeExpired(); err != nil {
 		logger.Error("failed to purge knowledge at startup", "error", err)
 	}
@@ -205,6 +205,9 @@ func main() {
 	mux.HandleFunc("PATCH /api/v1/members/{id}", workspaceHandler.UpdateMember)
 	mux.HandleFunc("POST /api/v1/members/{id}/rotate", workspaceHandler.RotateMember)
 	mux.HandleFunc("POST /api/v1/workspaces", workspaceHandler.Create)
+	mux.HandleFunc("GET /api/v1/organization/roles", integrationsHandler.AccessRoles)
+	mux.HandleFunc("POST /api/v1/organization/roles", integrationsHandler.AccessRoles)
+	mux.HandleFunc("POST /api/v1/organization/roles/assign", integrationsHandler.AssignAccessRole)
 	mux.HandleFunc("GET /api/v1/organization/units", integrationsHandler.OrganizationUnits)
 	mux.HandleFunc("POST /api/v1/organization/units", integrationsHandler.OrganizationUnits)
 	mux.HandleFunc("PUT /api/v1/organization/units/{id}", integrationsHandler.OrganizationUnits)

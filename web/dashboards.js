@@ -3,10 +3,10 @@
  'use strict';
  const $=s=>document.querySelector(s),api=()=>window.FlowOpsSupport,A=()=>window.FlowOpsAnalytics;
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const types={kpi:'KPI',line:'Линейный график',bar:'Столбцы',pie:'Круговая диаграмма',distribution:'Распределение',heatmap:'Тепловая карта',funnel:'Воронка распределения',table:'Сводная таблица',load:'Динамика нагрузки'};
+ const types={kpi:'KPI',line:'Линейный график',bar:'Столбцы',pie:'Круговая диаграмма',distribution:'Распределение',heatmap:'Тепловая карта',funnel:'Ранжирование групп',table:'Сводная таблица',load:'Динамика нагрузки'};
  const dims={department:'Подразделения',day:'Дни',channel:'Каналы'};
  const measures={total:'Все',open:'Активные',closed:'Закрытые'};
- let dashboards=[],current=null,latest=null,session='',renderEpoch=0,loading=false,dragID='';
+ let dashboards=[],current=null,latest=null,session='',renderEpoch=0,loading=false,dragID='',previewController=null;
  const owner=()=>`${api()?.generation()}:${api()?.identity()}`;
  const widget=(type,metric,dimension='department')=>({id:crypto.randomUUID(),title:'',type,metric,dimension,measure:'total',width:type==='kpi'?1:2,height:1,filters:{}});
  function template(name){const widgets=name==='efficiency'?[widget('kpi','deflection'),widget('kpi','sla_compliance'),widget('kpi','active_hours'),widget('kpi','released_hours'),widget('line','total','day'),widget('bar','total')]:name==='quality'?[widget('kpi','satisfaction'),widget('kpi','first_contact_resolution'),widget('kpi','reopens'),widget('kpi','redirects'),widget('heatmap','total','day'),widget('table','total')]:[widget('kpi','total'),widget('kpi','active'),widget('kpi','closed'),widget('kpi','overdue'),widget('bar','total'),widget('line','total','day')];return {name:({efficiency:'Эффективность',quality:'Качество поддержки',overview:'Обзор обращений'})[name],shared:false,config:{filters:{},widgets}};}
@@ -28,12 +28,30 @@
   if(w.type==='funnel')p.sort((a,b)=>b.value-a.value);
   return (w.type==='distribution'?'<p class="field-help">Распределение числа обращений по группам; высота — число групп.</p>':w.type==='funnel'?'<p class="field-help">Распределение по группам, не конверсия последовательных этапов.</p>':'')+p.map(x=>`<div class="dashboard-bar"><span>${esc(x.key)}</span><span style="width:${Math.max(2,x.value/max*100)}%">${x.value}</span></div>`).join('');
  }
- async function preview(){if(!latest||!current)return;const version=++renderEpoch,identity=owner(),widgets=current.config.widgets;$('#dashboard-canvas').innerHTML=widgets.map(w=>`<section class="panel dashboard-widget" draggable="true" data-preview-widget="${esc(w.id)}" style="--widget-width:${w.width};--widget-height:${w.height}"><h3>${esc(w.title|| (w.type==='kpi'?A().names[w.metric]:dims[w.dimension]))}</h3><div data-widget-content>Расчёт…</div></section>`).join('');const cache=new Map();
-  for(const w of widgets){let data=latest;try{if(Object.values(w.filters||{}).some(Boolean)){const filters={...A().params(),...Object.fromEntries(Object.entries(w.filters).filter(([,v])=>v!==''))};const key=new URLSearchParams(filters).toString();if(!cache.has(key))cache.set(key,await api().request('/api/analytics/explore?'+key));data=cache.get(key);}if(version!==renderEpoch||identity!==owner())return;const target=[...document.querySelectorAll('[data-preview-widget]')].find(el=>el.dataset.previewWidget===w.id)?.querySelector('[data-widget-content]');if(target)target.innerHTML=chart(data,w);}catch(e){if(version===renderEpoch&&identity===owner()){const target=[...document.querySelectorAll('[data-preview-widget]')].find(el=>el.dataset.previewWidget===w.id)?.querySelector('[data-widget-content]');if(target)target.textContent=e.message;}}}
+ async function preview(){
+  if(!latest||!current)return;
+  previewController?.abort();previewController=new AbortController();
+  const signal=previewController.signal,version=++renderEpoch,identity=owner(),widgets=structuredClone(current.config.widgets);
+  $('#dashboard-canvas').innerHTML=widgets.map(w=>`<section class="panel dashboard-widget" draggable="true" data-preview-widget="${esc(w.id)}" style="--widget-width:${w.width};--widget-height:${w.height}"><h3>${esc(w.title||(w.type==='kpi'?A().names[w.metric]:dims[w.dimension]))}</h3><div data-widget-content>Расчёт…</div></section>`).join('');
+  const cache=new Map();let cursor=0;
+  async function worker(){while(cursor<widgets.length&&!signal.aborted){const w=widgets[cursor++];try{
+   let data=latest;
+   if(Object.values(w.filters||{}).some(Boolean)){
+    const filters={...A().params(),...Object.fromEntries(Object.entries(w.filters).filter(([,v])=>v!==''))};const key=new URLSearchParams(filters).toString();
+    if(!cache.has(key))cache.set(key,api().request('/api/analytics/explore?'+key,{signal}));data=await cache.get(key);
+   }
+   if(version!==renderEpoch||identity!==owner()||signal.aborted)return;
+   const target=[...document.querySelectorAll('[data-preview-widget]')].find(el=>el.dataset.previewWidget===w.id)?.querySelector('[data-widget-content]');if(target)target.innerHTML=chart(data,w);
+  }catch(e){if(version===renderEpoch&&identity===owner()&&!signal.aborted){const target=[...document.querySelectorAll('[data-preview-widget]')].find(el=>el.dataset.previewWidget===w.id)?.querySelector('[data-widget-content]');if(target)target.textContent=e.message;}}}}
+  await Promise.all(Array.from({length:Math.min(3,widgets.length)},worker));
  }
+
  function onReport(report){latest=report;if(session!==owner()){session=owner();dashboards=[];current=template('overview');editor();list();}preview();}
- async function save(copy){if(!current)return;const identity=owner(),button=$('#dashboard-save');button.disabled=true;try{const body={...current,name:$('#dashboard-name').value,shared:copy&&api()?.role()!=='admin'?false:$('#dashboard-shared').checked,config:{...current.config,filters:A().params()}};const path=copy||!current.id?'/api/analytics/dashboards':'/api/analytics/dashboards/'+current.id;const saved=await api().request(path,{method:copy||!current.id?'POST':'PUT',body:JSON.stringify(body)});if(identity!==owner())return;current=saved;await list();editor();$('#dashboard-status').textContent='Дашборд сохранён';}catch(e){if(identity===owner())$('#dashboard-status').textContent=e.message;}finally{if(identity===owner())button.disabled=!canEdit();}}
- function clear(){renderEpoch++;session='';current=null;latest=null;dashboards=[];loading=false;$('#dashboard-canvas')?.replaceChildren();$('#dashboard-widget-editor')?.replaceChildren();if($('#dashboard-status'))$('#dashboard-status').textContent='';if($('#dashboard-list'))$('#dashboard-list').replaceChildren();}
+ async function save(copy){if(!current)return;const target=current,snapshot=JSON.stringify(current.config),savedName=$('#dashboard-name').value,savedShared=$('#dashboard-shared').checked,identity=owner(),button=$('#dashboard-save');button.disabled=true;try{const body={...current,name:$('#dashboard-name').value,shared:copy&&api()?.role()!=='admin'?false:$('#dashboard-shared').checked,config:{...current.config,filters:A().params()}};const path=copy||!current.id?'/api/analytics/dashboards':'/api/analytics/dashboards/'+current.id;const saved=await api().request(path,{method:copy||!current.id?'POST':'PUT',body:JSON.stringify(body)});if(identity!==owner()||current!==target)return;
+ const changed=JSON.stringify(current.config)!==snapshot||$('#dashboard-name').value!==savedName||$('#dashboard-shared').checked!==savedShared;
+ if(changed){current.id=saved.id;current.revision=saved.revision;current.owner_id=saved.owner_id;await list();$('#dashboard-status').textContent='Сохранено. Новые правки ещё не отправлены';return;}
+ current=saved;await list();if(current!==saved)return;editor();$('#dashboard-status').textContent='Дашборд сохранён';}catch(e){if(identity===owner())$('#dashboard-status').textContent=e.message;}finally{if(identity===owner())button.disabled=!canEdit();}}
+ function clear(){previewController?.abort();renderEpoch++;session='';current=null;latest=null;dashboards=[];loading=false;$('#dashboard-canvas')?.replaceChildren();$('#dashboard-widget-editor')?.replaceChildren();if($('#dashboard-status'))$('#dashboard-status').textContent='';if($('#dashboard-list'))$('#dashboard-list').replaceChildren();}
  function init(){
   $('#dashboard-list').addEventListener('change',()=>{current=structuredClone(dashboards.find(x=>x.id===$('#dashboard-list').value)||template('overview'));editor();A().applyFilters(current.config.filters||{});preview();});
   $('#dashboard-template').addEventListener('change',()=>{current=template($('#dashboard-template').value);updateList();editor();preview();});

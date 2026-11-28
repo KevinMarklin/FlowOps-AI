@@ -69,6 +69,11 @@ func (h *KnowledgeHandler) configureManagedKnowledge() {
 	h.base.SetManagedLoader(func(tenant string) ([]knowledge.Document, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if h.governed {
+			if err := h.importLegacyCatalog(ctx, tenant); err != nil {
+				return nil, err
+			}
+		}
 		rows, err := h.db.Query(ctx, `SELECT a.id,v.document FROM kb_articles a JOIN kb_article_versions v ON v.article_id=a.id AND v.tenant_id=a.tenant_id AND v.revision=a.published_revision WHERE a.tenant_id=$1 AND a.state NOT IN ('stale','archived') AND a.published_revision IS NOT NULL`, tenant)
 		if err != nil {
 			return nil, err
@@ -154,6 +159,12 @@ func (h *KnowledgeHandler) createManagedArticle(ctx context.Context, d ArticleDo
 	return a, tx.Commit(ctx)
 }
 func (h *KnowledgeHandler) Articles(w http.ResponseWriter, r *http.Request) {
+	if h.governed {
+		if err := h.importLegacyCatalog(r.Context(), security.TenantID(r.Context())); err != nil {
+			writeError(w, 503, "Не удалось подготовить каталог регламентов")
+			return
+		}
+	}
 	_, ok := articlePrincipal(w, r)
 	if !ok {
 		return
@@ -180,12 +191,17 @@ func (h *KnowledgeHandler) Articles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "Некорректный статус статьи")
 		return
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	if len([]rune(search)) > 200 {
+		writeError(w, 400, "Поисковый запрос слишком длинный")
+		return
+	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	if offset < 0 || offset > 10000 {
 		writeError(w, 400, "Некорректная страница")
 		return
 	}
-	rows, err := h.db.Query(r.Context(), `SELECT id,author_id,state,revision,published_revision,document,approved_by,updated_at FROM kb_articles WHERE tenant_id=$1 AND ($2='' OR state=$2) ORDER BY updated_at DESC,id DESC LIMIT 101 OFFSET $3`, security.TenantID(r.Context()), state, offset)
+	rows, err := h.db.Query(r.Context(), `SELECT id,author_id,state,revision,published_revision,document,approved_by,updated_at FROM kb_articles WHERE tenant_id=$1 AND ($2='' OR state=$2) AND ($4='' OR STRPOS(LOWER(document->>'title'),LOWER($4))>0) ORDER BY updated_at DESC,id DESC LIMIT 101 OFFSET $3`, security.TenantID(r.Context()), state, offset, search)
 	if err != nil {
 		writeError(w, 503, "Не удалось загрузить статьи")
 		return

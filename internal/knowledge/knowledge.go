@@ -34,6 +34,7 @@ type Base struct {
 	documents       []Document
 	auditTTL        func(string)
 	managedLoader   func(string) ([]Document, error)
+	managedOnly     bool
 	fileParent      *Base
 	managedSnapshot []Document
 }
@@ -95,6 +96,7 @@ func (b *Base) TenantBase(tenant string) (*Base, error) {
 	}
 	b.mu.RLock()
 	loader := b.managedLoader
+	only := b.managedOnly
 	b.mu.RUnlock()
 	if loader != nil {
 		if tenant == "" {
@@ -106,7 +108,11 @@ func (b *Base) TenantBase(tenant string) (*Base, error) {
 		}
 		// Each request keeps its own approved-version snapshot. Concurrent RAG loads
 		// must never overwrite another request's approved/unpublished document set.
-		return &Base{directory: target.directory, tenantRoot: target.tenantRoot, fileParent: target, managedSnapshot: documents, documents: append(target.Documents(), documents...)}, nil
+		combined := documents
+		if !only {
+			combined = append(target.Documents(), documents...)
+		}
+		return &Base{directory: target.directory, tenantRoot: target.tenantRoot, fileParent: target, managedSnapshot: documents, documents: combined, managedOnly: only}, nil
 	}
 
 	return target, nil
@@ -115,7 +121,10 @@ func (b *Base) refreshFileSnapshot() {
 	if b.fileParent == nil {
 		return
 	}
-	documents := append(b.fileParent.Documents(), b.managedSnapshot...)
+	documents := b.managedSnapshot
+	if !b.managedOnly {
+		documents = append(b.fileParent.Documents(), documents...)
+	}
 	b.mu.Lock()
 	b.documents = documents
 	b.mu.Unlock()
@@ -681,4 +690,13 @@ func titleFromMarkdown(content, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func (b *Base) UseManagedOnly() { b.mu.Lock(); b.managedOnly = true; b.mu.Unlock() }
+func (b *Base) LegacyDocuments(tenant string) ([]Document, error) {
+	base, err := b.fileTenantBase(tenant)
+	if err != nil {
+		return nil, err
+	}
+	return base.Documents(), nil
 }

@@ -1550,7 +1550,7 @@
       const count = response.count ?? articles.length;
       if (resultBox) {
         resultBox.hidden = false;
-        resultBox.innerHTML = `<div class="smart-import-summary">Создано черновиков: ${Number(count)} · источник: ${escapeHTML(response.source==='fallback'?'разбор текста без ИИ':response.source==='gigachat'?'ИИ':response.provider||response.source||'не указан')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
+        resultBox.innerHTML = `<div class="smart-import-summary">Создано черновиков: ${Number(count)} · источник: ${escapeHTML(response.source==='fallback'?'разбор текста без ИИ':response.source==='yandex'?'Yandex AI':response.provider||response.source||'не указан')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
           .map(
             item =>
               `<article class="smart-import-card"><strong>${escapeHTML(item.title || 'Регламент')}</strong><small>${escapeHTML(item.department || '')}${item.keywords?.length ? ` · ${escapeHTML(item.keywords.join(', '))}` : ''}</small><pre>${escapeHTML(item.content || '')}</pre></article>`
@@ -1751,7 +1751,7 @@
       });
       if (form) form.reset();
       await loadKnowledge();
-      toast('Регламент сохранен и доступен ИИ');
+      toast('Создан черновик. Для ответов ИИ требуется согласование');
     } catch (error) {
       toast(error.message);
     }

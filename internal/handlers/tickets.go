@@ -714,7 +714,7 @@ SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE
          OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.id>COALESCE((SELECT r.last_message_id FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6),0))
        ))
 , ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `
-FROM tickets t WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
+FROM tickets t WHERE tenant_id=$1 AND flowops_ticket_visible(t.tenant_id,$3,t.department,t.requester_id) AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
 AND ($8<>'' OR NOT $7 OR NOT EXISTS(SELECT 1 FROM ticket_queue_hidden h WHERE h.tenant_id=t.tenant_id AND h.ticket_id=t.id AND h.operator_id=$6 AND NOT EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.source_key<>'initial' AND m.id>h.last_employee_message_id)))
 AND ($8='' OR ($10::bigint>0 AND t.id=$10) OR ($10::bigint=0 AND (translate(concat_ws(E'\n',user_email,subject,raw_text,extracted_summary,operator_reply,` + ticketRequesterEmailSQL + `),'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9 OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND translate(m.body,'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9))))
 AND ($11='' OR (` + ticketDisplayStatusSQL + `)=$11)

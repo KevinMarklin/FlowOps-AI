@@ -92,3 +92,17 @@ Migration: tenant-bound organization_units and organization_unit_members with co
 API: GET/POST /api/v1/organization/units and PUT /{id}. Settings includes a responsive structure editor with parent selection, stable-code display and membership editing. Saved active routing codes update the existing department configuration and selector data.
 
 Validation: complete Go suite and 21 JS regressions passed; cycle/cross-tenant parent/member/routing/deactivation tests; explicit middleware route permission regression; live create/edit/member persistence and mobile overflow check. Browser verification caught and corrected administrator POST denied by the early read-only route rule. Structure does not yet grant scoped ticket/analytics access: built-in roles still govern resources. Custom roles/scopes, taxonomy, workflow/QR and schedules remain outstanding.
+
+### Stage 7 — Yandex and correctness fixes
+
+All production AI paths use Yandex AI Studio. Retired provider implementations remain only in historical test fixtures. Added JSON-mode generation for Copilot, imports and optimization with bounded responses, no provider fallback and explicit errors. Existing sensitive-input policy remains enforced. Runtime provider policy is Yandex-only; credentials are not committed.
+
+Unified governed catalogue lazily imports existing active knowledge with explicit inherited-publication provenance, preserves archived state across restarts and prevents old create/update routes from publishing new material. New knowledge always starts as a draft. Added server search/pagination, delayed-editor response guards, bounded parallel widget calculations, observed auto-response events for SLA, and flexible lexical matching for Copilot.
+
+Validation: full Go suite and 24 JS tests passed before role extension. New catalogue, archive/restart, >100 article search and first-response SLA regression checks passed.
+
+### Stage 8 — custom role definitions and ticket scopes
+
+Added tenant-scoped role definitions, optimistic updates and administrator-only assignment to non-administrator members with matching base roles. Own/organization/subtree scopes filter ticket lists and guard ticket-detail routes in middleware. Scope edits take effect on subsequent queries. Restricted members cannot use organization-wide analytics, knowledge or Copilot until those modules support matching scopes; the server denies these paths explicitly rather than leaking global context. Existing built-in role permissions and employee ownership restrictions remain in force.
+
+Validation: handler/security suites passed; subtree visibility, own-ticket visibility, immediate policy changes, tenant isolation and stale revision tests passed. Remaining: role editor UI, per-action configurable permissions, scoped aggregate/knowledge support, forms/attachments, routing rules, SLA escalation and AI governance settings. These stages do not complete the selected five tasks.
