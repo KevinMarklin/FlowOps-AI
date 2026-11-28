@@ -247,6 +247,7 @@
     const gate = $('#auth-gate');
     const message = $('#auth-error');
     if (gate) gate.hidden = false;
+    document.title = 'Вход — FlowOps AI';
     document.body.classList.add('auth-required');
     if (message) {
       message.textContent = error;
@@ -1047,6 +1048,8 @@
     leaveTicketContent();
     $$('.view').forEach(view => view.classList.remove('active'));
     $('#ticket-detail').classList.add('active');
+    $('.skip-link').href = '#ticket-detail';
+    document.title = `Тикет #${match[1]} — FlowOps AI`;
     $('#ticket-detail-title').textContent = `Тикет #${match[1]}`;
     $('[data-ticket-back]').href = window.FlowOpsRoutes.path(canTab('operator') ? 'operator' : canTab('employee') ? 'employee' : roleTabs[state.user?.role]?.[0]);
     $('#ticket-detail-status').textContent = 'Загрузка тикета…';
@@ -1055,6 +1058,7 @@
       if (version !== ticketRouteVersion || generation !== sessionGeneration) return;
       $('#ticket-detail-status').textContent = '';
       $('#ticket-detail-title').textContent = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
+      document.title = `Тикет #${ticket.id}: ${ticketRowTitle(ticket)} — FlowOps AI`;
       if (canTab('operator')) {
         const template = document.createElement('template');
         template.innerHTML = ticketCard(ticket, 'detail');
@@ -1812,6 +1816,11 @@
     });
     $$('[data-toggle-password]').forEach(button => on(button, 'click', () => { const field = document.getElementById(button.dataset.togglePassword); field.type = field.type === 'password' ? 'text' : 'password'; button.setAttribute('aria-label', field.type === 'password' ? 'Показать пароль' : 'Скрыть пароль'); }));
     on($('#logout'), 'click', logout);
+    on($('.skip-link'), 'click', event => {
+      const view = $('.view.active'); if (!view) return;
+      event.preventDefault(); view.setAttribute('tabindex','-1');
+      view.focus({preventScroll:true}); view.scrollIntoView({block:'start'});
+    });
 
     $$('.tab').forEach(tab =>
       on(tab, 'click', () => {
@@ -1828,7 +1837,11 @@
         if (tab.dataset.tab === 'builder') selectSettingsPanel(tab.dataset.settingsPanel);
         $$('.tab').forEach(item => item.setAttribute('aria-current', item === tab ? 'page' : 'false'));
         const view = $(`#${tab.dataset.tab}`);
-        if (view) view.classList.add('active');
+        if (view) {
+          view.classList.add('active');
+          const skip = $('.skip-link'); if(skip) skip.href = '#' + view.id;
+          document.title = `${$('h1',view)?.textContent || 'Служба поддержки'} — FlowOps AI`;
+        }
         window.scrollTo({ top: 0, behavior: 'instant' });
         if (!hasSession()) return;
         if (tab.dataset.tab === 'employee') loadHistory();

@@ -192,3 +192,44 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .ticket-metadata-form{padding-bottom:24px;border-bottom:1px solid var(--line);margin-bottom:24px}.ticket-metadata-form label{display:block;margin:14px 0}.ticket-metadata-form select{display:block;width:100%;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:6px;background:var(--paper,#fff);color:var(--ink)}[data-upload]{display:block;max-width:100%;margin-top:10px}[data-theme=dark] .ticket-metadata-form select{background:#101e2a;color:#e0edf7}
 
 .workflow-node{margin:24px 0;padding:20px;border:1px solid var(--line);border-radius:12px;min-width:0}.workflow-node legend{font-weight:600;padding:0 6px}.workflow-node details{margin:16px 0}.operation-condition{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;margin:12px 0}.operation-task,.operation-run,.process-route{padding:20px 0;border-bottom:1px solid var(--line)}.operation-task h2,.operation-run h3{margin:0 0 8px}.asset-qr{display:block;width:min(100%,256px);height:auto;margin-top:20px;background:white}.operation-url{overflow-wrap:anywhere}.asset-context{margin-bottom:24px;padding:16px;background:var(--soft);border:1px solid var(--line);border-radius:12px}.process-route-path{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-weight:600}#workflow-editor select[multiple]{min-height:100px}#workflow-editor,#asset-editor,#report-editor{margin-top:24px}#process-analytics-form{margin:24px 0}#asset-preview{margin-top:24px}.operation-run li{padding:4px 0}#reports .analytics-actions>label,#workflows .analytics-actions>label,#assets .analytics-actions>label{flex:1;min-width:180px}@media(max-width:650px){.operation-condition{grid-template-columns:1fr}.workflow-node{padding:14px}.workflow-node .org-form-grid{grid-template-columns:1fr}}
+
+/* Shared control rhythm across workspace settings and operational editors. */
+.view :where(input:not([type=checkbox]):not([type=radio]),select,textarea){min-height:44px;max-width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--card,#fff);color:var(--ink);font:inherit;line-height:1.5}
+.view :where(textarea){min-height:112px;resize:vertical}
+.view :where(input,textarea)::placeholder{color:#526d82;opacity:1}
+.org-form-grid label{display:grid;gap:8px;align-content:start;min-width:0}
+.org-form-grid :is(input,select,textarea){margin-top:0}
+.org-form-grid label:has(>input[type=checkbox]),.org-form-grid label:has(>input[type=radio]){display:flex;align-items:center;gap:10px;min-height:44px;align-self:end}
+.org-form-grid input[type=checkbox],.org-form-grid input[type=radio]{display:inline-block;flex:0 0 auto;width:18px;height:18px;min-height:0;margin:0;accent-color:var(--blue-dark)}
+.org-form-grid select[multiple]{min-height:128px}
+.analytics-actions{gap:12px;align-items:end}
+.analytics-actions>label{display:grid;gap:8px;flex:1 1 220px;min-width:0;width:auto;margin:0;font-size:13px}
+.analytics-actions>label :is(input,select){width:100%;margin:0}
+.analytics-actions>button,.analytics-actions>.primary-button{width:auto;flex:0 1 auto;min-height:44px;justify-content:center}
+#one-c>.panel{padding:24px;margin:24px 0}
+#onec-read{display:grid;gap:18px;margin-top:20px}
+#onec-read>label{display:grid;gap:8px}
+#onec-read>button{justify-self:start}
+#onec-form>label{display:flex;align-items:center;gap:10px;margin-top:20px}
+#onec-form small{color:var(--muted);font-size:12px;line-height:1.6}
+#onec-result:empty{display:none}
+.governance-actions{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}
+.governance-actions>.primary-button{width:auto;justify-content:center}
+#knowledge-review>.analytics-actions{margin:20px 0}
+#knowledge-review .builder-block>label{display:grid;gap:8px;margin:18px 0}
+#knowledge-review .builder-block>label :is(input,select){width:100%}
+#knowledge-review [data-kb-action]{margin:6px 8px 6px 0;width:auto;display:inline-flex;justify-content:center}
+.auth-required>.skip-link{display:none}
+.brand{color:inherit;text-decoration:none}
+body:not(.documentation-page){min-height:100dvh;display:flex;flex-direction:column}
+body:not(.documentation-page)>.shell{width:100%;flex:1 0 auto}
+body:not(.documentation-page)>.topbar,body:not(.documentation-page)>.site-footer{flex-shrink:0}
+[data-theme=dark] .view :where(input:not([type=checkbox]):not([type=radio]),select,textarea){background:#101e2a;color:#e0edf7;border-color:#638392}
+[data-theme=dark] .view :where(input,textarea)::placeholder{color:#b4c8d8}
+@media(max-width:600px){.analytics-actions>label{flex-basis:100%}.analytics-actions>button{max-width:100%}#one-c>.panel{padding:20px}.governance-actions>.primary-button{width:100%}.view :where(input:not([type=checkbox]):not([type=radio]),select,textarea){font-size:16px}.org-form-grid label{gap:8px}}
+
+.view form>label:has(>textarea){display:grid;gap:8px;margin-top:18px}.view form>label>textarea{width:100%}
+#preview-launcher{display:grid;place-items:center}#preview-launcher img{display:block;object-fit:contain;background:#fff;border-radius:8px}
+@media(max-width:600px){.view :is(input:not([type=checkbox]):not([type=radio]),textarea,select){font-size:16px}}
+
+.token-field button{display:grid;place-items:center;width:44px;height:44px;top:1px;right:1px}.token-field button svg{display:block;pointer-events:none}

@@ -24,3 +24,8 @@ html[data-theme="dark"] .docs-nav .docs-nav-group>summary{color:#e3edf4}html[dat
 @media(max-width:850px){.docs-nav .docs-nav-group ul{columns:auto}}
 
 .docs-contents-title{font-size:13px;font-weight:600;line-height:1.5;margin:0;padding:8px 12px}
+
+.docs-brand img{display:block;width:36px;height:36px;object-fit:contain;flex-shrink:0;background:#fff;border-radius:9px}.docs-brand{flex-shrink:0}.docs-header{min-height:80px;box-sizing:border-box}
+
+.docs-contents-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.docs-nav .docs-jump-link{display:none;flex-shrink:0;font-size:12px;padding:8px 12px}
+@media(max-width:850px){.docs-nav .docs-jump-link{display:block}}

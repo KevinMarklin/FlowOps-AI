@@ -17,3 +17,16 @@ test('unsaved settings cannot accidentally check the old connection',async()=>{
  await h.api.refresh();h.form.listeners.input();h.get('#onec-check').listeners.click();await new Promise(r=>setImmediate(r));
  assert.equal(calls,1);assert.match(h.get('#onec-status').textContent,/Сначала сохраните/);
 });
+
+test('returning to 1C settings retains an unsaved address and password',async()=>{
+ let calls=0;const h=harness(async()=>{calls++;return {config:{mode:'odata',auth:'basic',base_url:'https://saved.example'},configured:true,has_secret:true,server_ready:true}});
+ await h.api.refresh();h.form.elements.base_url.value='https://new.example';h.form.elements.secret.value='typed-secret';h.form.listeners.input();
+ await h.api.refresh();assert.equal(calls,1);assert.equal(h.form.elements.base_url.value,'https://new.example');assert.equal(h.form.elements.secret.value,'typed-secret');assert.match(h.get('#onec-status').textContent,/несохранённые/);
+});
+
+test('a late connection refresh cannot replace settings typed while it was loading',async()=>{
+ let finish;const h=harness(()=>new Promise(resolve=>{finish=resolve}));const pending=h.api.refresh();
+ h.form.elements.base_url.value='https://typed.example';h.form.listeners.input();
+ finish({config:{base_url:'https://old.example'},configured:true,has_secret:true,server_ready:true});await pending;
+ assert.equal(h.form.elements.base_url.value,'https://typed.example');assert.match(h.get('#onec-status').textContent,/несохранённые/);
+});
