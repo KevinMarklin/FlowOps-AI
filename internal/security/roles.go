@@ -90,6 +90,19 @@ func AllowRequest(role, method, path string) bool {
 	if path == "/api/analytics/dashboards" || strings.HasPrefix(path, "/api/analytics/dashboards/") {
 		return role == "analyst" && (method == "GET" || method == "POST" || method == "PUT" || method == "DELETE")
 	}
+	if path == "/api/v1/kb/articles" {
+		return role == "operator" && (method == "GET" || method == "POST")
+	}
+	if path == "/api/v1/kb/from-tickets" {
+		return role == "operator" && method == "POST"
+	}
+	if strings.HasPrefix(path, "/api/v1/kb/articles/") {
+		return role == "operator" && (method == "PUT" || method == "GET" && strings.HasSuffix(path, "/versions"))
+	}
+
+	if path == "/api/optimization" {
+		return role == "analyst" && method == "GET"
+	}
 	if path == "/api/analytics/explore" {
 		return role == "analyst" && method == http.MethodGet
 	}

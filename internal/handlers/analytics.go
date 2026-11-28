@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"flowops-ai/internal/reports"
 	"fmt"
 	"net/http"
@@ -291,6 +292,21 @@ func (h *TicketsHandler) Analytics(w http.ResponseWriter, r *http.Request) {
 			report.NextCursor = report.Tickets[49].ID
 		}
 	}
+	rates, _ := json.Marshal(cfg.Economics.DepartmentRates)
+	costArgs := append(append([]any(nil), args...), cfg.Economics.BaselineMinutes, string(rates), cfg.Economics.HourlyRate)
+	var releasedValue, laborValue float64
+	err = tx.QueryRow(ctx, analyticsBaseSQL+`SELECT COALESCE(SUM(CASE WHEN status='auto_resolved' AND NULLIF(BTRIM(rag_answer),'') IS NOT NULL AND NULLIF(BTRIM(operator_reply),'') IS NULL AND operator_messages=0 AND work_seconds=0 THEN $11::numeric/60*COALESCE(($12::jsonb->>department)::numeric,$13::numeric) ELSE 0 END),0),COALESCE(SUM(work_seconds/3600*COALESCE(($12::jsonb->>department)::numeric,$13::numeric)),0) FROM filtered`, costArgs...).Scan(&releasedValue, &laborValue)
+	if err != nil {
+		writeError(w, 503, "Не удалось рассчитать стоимость времени")
+		return
+	}
+	add("released_time_value", value(releasedValue), cfg.Economics.Currency, "estimate", autoCount, "Подтверждённые автоматические решения × базовое время × ставка подразделения (либо общая ставка). Не гарантирует сокращение расходов.", "organization.economics / confirmed tickets")
+	add("measured_labor_value", value(laborValue), cfg.Economics.Currency, "estimate", measuredN, "Сохранённое активное рабочее время × заданная ставка подразделения. Ставка — допущение, не начисленная зарплата.", "ticket_work_sessions / organization.economics")
+	allocated := monthlyAllocation(f.From, f.To, cfg.Economics.MonthlyInfrastructure+cfg.Economics.MonthlyMaintenance)
+	add("allocated_operating_cost", value(allocated), cfg.Economics.Currency, "estimate", total, "Месячная инфраструктура и сопровождение пропорционально календарной доле каждого месяца периода.", "organization.economics")
+	add("partial_effect", value(releasedValue-allocated), cfg.Economics.Currency, "estimate", total, "Оценка стоимости высвобождённого времени минус распределённая инфраструктура и сопровождение. Расходы ИИ и внедрение не вычтены; это частичная оценка.", "organization.economics / confirmed tickets")
+	add("roi", nil, "percent", "unavailable", 0, "Не рассчитывается как полный ROI без подтверждённых затрат и денежного эффекта.", "complete financial data unavailable")
+	add("payback_months", nil, "months", "unavailable", 0, "Не рассчитывается без подтверждённого денежного эффекта и полных затрат.", "complete financial data unavailable")
 	if err = tx.Commit(ctx); err != nil {
 		writeError(w, 503, "Не удалось завершить расчёт")
 		return
@@ -365,4 +381,20 @@ func analyticsTable(report AnalyticsReport) reports.Table {
 		table.Rows = append(table.Rows, []string{label, value, m.Unit, m.Kind, strconv.Itoa(m.Sample), m.Method, m.Source})
 	}
 	return table
+}
+
+func monthlyAllocation(from, to time.Time, monthly float64) float64 {
+	sum := float64(0)
+	cursor := from
+	for cursor.Before(to) {
+		start := time.Date(cursor.Year(), cursor.Month(), 1, 0, 0, 0, 0, cursor.Location())
+		end := start.AddDate(0, 1, 0)
+		stop := end
+		if stop.After(to) {
+			stop = to
+		}
+		sum += monthly * stop.Sub(cursor).Seconds() / end.Sub(start).Seconds()
+		cursor = stop
+	}
+	return sum
 }

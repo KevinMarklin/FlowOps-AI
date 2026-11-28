@@ -52,9 +52,9 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'operator', 'analytics', 'knowledge', 'builder', 'channels', 'platform', 'employee'],
-    operator: ['operator', 'knowledge', 'employee'],
-    analyst: ['analytics'],
+    admin: ['admin', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
+    operator: ['operator', 'knowledge', 'knowledge-review', 'employee'],
+    analyst: ['analytics','optimization'],
     employee: ['employee']
   };
   const canTab = name => (roleTabs[state.user?.role] || []).includes(name);
@@ -63,6 +63,8 @@
 	window.FlowOpsSupportUI?.clear();
     window.FlowOpsPlatform?.clear();
     window.FlowOpsAnalytics?.clear();
+    window.FlowOpsOptimization?.clear();
+    window.FlowOpsKnowledge?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
     if ($('#settings-nav')) $('#settings-nav').open = false;
@@ -1523,7 +1525,7 @@
       $('#smart-import-input') ||
       $('#builder-smart-text');
     const departmentSelect = $('#smart-import-department') || $('#builder-smart-department');
-    const resultBox = $('#smart-import-result');
+    const resultBox = $('#smart-import-results');
     const button = $('#smart-import-submit');
     const text = input?.value.trim() || '';
     if (!text) {
@@ -1535,15 +1537,15 @@
       const response = await api('/api/v1/kb/smart-import', {
         method: 'POST',
         body: JSON.stringify({
-          text,
-          department: departmentSelect?.value || 'General'
+          raw_text:text,
+          default_department: departmentSelect?.value || 'General'
         })
       });
       const articles = response.articles || response.items || response.documents || [];
       const count = response.count ?? articles.length;
       if (resultBox) {
         resultBox.hidden = false;
-        resultBox.innerHTML = `<div class="smart-import-summary">Добавлено статей: ${Number(count)} · источник: ${escapeHTML(response.provider || response.source || 'ai')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
+        resultBox.innerHTML = `<div class="smart-import-summary">Создано черновиков: ${Number(count)} · источник: ${escapeHTML(response.provider || response.source || 'ai')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
           .map(
             item =>
               `<article class="smart-import-card"><strong>${escapeHTML(item.title || 'Регламент')}</strong><small>${escapeHTML(item.department || '')}${item.keywords?.length ? ` · ${escapeHTML(item.keywords.join(', '))}` : ''}</small><pre>${escapeHTML(item.content || '')}</pre></article>`
@@ -1801,8 +1803,10 @@
         if (tab.dataset.tab === 'employee') loadHistory();
         if (tab.dataset.tab === 'operator') loadOperator();
         if (tab.dataset.tab === 'analytics') loadAnalytics();
+        if (tab.dataset.tab === 'optimization') window.FlowOpsOptimization?.refresh();
         if (tab.dataset.tab === 'admin') { loadMembers(); loadAudit(); }
         if (tab.dataset.tab === 'knowledge') loadKnowledge();
+        if (tab.dataset.tab === 'knowledge-review') window.FlowOpsKnowledge?.refresh();
         if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();
         if (tab.dataset.tab === 'channels') {
           loadWidgetConfig();

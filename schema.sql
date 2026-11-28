@@ -329,3 +329,43 @@ CREATE TABLE IF NOT EXISTS analytics_dashboards (
  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS analytics_dashboard_access ON analytics_dashboards(tenant_id,owner_id,shared);
+
+
+CREATE TABLE IF NOT EXISTS optimization_decisions(
+ tenant_id TEXT NOT NULL REFERENCES workspaces(tenant_id) ON DELETE CASCADE,
+ id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('accepted','rejected','deferred','implemented')),
+ assignee_id TEXT NOT NULL DEFAULT '',
+ note TEXT NOT NULL DEFAULT '',
+ revision BIGINT NOT NULL DEFAULT 1,
+ baseline JSONB NOT NULL,
+ tasks JSONB NOT NULL DEFAULT '[]',
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(tenant_id,id)
+);
+
+
+CREATE TABLE IF NOT EXISTS kb_articles(
+ id TEXT PRIMARY KEY,
+ tenant_id TEXT NOT NULL REFERENCES workspaces(tenant_id) ON DELETE CASCADE,
+ author_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('draft','review','changes_requested','published','stale','archived')),
+ revision BIGINT NOT NULL DEFAULT 1,
+ published_revision BIGINT,
+ document JSONB NOT NULL,
+ approved_by TEXT NOT NULL DEFAULT '',
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS kb_article_versions(
+ tenant_id TEXT NOT NULL,
+ article_id TEXT NOT NULL REFERENCES kb_articles(id) ON DELETE CASCADE,
+ revision BIGINT NOT NULL,
+ state TEXT NOT NULL,
+ document JSONB NOT NULL,
+ actor TEXT NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(tenant_id,article_id,revision)
+);
+CREATE INDEX IF NOT EXISTS kb_article_list ON kb_articles(tenant_id,state,updated_at,id);
+
+CREATE TABLE IF NOT EXISTS optimization_semantic_clusters(tenant_id TEXT NOT NULL REFERENCES workspaces(tenant_id) ON DELETE CASCADE,id TEXT NOT NULL,payload JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(tenant_id,id));

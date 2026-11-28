@@ -17,10 +17,16 @@ import (
 )
 
 type SmartHandler struct {
+	draftStore    func(context.Context, importedArticle, string) (knowledgeDocument, error)
 	base          *knowledge.Base
 	analyzer      *analyzer.Analyzer
 	generator     func(context.Context, string, string) (string, bool, error)
 	builderConfig settings.Loader
+}
+
+func (h *SmartHandler) WithDraftStore(store func(context.Context, importedArticle, string) (knowledgeDocument, error)) *SmartHandler {
+	h.draftStore = store
+	return h
 }
 
 func (h *SmartHandler) WithBuilderConfig(loader settings.Loader) *SmartHandler {
@@ -105,6 +111,13 @@ func (h *SmartHandler) SmartImport(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(article.Keywords) == 0 {
 			article.Keywords = extractKeywords(article.Title + " " + article.Content)
+		}
+		if h.draftStore != nil {
+			doc, err := h.draftStore(r.Context(), article, masked.MaskedText)
+			if err == nil {
+				created = append(created, doc)
+			}
+			continue
 		}
 		doc, addErr := base.Add(article.Department, article.Title, article.Keywords, article.Content)
 		if addErr != nil {

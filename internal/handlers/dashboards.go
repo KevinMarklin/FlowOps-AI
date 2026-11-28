@@ -36,7 +36,7 @@ type Dashboard struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
-var dashboardMetrics = map[string]bool{"total": true, "new": true, "active": true, "closed": true, "overdue": true, "reopens": true, "redirects": true, "first_response_mean": true, "first_response_median": true, "resolution_mean": true, "resolution_median": true, "active_hours": true, "deflection": true, "ai_share": true, "sla_compliance": true, "first_contact_resolution": true, "satisfaction": true, "released_hours": true, "released_time_value": true, "ai_cost": true, "cost_per_ticket": true, "routing_accuracy": true}
+var dashboardMetrics = map[string]bool{"measured_labor_value": true, "allocated_operating_cost": true, "partial_effect": true, "roi": true, "payback_months": true, "total": true, "new": true, "active": true, "closed": true, "overdue": true, "reopens": true, "redirects": true, "first_response_mean": true, "first_response_median": true, "resolution_mean": true, "resolution_median": true, "active_hours": true, "deflection": true, "ai_share": true, "sla_compliance": true, "first_contact_resolution": true, "satisfaction": true, "released_hours": true, "released_time_value": true, "ai_cost": true, "cost_per_ticket": true, "routing_accuracy": true}
 
 func validDashboardFilters(filters map[string]string) bool {
 	if len(filters) > 10 {

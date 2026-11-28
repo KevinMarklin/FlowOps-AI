@@ -25,17 +25,21 @@ import (
 )
 
 type TicketsHandler struct {
-	db               *pgxpool.Pool
-	logger           *slog.Logger
-	analyzer         *analyzer.Analyzer
-	dispatcher       *channels.Dispatcher
-	tenantDispatcher *channels.TenantDispatcher
-	builderConfig    settings.Loader
-	callbacks        *security.Callbacks
+	structuredGenerator func(context.Context, string, string) (string, bool, error)
+	db                  *pgxpool.Pool
+	logger              *slog.Logger
+	analyzer            *analyzer.Analyzer
+	dispatcher          *channels.Dispatcher
+	tenantDispatcher    *channels.TenantDispatcher
+	builderConfig       settings.Loader
+	callbacks           *security.Callbacks
 }
 
 func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
 	handler := &TicketsHandler{db: db, logger: logger, analyzer: ticketAnalyzer}
+	if ticketAnalyzer != nil {
+		handler.structuredGenerator = ticketAnalyzer.GenerateStructured
+	}
 	if len(dispatchers) > 0 {
 		handler.dispatcher = dispatchers[0]
 	}

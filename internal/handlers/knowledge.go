@@ -30,6 +30,9 @@ func NewKnowledgeHandler(base *knowledge.Base, db ...*pgxpool.Pool) *KnowledgeHa
 			handler.audit(context.Background(), "TTL_PURGED", "system", nil, "Автоматически удалён временный регламент")
 		})
 	}
+	if handler.db != nil {
+		handler.configureManagedKnowledge()
+	}
 	return handler
 }
 
@@ -121,6 +124,10 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(filepath.Base(r.PathValue("filename")), "kb-managed-") {
+		writeError(w, 409, "Измените статью через согласование базы знаний")
+		return
+	}
 	base, err := h.tenantBase(r)
 	if err != nil {
 		writeError(w, 500, "failed to load tenant knowledge base")
@@ -187,6 +194,10 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(filepath.Base(r.PathValue("filename")), "kb-managed-") {
+		writeError(w, 409, "Архивируйте статью через согласование базы знаний")
+		return
+	}
 	base, err := h.tenantBase(r)
 	if err != nil {
 		writeError(w, 500, "failed to load tenant knowledge base")

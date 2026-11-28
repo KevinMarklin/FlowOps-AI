@@ -27,12 +27,15 @@ type Document struct {
 }
 
 type Base struct {
-	mu         sync.RWMutex
-	directory  string
-	tenantRoot string
-	tenants    map[string]*Base
-	documents  []Document
-	auditTTL   func(string)
+	mu              sync.RWMutex
+	directory       string
+	tenantRoot      string
+	tenants         map[string]*Base
+	documents       []Document
+	auditTTL        func(string)
+	managedLoader   func(string) ([]Document, error)
+	fileParent      *Base
+	managedSnapshot []Document
 }
 
 func (b *Base) SetAuditTTLCallback(callback func(string)) {
@@ -80,7 +83,45 @@ func Load(dir string) (*Base, error) {
 
 // TenantBase returns the isolated file-backed KB for a tenant. Tenant IDs are
 // constrained before being used as path components.
+func (b *Base) SetManagedLoader(loader func(string) ([]Document, error)) {
+	b.mu.Lock()
+	b.managedLoader = loader
+	b.mu.Unlock()
+}
 func (b *Base) TenantBase(tenant string) (*Base, error) {
+	target, err := b.fileTenantBase(tenant)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.RLock()
+	loader := b.managedLoader
+	b.mu.RUnlock()
+	if loader != nil {
+		if tenant == "" {
+			tenant = "default"
+		}
+		documents, err := loader(tenant)
+		if err != nil {
+			return nil, err
+		}
+		// Each request keeps its own approved-version snapshot. Concurrent RAG loads
+		// must never overwrite another request's approved/unpublished document set.
+		return &Base{directory: target.directory, tenantRoot: target.tenantRoot, fileParent: target, managedSnapshot: documents, documents: append(target.Documents(), documents...)}, nil
+	}
+
+	return target, nil
+}
+func (b *Base) refreshFileSnapshot() {
+	if b.fileParent == nil {
+		return
+	}
+	documents := append(b.fileParent.Documents(), b.managedSnapshot...)
+	b.mu.Lock()
+	b.documents = documents
+	b.mu.Unlock()
+}
+
+func (b *Base) fileTenantBase(tenant string) (*Base, error) {
 	if tenant == "" {
 		tenant = "default"
 	}
@@ -160,6 +201,11 @@ func (b *Base) Add(department, title string, keywords []string, content string) 
 // ReplaceWithOptions validates first, writes a temporary file, then replaces the
 // original. Invalid updates and write failures must not erase an existing rule.
 func (b *Base) ReplaceWithOptions(filename, department, title string, keywords []string, content, kind, state string, expiresAt *time.Time) (Document, error) {
+	if b.fileParent != nil {
+		d, e := b.fileParent.ReplaceWithOptions(filename, department, title, keywords, content, kind, state, expiresAt)
+		b.refreshFileSnapshot()
+		return d, e
+	}
 	if err := security.ValidateKnowledge(title, keywords, content); err != nil {
 		return Document{}, err
 	}
@@ -207,6 +253,11 @@ func (b *Base) ReplaceWithOptions(filename, department, title string, keywords [
 }
 
 func (b *Base) AddWithOptions(department, title string, keywords []string, content, kind, state string, expiresAt *time.Time) (Document, error) {
+	if b.fileParent != nil {
+		d, e := b.fileParent.AddWithOptions(department, title, keywords, content, kind, state, expiresAt)
+		b.refreshFileSnapshot()
+		return d, e
+	}
 	if err := security.ValidateKnowledge(title, keywords, content); err != nil {
 		return Document{}, err
 	}
@@ -249,6 +300,11 @@ func (b *Base) AddWithOptions(department, title string, keywords []string, conte
 
 // Reset removes demo-created documents from disk and the in-memory index.
 func (b *Base) Reset() error {
+	if b.fileParent != nil {
+		e := b.fileParent.Reset()
+		b.refreshFileSnapshot()
+		return e
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	entries, err := os.ReadDir(b.directory)
@@ -278,6 +334,11 @@ func (b *Base) Reset() error {
 }
 
 func (b *Base) PurgeExpired() error {
+	if b.fileParent != nil {
+		e := b.fileParent.PurgeExpired()
+		b.refreshFileSnapshot()
+		return e
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := time.Now()
@@ -305,6 +366,11 @@ func (b *Base) PurgeExpired() error {
 }
 
 func (b *Base) Delete(filename string) error {
+	if b.fileParent != nil {
+		e := b.fileParent.Delete(filename)
+		b.refreshFileSnapshot()
+		return e
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for i, doc := range b.documents {
