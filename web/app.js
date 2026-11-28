@@ -231,6 +231,7 @@
   function hideAuth(me) {
     authReady = true;
     state.user = me?.user || null;
+    applyOrganization(me);
     bindTabMember(state.user?.id);
     const workspaceID = $('#workspace-id-display'); if (workspaceID) workspaceID.textContent = me?.tenant_id || '';
     applyRoleUI();
@@ -372,7 +373,7 @@
       const response = await fetch('/api/v1/workspaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
+        body: JSON.stringify({ name, organization_type: $('#workspace-type').value })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -387,7 +388,7 @@
       $('#activation-details').open = true;
       $('#activation-summary').textContent = 'Задать пароль владельца';
       $('#activation-email').focus();
-      result.innerHTML = `<p>Компания создана. Сохраните резервный код владельца, затем задайте почту и пароль в форме активации:</p><code>${escapeHTML(token)}</code><button type="button" data-copy-workspace-token>Скопировать</button>`;
+      result.innerHTML = `<p>Организация создана. Добавлены отделы и стартовые памятки: ${Number(data.starter_documents) || 0}. Адаптируйте их в базе знаний.</p><p>Сохраните код владельца, затем задайте почту и пароль в форме активации. После активации код перестанет действовать.</p><code>${escapeHTML(token)}</code><button type="button" data-copy-workspace-token>Скопировать</button>`;
       on($('[data-copy-workspace-token]', result), 'click', async () => {
         try {
           await navigator.clipboard.writeText(token);
@@ -413,6 +414,43 @@
 
   function hasSession() {
     return authReady;
+  }
+
+  function applyOrganization(me) {
+    const organization = me?.organization;
+    const heading = $('#service-heading');
+    if (heading) heading.textContent = organization?.heading || 'Помощь в работе';
+    const industry = $('#service-industry');
+    if (industry) industry.textContent = organization?.name || 'Выберите близкую ситуацию';
+    const examples = organization?.examples || ['Не получается войти в рабочий сервис.', 'Не работает оборудование на рабочем месте.', 'Как запросить кадровую справку?'];
+    const titles = {
+      education: ['Оборудование в аудитории', 'Учебные сервисы', 'Справка об обучении'],
+      bakery: ['Оборудование пекарни', 'Касса и продажи', 'Поставки сырья'],
+      bank: ['Внутренние системы', 'Безопасность', 'Кадровые документы'],
+      other: ['Доступ к сервису', 'Оборудование', 'Документы и справки']
+    }[organization?.type] || ['Доступ к сервису', 'Оборудование', 'Документы и справки'];
+    $$('.service-examples [data-demo]').forEach((button, index) => {
+      button.dataset.demo = examples[index] || examples[0];
+      $('b', button).textContent = titles[index];
+      $('span', button).textContent = button.dataset.demo;
+    });
+    applyDepartments(me?.departments || []);
+  }
+
+  function applyDepartments(items) {
+    state.departmentCodes = [...new Set([...items.map(item => item.name), 'General'])];
+    items.forEach(item => { departments[item.name] = item.description || item.name; });
+    ['#knowledge-department', '#smart-import-department', '#department-filter'].forEach(selector => {
+      const select = $(selector); if (!select) return;
+      const previous = select.value;
+      select.replaceChildren();
+      const codes = selector === '#department-filter' ? ['', ...state.departmentCodes, 'Unassigned'] : state.departmentCodes;
+      codes.forEach(code => {
+        const option = document.createElement('option'); option.value = code;
+        option.textContent = code ? departments[code] || code : 'Все отделы'; select.append(option);
+      });
+      if (codes.includes(previous)) select.value = previous;
+    });
   }
 
   function clearPersonalCodes() {
@@ -949,18 +987,18 @@
   }
 
   function ticketCard(ticket) {
-    const departmentCodes = ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General'];
+    const departmentCodes = [...new Set([...(state.departmentCodes || ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General']), ticket.department].filter(Boolean))];
     const priorityCodes = ['high', 'medium', 'low'];
     const piiBadge =
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
     return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
-      .slice(0, 4)
-      .map(item => `<option value="${item}">${departments[item]}</option>`)
+      .filter(item => item !== 'General')
+      .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
       .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
       .map(
-        item => `<option value="${item}" ${item === ticket.department ? 'selected' : ''}>${departments[item]}</option>`
+        item => `<option value="${escapeHTML(item)}" ${item === ticket.department ? 'selected' : ''}>${escapeHTML(departments[item] || item)}</option>`
       )
       .join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes
       .map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`)
@@ -1300,6 +1338,7 @@
         })
       });
       builderDepartments = departmentsList;
+      applyDepartments(departmentsList);
       renderBuilderDepartments();
       toast('Настройки конструктора сохранены');
     } catch (error) {
@@ -1685,6 +1724,7 @@
     );
 
     on($('#problem'), 'input', resetIntake);
+    on($('#intake-cancel'), 'click', () => { resetIntake(); $('#problem')?.focus(); });
     on($('#intake-skip'), 'click', () => { if ($('#ticket-form .primary-button')?.disabled) return; collectIntake(); intakeDetails.skip = true; $('#ticket-form')?.requestSubmit(); });
     on($('#ticket-form'), 'submit', submitTicket);
     on($('#email'), 'change', loadHistory);

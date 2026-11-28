@@ -1,0 +1,51 @@
+/* Organization-aware service intake, extending the established workspace. */
+.service-stages{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;list-style:none;padding:0 0 26px;margin:0 0 30px;border-bottom:1px solid var(--workflow-border)}
+.service-stages li{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.service-stages li>span{display:grid;place-items:center;flex:0 0 32px;height:32px;border:1px solid #94b4c0;border-radius:50%;color:#0b5367;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.service-stages strong{display:block;font-size:14px;line-height:1.5;color:#102a43;font-weight:600}
+.service-stages small{display:block;font-size:12px;line-height:1.6;color:#526d82;margin-top:4px}
+#employee:has(#intake-panel:not([hidden])) .service-stages li:nth-child(2)>span,#employee:has(#analysis-result:not(.empty)) .service-stages li:nth-child(3)>span{background:#0b5367;color:#fff;border-color:#0b5367}
+.service-examples{margin-bottom:30px}
+.service-examples .demo-heading{align-items:baseline;margin-bottom:12px}
+.service-examples h2{font-size:18px;font-weight:600;margin:0;color:#102a43}
+.service-examples .demo-heading small{display:inline-block;background:transparent;padding:0;text-align:left;color:#526d82;font-size:12px;line-height:1.6}
+#employee .service-examples .demo-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:0 24px}
+#employee .service-examples .demo-grid button{padding:16px 0;min-height:100px;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+#employee .service-examples .demo-grid button b{font-size:15px;font-weight:600}
+#employee .service-examples .demo-grid button span{font-size:13px;max-width:38ch}
+#employee .employee-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:30px;align-items:start}
+#employee .request-panel{padding:30px;border-top:3px solid #0b5367}
+#employee .request-panel .panel-title p{font-size:13px;line-height:1.6;margin:8px 0 0}
+#employee .request-panel .panel-title>div{display:block}
+#employee .request-panel #problem{min-height:190px;font-size:16px}
+#employee .primary-button{min-height:48px}
+#employee .result-panel.empty{background:transparent;border:0;padding:6px 0 20px}
+#employee .result-panel.empty h2{font-size:18px}
+#employee .result-panel.empty .request-steps{gap:18px;margin-top:18px}
+#employee .result-panel:not(.empty){border:1px solid #9bbdc5;background:#f2f8f8}
+#employee .result-heading{margin-bottom:18px}
+#employee .result-panel:not(.empty) h2{font-size:clamp(22px,2.3vw,28px)}
+#employee .history-panel{padding:24px}
+.history-row{border-bottom:1px solid var(--workflow-border);border-radius:0}
+.history-row summary{min-height:76px;padding-block:16px}
+.history-row summary strong{font-size:14px;line-height:1.6;font-weight:500;overflow-wrap:anywhere}
+.history-row[open]{background:#f4f8fa}
+.history-row[open] .history-detail{padding:0 14px 18px}
+.queue-search-row{padding:20px;background:#edf5f6;border-radius:12px;margin-bottom:22px}
+.ticket-card{border-radius:12px;margin-bottom:18px}
+.ticket-card[data-status="assigned_to_operator"] .ticket-summary{color:#0b5367}
+.ticket-card .ticket-summary{font-size:19px;line-height:1.5}
+.ticket-card .ticket-top{font-size:12px;font-variant-numeric:tabular-nums}
+.ticket-card .reply-composer{margin-top:20px}
+.service-examples button:focus-visible{outline:3px solid #147d92;outline-offset:4px}
+[data-theme="dark"] .service-stages strong,[data-theme="dark"] .service-examples h2{color:#e0edf7}
+[data-theme="dark"] .service-examples .demo-heading small{color:#b4c8d7}
+[data-theme="dark"] #employee .result-panel.empty{background:transparent}
+[data-theme="dark"] .service-stages small,[data-theme="dark"] #employee .service-examples .demo-grid button span{color:#b4c8d7}
+[data-theme="dark"] .service-stages li>span{color:#a1d7de;border-color:#638a99}
+[data-theme="dark"] #employee .service-examples .demo-grid button{color:#e0edf7;border-color:#49616f}
+[data-theme="dark"] #employee .service-examples .demo-grid button:hover{background:#203d4a;color:#a1d7de}
+[data-theme="dark"] #employee .result-panel:not(.empty),[data-theme="dark"] .history-row[open],[data-theme="dark"] .queue-search-row{background:#1a2c3b;color:#e0edf7}
+[data-theme="dark"] .ticket-card[data-status="assigned_to_operator"] .ticket-summary{color:#a1d7de}
+@media(max-width:1050px){#employee .employee-grid{grid-template-columns:1fr}#employee .result-column{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}}
+@media(max-width:700px){.service-stages{gap:16px;grid-template-columns:1fr;padding-bottom:22px;margin-bottom:24px}.service-stages li{align-items:center}.service-stages small{margin-top:0}.service-stages li>span{flex-basis:28px;height:28px}#employee .service-examples .demo-grid{grid-template-columns:1fr;gap:0}#employee .service-examples .demo-grid button{min-height:72px;padding:14px 4px}#employee .result-column{display:flex}#employee .request-panel{padding:22px}.service-examples .demo-heading{display:block}.service-examples .demo-heading small{display:block;margin-top:6px}.queue-search-row{padding:16px}.ticket-card .ticket-top{flex-wrap:wrap;gap:8px}.ticket-email{overflow-wrap:anywhere;min-width:0}}
