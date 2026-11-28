@@ -29,3 +29,6 @@ html[data-theme="dark"] .docs-nav .docs-nav-group>summary{color:#e3edf4}html[dat
 
 .docs-contents-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.docs-nav .docs-jump-link{display:none;flex-shrink:0;font-size:12px;padding:8px 12px}
 @media(max-width:850px){.docs-nav .docs-jump-link{display:block}}
+
+/* Independent native disclosures; summary remains keyboard operable. */
+.docs-nav-group>summary{list-style:none}.docs-nav-group>summary::-webkit-details-marker{display:none}.docs-nav-group>summary::marker{content:""}.docs-nav-group>summary:focus-visible{outline:2px solid #147d92;outline-offset:2px;border-radius:4px}
