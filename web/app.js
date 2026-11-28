@@ -63,6 +63,7 @@
 	window.FlowOpsSupportUI?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
+    if ($('#settings-nav')) $('#settings-nav').open = false;
     workState = { id: null, seconds: 0, running: false, busy: false, activity: 0 };
     state.pendingTicket = null;
     state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear(); state.ticketRowsOpen.clear();
@@ -83,6 +84,13 @@
     if (initialAnalysis) $('#analysis-result')?.replaceWith(initialAnalysis.cloneNode(true));
   }
 
+  function selectSettingsPanel(panel = 'connections') {
+    $$('#builder [data-settings-section]').forEach(section => { section.hidden = section.dataset.settingsSection !== panel; });
+    const button = $(`#settings-nav [data-settings-panel="${panel}"]`);
+    const title = $('#builder .page-heading h1');
+    if (title && button) title.textContent = button.textContent;
+  }
+
   function applyRoleUI(selectDefault = true) {
     const role = state.user?.role;
     document.body.dataset.role = role || '';
@@ -101,6 +109,8 @@
     if (!canTab('analytics')) $('#metrics').replaceChildren();
     if (!canTab('knowledge')) $('#knowledge-list').replaceChildren();
     if (!canTab('admin')) { $('#members-list').replaceChildren(); $('#audit-list').replaceChildren(); $('#member-issued').replaceChildren(); }
+    const settingsNav = $('#settings-nav');
+    if (settingsNav) { settingsNav.hidden = !['knowledge','builder','channels'].some(canTab); if (settingsNav.hidden) settingsNav.open = false; }
     const current = $('.tab.active');
     if (selectDefault || !current || !canTab(current.dataset.tab)) {
       const target = roleTabs[role]?.[0];
@@ -1771,9 +1781,12 @@
     $$('.tab').forEach(tab =>
       on(tab, 'click', () => {
         if (!canTab(tab.dataset.tab)) return;
+        const wasBuilder = $('#builder')?.classList.contains('active');
         if (location.pathname.startsWith('/tickets/')) { history.pushState({}, '', '/'); leaveTicketRoute(); }
         $$('.tab, .view').forEach(element => element.classList.remove('active'));
         tab.classList.add('active');
+        if (tab.closest('#settings-nav')) $('#settings-nav').open = true;
+        if (tab.dataset.tab === 'builder') selectSettingsPanel(tab.dataset.settingsPanel);
         $$('.tab').forEach(item => item.setAttribute('aria-current', item === tab ? 'page' : 'false'));
         const view = $(`#${tab.dataset.tab}`);
         if (view) view.classList.add('active');
@@ -1788,7 +1801,7 @@
           loadWidgetConfig();
           loadAPIKeys();
         }
-        if (tab.dataset.tab === 'builder') {
+        if (tab.dataset.tab === 'builder' && !wasBuilder) {
           loadBuilderSettings();
           loadWidgetConfig();
           loadAPIKeys();
@@ -1906,6 +1919,10 @@
       const box = dialog.getBoundingClientRect();
       if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
     }));
+
+    selectSettingsPanel();
+    on(document, 'click', event => { if (!event.target.closest('#settings-nav')) $('#settings-nav').open = false; });
+    on(document, 'keydown', event => { if (event.key === 'Escape' && $('#settings-nav').open) { $('#settings-nav').open = false; $('#settings-nav summary').focus(); } });
 
     restoreSession();
 
