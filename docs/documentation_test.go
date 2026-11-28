@@ -126,3 +126,45 @@ func TestPinnedModuleNoticesAreIncluded(t *testing.T) {
 		t.Fatal("bundled font license missing")
 	}
 }
+
+func TestDocumentationGroupsAndSubsectionAnchors(t *testing.T) {
+	groups := navigationGroups("data")
+	if len(groups) != 6 {
+		t.Fatal("expected six documentation sections", len(groups))
+	}
+	count, active := 0, 0
+	for _, group := range groups {
+		count += len(group.Chapters)
+		if group.Active {
+			active++
+			if group.Title != "Справка" {
+				t.Fatal("wrong section expanded", group.Title)
+			}
+		}
+	}
+	if count != len(Chapters) || active != 1 {
+		t.Fatal("chapters lost or incorrect expansion", count, active)
+	}
+	for _, chapter := range Chapters {
+		raw, _ := content.ReadFile("manual/" + chapter.Slug + ".md")
+		body, headings, err := renderChapter(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(headings) == 0 {
+			t.Fatal("missing subsections", chapter.Slug)
+		}
+		for _, heading := range headings {
+			if heading.Title == "" || !strings.Contains(string(body), `id="`+heading.ID+`"`) {
+				t.Fatal("broken subsection anchor", chapter.Slug, heading)
+			}
+		}
+	}
+	mux := http.NewServeMux()
+	Register(mux, "../LICENSE")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/documentation/data", nil))
+	if !strings.Contains(w.Body.String(), `class="docs-subsections"`) || !strings.Contains(w.Body.String(), "/documentation/data#") {
+		t.Fatal("subsections absent from navigation")
+	}
+}

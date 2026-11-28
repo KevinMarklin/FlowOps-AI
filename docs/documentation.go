@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
 )
 
 //go:embed manual/*.md
@@ -29,15 +31,64 @@ var Chapters = []Chapter{
 
 var markdown = goldmark.New(goldmark.WithExtensions(extension.Table, extension.Strikethrough), goldmark.WithParserOptions(parser.WithAutoHeadingID()))
 
-func renderMarkdown(raw []byte) (template.HTML, error) {
+type Heading struct {
+	ID, Title string
+	Level     int
+}
+type NavGroup struct {
+	Title    string
+	Active   bool
+	Chapters []Chapter
+}
+
+func renderChapter(raw []byte) (template.HTML, []Heading, error) {
+	document := markdown.Parser().Parse(text.NewReader(raw))
+	headings := []Heading{}
+	ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if heading, ok := node.(*ast.Heading); ok && entering && (heading.Level == 2 || heading.Level == 3) {
+			if value, found := heading.AttributeString("id"); found {
+				var id string
+				switch value := value.(type) {
+				case []byte:
+					id = string(value)
+				case string:
+					id = value
+				}
+				if id != "" {
+					headings = append(headings, Heading{ID: id, Title: string(heading.Text(raw)), Level: heading.Level})
+				}
+			}
+		}
+		return ast.WalkContinue, nil
+	})
 	var body bytes.Buffer
-	if err := markdown.Convert(raw, &body); err != nil {
-		return "", err
+	if err := markdown.Renderer().Render(&body, raw, document); err != nil {
+		return "", nil, err
 	}
-	return template.HTML(body.String()), nil
+	return template.HTML(body.String()), headings, nil
+}
+func renderMarkdown(raw []byte) (template.HTML, error) {
+	body, _, err := renderChapter(raw)
+	return body, err
+}
+func navigationGroups(active string) []NavGroup {
+	groups := []NavGroup{}
+	for _, chapter := range Chapters {
+		if len(groups) == 0 || groups[len(groups)-1].Title != chapter.Group {
+			groups = append(groups, NavGroup{Title: chapter.Group})
+		}
+		group := &groups[len(groups)-1]
+		group.Chapters = append(group.Chapters, chapter)
+		if chapter.Slug == active {
+			group.Active = true
+		}
+	}
+	return groups
 }
 
 type pageData struct {
+	Groups         []NavGroup
+	Headings       []Heading
 	Chapter        Chapter
 	Chapters       []Chapter
 	Body           template.HTML
@@ -72,12 +123,12 @@ func Register(mux *http.ServeMux, licensePath string) {
 			http.Error(w, "Документация недоступна", 503)
 			return
 		}
-		body, err := renderMarkdown(raw)
+		body, headings, err := renderChapter(raw)
 		if err != nil {
 			http.Error(w, "Документация недоступна", 503)
 			return
 		}
-		data := pageData{Chapter: Chapters[index], Chapters: Chapters, Body: body}
+		data := pageData{Chapter: Chapters[index], Chapters: Chapters, Body: body, Headings: headings, Groups: navigationGroups(slug)}
 		if index > 0 {
 			data.Previous = &Chapters[index-1]
 		}
@@ -91,6 +142,7 @@ func Register(mux *http.ServeMux, licensePath string) {
 				return
 			}
 			data.License = string(license)
+			data.Headings = append(data.Headings, Heading{ID: "license-text", Title: "Полный текст Apache License 2.0", Level: 2})
 		}
 		var output bytes.Buffer
 		if page.Execute(&output, data) != nil {
@@ -121,6 +173,6 @@ func Register(mux *http.ServeMux, licensePath string) {
 var page = template.Must(template.New("documentation").Parse(`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#102a43"><title>{{.Chapter.Title}} — Документация FlowOps AI</title><link rel="icon" href="/assets/flowops-mark.png"><script src="/theme.js?v=1"></script><link rel="stylesheet" href="/workspace.css?v=21"><link rel="stylesheet" href="/documentation.css?v=1"><script src="/documentation.js?v=1" defer></script></head>
 <body class="documentation-page"><a class="docs-skip" href="#doc-content">К содержимому</a><header class="docs-header"><a href="/" class="docs-brand"><img src="/assets/flowops-mark.png" alt="" width="36" height="36"><strong>FlowOps AI</strong></a><a href="/documentation">Документация</a><a href="/" class="docs-return">Открыть приложение</a></header>
-<div class="docs-layout"><nav class="docs-nav" aria-label="Разделы документации"><details open><summary>Содержание</summary><ul>{{range .Chapters}}<li><a href="/documentation/{{.Slug}}" {{if eq .Slug $.Chapter.Slug}}aria-current="page"{{end}}>{{.Title}}</a></li>{{end}}</ul></details></nav>
-<main id="doc-content" class="docs-article" tabindex="-1"><p class="docs-meta">Руководство · Обновлено 28 ноября 2026</p>{{.Body}}{{if .License}}<h2 id="license-text">Полный текст Apache License 2.0</h2><p><a href="/license.txt" download="LICENSE">Скачать LICENSE</a></p><pre class="license-text">{{.License}}</pre>{{end}}<nav class="docs-pagination" aria-label="Главы руководства">{{if .Previous}}<a href="/documentation/{{.Previous.Slug}}">← {{.Previous.Title}}</a>{{end}}{{if .Next}}<a href="/documentation/{{.Next.Slug}}">{{.Next.Title}} →</a>{{end}}</nav></main></div>
+<div class="docs-layout"><nav class="docs-nav" aria-label="Разделы документации"><details class="docs-contents" open><summary>Содержание</summary>{{range .Groups}}<details class="docs-nav-group" {{if .Active}}open{{end}}><summary>{{.Title}}</summary><ul>{{range .Chapters}}<li><a href="/documentation/{{.Slug}}" {{if eq .Slug $.Chapter.Slug}}aria-current="page"{{end}}>{{.Title}}</a>{{if eq .Slug $.Chapter.Slug}}{{if $.Headings}}<ul class="docs-subsections" aria-label="Подразделы главы">{{range $.Headings}}<li class="docs-heading-level-{{.Level}}"><a href="/documentation/{{$.Chapter.Slug}}#{{.ID}}">{{.Title}}</a></li>{{end}}</ul>{{end}}{{end}}</li>{{end}}</ul></details>{{end}}</details></nav>
+<main id="doc-content" class="docs-article" tabindex="-1"><p class="docs-meta"><a href="/documentation">Руководство</a> / {{.Chapter.Group}} / {{.Chapter.Title}}</p>{{.Body}}{{if .License}}<h2 id="license-text">Полный текст Apache License 2.0</h2><p><a href="/license.txt" download="LICENSE">Скачать LICENSE</a></p><pre class="license-text">{{.License}}</pre>{{end}}<nav class="docs-pagination" aria-label="Главы руководства">{{if .Previous}}<a href="/documentation/{{.Previous.Slug}}">← {{.Previous.Title}}</a>{{end}}{{if .Next}}<a href="/documentation/{{.Next.Slug}}">{{.Next.Title}} →</a>{{end}}</nav></main></div>
 <footer class="site-footer"><nav aria-label="Справочные ссылки"><a href="/documentation">Документация</a><a href="/license">Apache 2.0</a><a href="/documentation/data">Обработка данных</a></nav><p>© 2026 Авторы FlowOps AI. Проект распространяется по Apache License 2.0.</p><a href="https://github.com/KevinMarklin/FlowOps-AI" target="_blank" rel="noopener noreferrer">GitHub</a></footer></body></html>`))
