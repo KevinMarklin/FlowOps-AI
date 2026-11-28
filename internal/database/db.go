@@ -203,6 +203,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, ProcessSchema); err != nil {
 		return fmt.Errorf("apply process events: %w", err)
 	}
+	if _, err := pool.Exec(ctx, DashboardSchema); err != nil {
+		return fmt.Errorf("apply dashboards: %w", err)
+	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 

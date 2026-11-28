@@ -87,6 +87,9 @@ func AllowRequest(role, method, path string) bool {
 	if role == "admin" {
 		return true
 	}
+	if path == "/api/analytics/dashboards" || strings.HasPrefix(path, "/api/analytics/dashboards/") {
+		return role == "analyst" && (method == "GET" || method == "POST" || method == "PUT" || method == "DELETE")
+	}
 	if path == "/api/analytics/explore" {
 		return role == "analyst" && method == http.MethodGet
 	}

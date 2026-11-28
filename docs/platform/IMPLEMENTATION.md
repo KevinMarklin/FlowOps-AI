@@ -52,3 +52,13 @@ UI: new analytical explorer, prior-period comparison, real counts/charts, per-me
 Validation: complete Go suite with isolated PostgreSQL passed; 21 JS tests passed; organization/SLA/analytics isolation and null-missing-data integration tests; live browser against isolated server verified settings save, dynamic empty/nonempty filtering, comparison and mobile no-overflow. Legacy records without reliable first-response/closure time show no data.
 
 Remaining within analytics: organization hierarchy/category dimensions; user-configurable dashboards; XLSX/PDF; report schedules; ticket-specific calendars/pause/escalation rules; provider billing; confirmed routing labels; richer process-variant analysis. These are not represented as delivered.
+
+### Stage 3 — persisted dashboards and report formats
+
+Migration: tenant-scoped analytics_dashboards with ownership, shared visibility, configuration JSON and optimistic revisions. API: GET/POST /api/analytics/dashboards and PUT/DELETE /{id}. Analysts manage personal dashboards; administrators publish/manage shared dashboards; another user's private layout cannot be edited. Configs cap widget counts and accepted filter/visualization keys. All mutations are audited.
+
+UI: multiple named dashboards, three templates, widget add/remove, keyboard move and drag ordering, width/height, per-widget filters, shared/personal copies. Nine visualizations use real aggregates. Distribution visualizes the distribution of group counts. The funnel is explicitly a sorted group distribution, not a claim of measured sequential process conversion. Report formats: authenticated server-generated CSV, XLSX and Unicode PDF with the bundled Golos font; no formulas or external spreadsheet references are emitted.
+
+Validation: full Go suite and 21 JS tests passed. Dashboard ownership/sharing/revision tests; report ZIP/XML/formula tests; PDF rendered and visually reviewed; extracted Cyrillic verified; XLSX opened with openpyxl. Live browser verified widget types, layout persistence across reload, mobile no-overflow and downloaded all three report formats.
+
+Remaining reporting scope: scheduled generation and fine-grained shared-dashboard grants. Current dashboard filters also serve as saved report selections, but there is no report scheduler yet. No unsupported sequential-funnel or AI-billing claim is made.

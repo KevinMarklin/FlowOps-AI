@@ -3,8 +3,10 @@ package handlers
 import (
 	"context"
 	"encoding/csv"
+	"flowops-ai/internal/reports"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -294,6 +296,25 @@ func (h *TicketsHandler) Analytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if format := r.URL.Query().Get("format"); format == "xlsx" || format == "pdf" {
+		table := analyticsTable(report)
+		var raw []byte
+		var err error
+		if format == "xlsx" {
+			raw, err = reports.XLSX(table)
+			w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		} else {
+			raw, err = reports.PDF(table)
+			w.Header().Set("Content-Type", "application/pdf")
+		}
+		if err != nil {
+			writeError(w, 500, "Не удалось сформировать отчёт")
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="flowops-analytics.`+format+`"`)
+		w.Write(raw)
+		return
+	}
 	if r.URL.Query().Get("format") == "csv" {
 		writeAnalyticsCSV(w, report)
 		return
@@ -321,4 +342,27 @@ func writeAnalyticsCSV(w http.ResponseWriter, report AnalyticsReport) {
 		out.Write([]string{csvSafe(key), csvSafe(v), csvSafe(metric.Unit), metric.Kind, strconv.Itoa(metric.Sample), csvSafe(metric.Method), csvSafe(metric.Source), report.Filters.From.Format(time.RFC3339), report.Filters.To.Format(time.RFC3339), report.Timezone})
 	}
 	out.Flush()
+}
+
+func analyticsTable(report AnalyticsReport) reports.Table {
+	table := reports.Table{Title: "Аналитика FlowOps AI", Subtitle: report.Filters.From.Format(time.RFC3339) + " — " + report.Filters.To.Format(time.RFC3339) + " · " + report.Timezone, Headers: []string{"Показатель", "Значение", "Единица", "Тип", "Размер выборки", "Методика", "Источник"}, Notes: report.Limitations}
+	keys := []string{}
+	for key := range report.Metrics {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	labels := map[string]string{"total": "Все обращения", "new": "Новые", "active": "Активные", "closed": "Закрытые", "overdue": "Просроченные", "first_response_mean": "Среднее время первого ответа", "first_response_median": "Медиана первого ответа", "resolution_mean": "Среднее время решения", "resolution_median": "Медиана решения", "active_hours": "Измеренные рабочие часы", "released_hours": "Расчётные высвобожденные часы", "released_time_value": "Расчётная стоимость времени", "reopens": "Переоткрытия", "redirects": "Перенаправления", "satisfaction": "Оценка ответов", "sla_compliance": "SLA Compliance", "routing_accuracy": "Точность маршрутизации", "ai_cost": "Расходы ИИ", "cost_per_ticket": "Стоимость обращения", "ai_share": "Доля инструкций ИИ", "deflection": "Deflection Rate", "first_contact_resolution": "First Contact Resolution"}
+	for _, key := range keys {
+		m := report.Metrics[key]
+		value := "Нет данных"
+		if m.Value != nil {
+			value = strconv.FormatFloat(*m.Value, 'f', 2, 64)
+		}
+		label := labels[key]
+		if label == "" {
+			label = key
+		}
+		table.Rows = append(table.Rows, []string{label, value, m.Unit, m.Kind, strconv.Itoa(m.Sample), m.Method, m.Source})
+	}
+	return table
 }

@@ -48,3 +48,4 @@ knowledge_base/ws_*/
 # Local browser verification artifacts
 output/playwright/
 .playwright-cli/
+output/report-qa/

@@ -90,4 +90,17 @@ func TestAnalyticsFilteredMetricsMissingDataAndPermissions(t *testing.T) {
 	if code != 200 || len(body) < 20 {
 		t.Fatal("CSV failed")
 	}
+	for _, format := range []string{"xlsx", "pdf"} {
+		code, _, body = call("admin", "?format="+format)
+		if code != 200 {
+			t.Fatal("export failed", format, body)
+		}
+		if format == "pdf" && len(body) > 4 && body[:4] != "%PDF" {
+			t.Fatal("PDF signature")
+		}
+		if format == "xlsx" && len(body) > 2 && body[:2] != "PK" {
+			t.Fatal("XLSX signature")
+		}
+	}
+
 }

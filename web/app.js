@@ -560,6 +560,7 @@
     if (requestGeneration !== sessionGeneration) throw new Error('Сессия изменилась. Повторите действие.');
     if (response.status === 401) clearLocalSession();
     if (response.status === 403 && path !== '/api/v1/auth/me') await checkAPI();
+    if(response.ok && options.responseType === 'blob') return response.blob();
     const data = response.status === 204 ? null : await response.json().catch(() => ({}));
     if (response.status === 409 && data?.code === 'session_changed') {
       sessionChanged();
@@ -1960,7 +1961,7 @@
     if(c.name)$('#workspace-name-label').textContent=c.name;
     window.FlowOpsAnalytics?.setTimezone(c.timezone);
     if(Array.isArray(c.closure_reasons)){closureReasonLabels={unspecified:'Причина не указана',...Object.fromEntries(c.closure_reasons.map(x=>[x.id,x.label]))};}
-  },request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
+  },requestBlob:(path,options={})=>api(path,{...options,responseType:'blob'}),role:()=>state.user?.role,request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
     const ticket=state.tickets.find(item=>String(item.id)===String(id));if(ticket)ticket.unread_employee_message=unread;setTicketUnread(id,unread);
   },changed:(id,status,messages)=>{
     for(const ticket of [...state.tickets,...state.historyTickets]){if(String(ticket.id)!==String(id))continue;ticket.status=status;const operator=messages.filter(message=>message.role==='operator').at(-1);if(operator)ticket.operator_reply=operator.body;}
