@@ -16,3 +16,6 @@ reports
 .idea
 *.ps1
 README.md
+
+docker-compose.override.yml
+.local/

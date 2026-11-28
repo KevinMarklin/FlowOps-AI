@@ -167,3 +167,69 @@ func TestExpiredDocumentIsPurgedFromMemoryAndDisk(t *testing.T) {
 		t.Fatalf("expired file still exists: %v", err)
 	}
 }
+
+func TestDefinitionRequestsRequireExplanationForTheirTopic(t *testing.T) {
+	base, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup, err := base.Add("IT", "VPN подключение", []string{"vpn", "впн"}, "Проверьте сеть и повторите запуск VPN. Это инструкция подключения.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		"Что означает аббревиатура VPN? Мне не нужна инструкция подключения.",
+		"Что такое VPN?", "Объясните термин VPN", "Расшифруйте VPN", "What is VPN?", "What does VPN mean?",
+	} {
+		if got := base.FindRelevant(query, "IT"); got != nil {
+			t.Errorf("definition %q selected procedural source %s", query, got.Filename)
+		}
+	}
+	if got := base.FindRelevant("Как подключить VPN?", "IT"); got == nil || got.Filename != setup.Filename {
+		t.Fatal("procedural query must retain setup source")
+	}
+	explanation, err := base.Add("IT", "VPN определение", []string{"vpn"}, "VPN — виртуальная частная сеть для защищённого соединения.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base.FindRelevant("Что такое VPN?", "IT"); got == nil || got.Filename != explanation.Filename {
+		t.Fatal("definition source should answer a definition request")
+	}
+}
+
+func TestDefinitionDoesNotBorrowExplanationOfAnotherTopic(t *testing.T) {
+	base, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = base.Add("IT", "VPN и сеть", []string{"vpn"}, "VPN перезапустите. Принтер — устройство печати.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base.FindRelevant("Что такое VPN?", "IT"); got != nil {
+		t.Fatal("unrelated explanatory sentence must not qualify VPN instructions")
+	}
+}
+
+func TestDefinitionApplicabilityIsIndependentOfServiceName(t *testing.T) {
+	base, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = base.Add("IT", "Настройка SSO", []string{"sso"}, "Откройте настройки и включите SSO.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"Как расшифровывается SSO?", "Дайте определение SSO", "Explain the meaning of SSO"} {
+		if got := base.FindRelevant(query, "IT"); got != nil {
+			t.Errorf("procedure is not definition for %q", query)
+		}
+	}
+	explanation, err := base.Add("IT", "Термины SSO", []string{"sso"}, "SSO stands for Single Sign-On.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base.FindRelevant("What does SSO mean?", "IT"); got == nil || got.Filename != explanation.Filename {
+		t.Fatal("matching English explanation missing")
+	}
+}

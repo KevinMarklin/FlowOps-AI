@@ -49,3 +49,7 @@ knowledge_base/ws_*/
 output/playwright/
 .playwright-cli/
 output/report-qa/
+
+# Local TLS inspection trust configuration
+docker-compose.override.yml
+.local/

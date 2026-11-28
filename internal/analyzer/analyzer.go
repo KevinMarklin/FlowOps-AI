@@ -352,7 +352,7 @@ func (a *Analyzer) analyzeWithCompatible(ctx context.Context, rawText string, bu
 	}
 	req.Header.Set("Content-Type", "application/json")
 	started := time.Now()
-	resp, err := a.client.Do(req)
+	resp, err := a.doProviderRequest(req)
 	if err != nil {
 		slog.Error("LLM request failed", "duration_ms", time.Since(started).Milliseconds())
 		return Result{}, err

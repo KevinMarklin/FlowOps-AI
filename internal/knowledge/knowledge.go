@@ -414,6 +414,9 @@ func (b *Base) FindRelevant(text, department string) *Document {
 		if !matchesBuiltinTopic(document.Filename, query) {
 			continue
 		}
+		if isDefinitionRequest(query) && !explainsRequestedTopic(document, query, queryWords) {
+			continue
+		}
 		score := 0
 		for _, term := range append(append([]string{}, document.Keywords...), strings.Fields(strings.ToLower(document.Title))...) {
 			term = strings.Trim(term, ".,!?():;\"'")

@@ -258,3 +258,24 @@ func TestProvidersRefuseRedirects(t *testing.T) {
 		t.Fatal("provider redirect followed")
 	}
 }
+
+func TestFailedPriorAttemptsDoNotReplayWholeRegulation(t *testing.T) {
+	base, err := knowledge.Load(filepath.Join("..", "..", "testdata", "pilot", "knowledge_base"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(base)
+	for _, query := range []string{
+		"VPN не подключается, ошибка 809. Сеть проверил, перезапуск не помог.",
+		"VPN не работает. Перезагрузка не помогла.",
+		"VPN error 809. I tried restarting, but it did not help.",
+	} {
+		r := a.attachSafeAnswer(context.Background(), Result{Department: "IT", Priority: "high"}, query)
+		if r.RAGAnswer != nil || r.AutoResolve {
+			t.Errorf("failed attempt replayed instructions for %q: %+v", query, r)
+		}
+	}
+	if r := a.attachSafeAnswer(context.Background(), Result{Department: "IT", Priority: "high"}, "VPN не работает, ошибка 809. Что делать, если перезапуск не поможет?"); r.RAGAnswer == nil {
+		t.Fatal("hypothetical failure must not be treated as completed attempt")
+	}
+}

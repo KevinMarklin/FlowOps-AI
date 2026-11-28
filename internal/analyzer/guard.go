@@ -181,6 +181,13 @@ func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText 
 	if security.CheckPromptInput(rawText, security.MaxTicketBytes) != "" {
 		return reviewResult("unsafe_ticket")
 	}
+	// A full regulation is not an adapted next step. When the employee reports
+	// failed attempts, leave resolution to a specialist rather than replaying
+	// instructions already tried or claiming that a matching topic solved it.
+	if reportsFailedAttempts(rawText) {
+		result.AutoResolve = false
+		return result
+	}
 	base, err := a.TenantKnowledge(ctx)
 	if err != nil {
 		return result
@@ -260,4 +267,19 @@ func (a *Analyzer) acquireModelSlot() bool {
 	}
 	a.budgetCount++
 	return true
+}
+
+func reportsFailedAttempts(text string) bool {
+	text = strings.ToLower(strings.ReplaceAll(text, "ё", "е"))
+	for _, failure := range []string{"не помог", "безрезультат", "не дало результата", "did not help", "didn't help", "no improvement"} {
+		if !strings.Contains(text, failure) {
+			continue
+		}
+		for _, attempt := range []string{"пробовал", "пытал", "проверил", "перезапуск", "перезагруз", "перезапустил", "выполнил", "tried", "restarted", "checked", "rebooted"} {
+			if strings.Contains(text, attempt) {
+				return true
+			}
+		}
+	}
+	return false
 }

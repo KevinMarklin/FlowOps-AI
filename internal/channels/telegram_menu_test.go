@@ -148,12 +148,12 @@ func TestTelegramCallbacksUseVerifiedPrivateSenderAndAcknowledgeFirst(t *testing
 }
 
 func TestTelegramTextCreatesConfirmedTicketAndActionButtons(t *testing.T) {
-	update := decodeTelegramUpdate(t, `{"message":{"text":"Не работает VPN","from":{"id":17},"chat":{"id":17,"type":"private"}}}`)
+	update := decodeTelegramUpdate(t, `{"message":{"text":"Не работает VPN, ошибка 809, сеть проверил","from":{"id":17},"chat":{"id":17,"type":"private"}}}`)
 	drafts := newTelegramDrafts()
 	drafts.open(17)
 	var sent map[string]any
 	err := handleTelegramEmployee(context.Background(), update, nil, nil, func(_ context.Context, r models.IngestRequest) (IngestResult, error) {
-		if r.Sender != "tg:17" || r.Channel != "bot" || !r.RequireConfirmation || r.Message != "Не работает VPN" {
+		if r.Sender != "tg:17" || r.Channel != "bot" || !r.RequireConfirmation || r.Message != "Не работает VPN, ошибка 809, сеть проверил" {
 			t.Fatal("incorrect ingest identity")
 		}
 		return IngestResult{TicketID: 42, Status: "awaiting_confirmation", AutoReplied: true, Department: "IT", Priority: "medium", ReplyText: "Проверьте подключение."}, nil

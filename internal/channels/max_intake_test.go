@@ -118,3 +118,76 @@ func TestMaxWorkerClarificationFeedbackCancelAndMIDReplay(t *testing.T) {
 		t.Fatal("worker failed to present clarification/feedback/cancel")
 	}
 }
+
+func TestMaxVPNClarificationPreservesOriginalRequest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := []maxUpdate{}
+	for i, text := range []string{"Не работает VPN", "Ошибка 809", "Сеть проверил, перезапуск не помог"} {
+		var u maxUpdate
+		u.UpdateType = "message_created"
+		u.Message.Sender.UserID = 77
+		u.Message.Recipient.ChatID = 77
+		u.Message.Recipient.ChatType = "dialog"
+		u.Message.Body.MID = []string{"vpn1", "vpn2", "vpn3"}[i]
+		u.Message.Body.Text = text
+		updates = append(updates, u)
+	}
+	var mu sync.Mutex
+	var messages []string
+	polls := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "synthetic-max-token" {
+			t.Error("missing token header")
+		}
+		switch r.URL.Path {
+		case "/updates":
+			polls++
+			if polls > 1 {
+				cancel()
+				_ = json.NewEncoder(w).Encode(map[string]any{"updates": []maxUpdate{}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"updates": updates, "marker": 1})
+		case "/messages":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			mu.Lock()
+			messages = append(messages, body["text"])
+			mu.Unlock()
+		default:
+			t.Errorf("unexpected MAX endpoint %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	maxClients.Store(false, server.Client())
+	t.Cleanup(func() { maxClients.Delete(false) })
+	var saved []models.IngestRequest
+	ingest := func(_ context.Context, r models.IngestRequest) (IngestResult, error) {
+		if r.Intake != nil {
+			details := *r.Intake
+			r.Intake = &details
+		}
+		saved = append(saved, r)
+		return IngestResult{TicketID: 42, Status: "assigned_to_operator"}, nil
+	}
+	runMax(ctx, Config{TenantID: "vpn-test", MaxToken: "synthetic-max-token", MaxAPIURL: server.URL}, ingest, slog.New(slog.NewTextHandler(io.Discard, nil)), &employeeServiceFake{})
+	if len(saved) != 1 {
+		t.Fatalf("wanted one eventual request, got %d", len(saved))
+	}
+	r := saved[0]
+	if r.Intake == nil || r.Message != "Не работает VPN" || r.Intake.Symptom != "Ошибка 809" || r.Intake.Tried != "Сеть проверил, перезапуск не помог" || r.IdempotencyKey != "max-message:vpn1" || r.Sender != "max:77" {
+		t.Fatalf("original MAX request or clarification lost: %+v", r)
+	}
+	mu.Lock()
+	joined := strings.Join(messages, "\n")
+	mu.Unlock()
+	for _, question := range []string{"Что именно происходит", "Что уже проверили"} {
+		if !strings.Contains(joined, question) {
+			t.Fatalf("missing MAX clarification %q: %s", question, joined)
+		}
+	}
+}

@@ -76,7 +76,7 @@ func (a *Analyzer) GenerateStructured(ctx context.Context, systemPrompt, userTex
 	req.Header.Set("OpenAI-Project", folder)
 	req.Header.Set("x-data-logging-enabled", "false")
 	req.Header.Set("Content-Type", "application/json")
-	response, err := a.client.Do(req)
+	response, err := a.doProviderRequest(req)
 	if err != nil {
 		return "", true, fmt.Errorf("Yandex generation request failed: %w", err)
 	}
