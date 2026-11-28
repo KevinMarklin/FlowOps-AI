@@ -74,7 +74,7 @@ func ProtectOperatorTenants(next http.Handler, db *pgxpool.Pool) http.Handler {
 						ingestError(w, 403, "Проверка безопасности сеанса не пройдена. Обновите страницу.")
 						return
 					}
-					if !authorizePrincipal(w, r, db, p) {
+					if !authorizePrincipal(w, r, db, &p) {
 						return
 					}
 					w.Header().Set("Cache-Control", "no-store")
@@ -94,7 +94,7 @@ func ProtectOperatorTenants(next http.Handler, db *pgxpool.Pool) http.Handler {
 		hash := sha256.Sum256([]byte(value))
 		p, err := LookupPrincipal(r.Context(), db, value)
 		if err == nil {
-			if !authorizePrincipal(w, r, db, p) {
+			if !authorizePrincipal(w, r, db, &p) {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))

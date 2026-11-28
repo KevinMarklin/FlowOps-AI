@@ -26,4 +26,15 @@ CREATE OR REPLACE FUNCTION flowops_ticket_visible(org TEXT,person TEXT,departmen
  UNION SELECT child.id,child.routing_code FROM organization_units child JOIN units parent ON child.parent_id=parent.id WHERE child.tenant_id=org AND child.active
  ) SELECT NOT EXISTS(SELECT 1 FROM policy) OR requester=person OR EXISTS(SELECT 1 FROM policy WHERE scope='organization') OR EXISTS(SELECT 1 FROM policy WHERE scope='units') AND EXISTS(SELECT 1 FROM units WHERE routing_code<>'' AND routing_code=department_code)
 $$;
+
+ALTER TABLE organization_access_roles ADD COLUMN IF NOT EXISTS permissions JSONB;
+ALTER TABLE organization_access_roles DROP CONSTRAINT IF EXISTS organization_access_roles_base_role_check;
+ALTER TABLE organization_access_roles ADD CONSTRAINT organization_access_roles_base_role_check CHECK(base_role IN ('admin','operator','analyst','employee'));
+
+ALTER TABLE organization_access_roles ADD COLUMN IF NOT EXISTS ticket_ids JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE organization_access_roles DROP CONSTRAINT IF EXISTS organization_access_roles_scope_check;
+ALTER TABLE organization_access_roles ADD CONSTRAINT organization_access_roles_scope_check CHECK(scope IN ('own','organization','units','resources'));
+CREATE OR REPLACE FUNCTION flowops_ticket_visible(org TEXT,person TEXT,department_code TEXT,requester TEXT,resource_id INTEGER) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+ SELECT flowops_ticket_visible(org,person,department_code,requester) OR EXISTS(SELECT 1 FROM organization_member_roles m JOIN organization_access_roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id WHERE m.tenant_id=org AND m.member_id=person AND r.scope='resources' AND r.ticket_ids @> to_jsonb(ARRAY[resource_id]))
+$$;
 `

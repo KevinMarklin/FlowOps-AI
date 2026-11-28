@@ -700,3 +700,18 @@ func (b *Base) LegacyDocuments(tenant string) ([]Document, error) {
 	}
 	return base.Documents(), nil
 }
+
+// SelectSources returns an isolated read-only retrieval snapshot.
+func (b *Base) SelectSources(names []string) *Base {
+	allowed := map[string]bool{}
+	for _, name := range names {
+		allowed[name] = true
+	}
+	documents := []Document{}
+	for _, document := range b.Documents() {
+		if allowed[document.Filename] {
+			documents = append(documents, document)
+		}
+	}
+	return &Base{directory: b.directory, tenantRoot: b.tenantRoot, documents: documents}
+}

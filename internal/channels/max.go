@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"flowops-ai/internal/intake"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
 )
@@ -160,7 +161,18 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 }, services ...EmployeeTickets) {
 	ctx = security.WithTenantID(ctx, cfg.TenantID)
 	cfg.updateStatus("max", "starting", "")
+	var employeeTickets EmployeeTickets
+	if len(services) > 0 {
+		employeeTickets = services[0]
+	}
 	drafts := newIntakeDrafts()
+	if planner, ok := employeeTickets.(interface {
+		BotIntakePlan(context.Context, string, string, intake.Details) intake.Plan
+	}); ok {
+		drafts.planFn = func(chat int64, message string, details intake.Details) intake.Plan {
+			return planner.BotIntakePlan(ctx, fmt.Sprintf("max:%d", chat), message, details)
+		}
+	}
 	receipts := newMessageReceipts()
 	var marker int64
 	for ctx.Err() == nil {

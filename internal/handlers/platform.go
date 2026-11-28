@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"time"
 
 	"flowops-ai/internal/security"
@@ -13,6 +14,10 @@ import (
 func (h *IntegrationsHandler) OrganizationConfig(w http.ResponseWriter, r *http.Request) {
 	p, ok := security.CurrentPrincipal(r.Context())
 	if !ok || (p.Role != "admin" && !(p.Role == "analyst" && r.Method == "GET")) {
+		writeError(w, 403, "Недостаточно прав")
+		return
+	}
+	if !security.HasPermission(p, "settings_manage") && !security.HasPermission(p, "ai_configure") && !security.HasPermission(p, "automation_manage") {
 		writeError(w, 403, "Недостаточно прав")
 		return
 	}
@@ -33,7 +38,32 @@ func (h *IntegrationsHandler) OrganizationConfig(w http.ResponseWriter, r *http.
 	if !decodeDialogue(w, r, &c) {
 		return
 	}
+	previous, loadErr := settings.LoadPlatform(ctx, h.db, tenant)
+	if loadErr != nil {
+		writeError(w, 503, "Не удалось проверить настройки")
+		return
+	}
+	if !reflect.DeepEqual(c.AI, previous.AI) && !security.HasPermission(p, "ai_configure") {
+		writeError(w, 403, "Нет права на настройку ИИ")
+		return
+	}
+	if !reflect.DeepEqual(c.Process, previous.Process) && !security.HasPermission(p, "automation_manage") {
+		writeError(w, 403, "Нет права на настройку автоматизации")
+		return
+	}
+	general := c
+	general.AI = previous.AI
+	general.Process = previous.Process
+	general.Revision = previous.Revision
+	if !reflect.DeepEqual(general, previous) && !security.HasPermission(p, "settings_manage") {
+		writeError(w, 403, "Нет права на настройки организации")
+		return
+	}
 	if err := c.Validate(); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if err := h.validateProcessReferences(ctx, c); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}

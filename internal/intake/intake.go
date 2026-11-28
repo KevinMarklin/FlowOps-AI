@@ -180,3 +180,28 @@ func Compose(message string, d Details) string {
 	}
 	return b.String()
 }
+
+// EvaluateWithLimit applies an organization-wide question budget. A negative
+// limit preserves legacy behavior; zero asks no additional questions.
+func EvaluateWithLimit(message string, details Details, limit int) Plan {
+	plan := Evaluate(message, details)
+	if limit < 0 || plan.Ready {
+		return plan
+	}
+	answered := 0
+	for _, value := range []string{details.Location, details.Service, details.Symptom, details.Impact, details.Tried} {
+		if strings.TrimSpace(value) != "" {
+			answered++
+		}
+	}
+	remaining := limit - answered
+	if remaining <= 0 {
+		plan.Fields = []Field{}
+		plan.Ready = true
+		return plan
+	}
+	if len(plan.Fields) > remaining {
+		plan.Fields = plan.Fields[:remaining]
+	}
+	return plan
+}

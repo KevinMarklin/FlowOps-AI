@@ -181,7 +181,7 @@ func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText 
 	if security.CheckPromptInput(rawText, security.MaxTicketBytes) != "" {
 		return reviewResult("unsafe_ticket")
 	}
-	base, err := a.base.TenantBase(security.TenantID(ctx))
+	base, err := a.TenantKnowledge(ctx)
 	if err != nil {
 		return result
 	}

@@ -40,16 +40,18 @@ type SLAPolicy struct {
 	Clock                string `json:"clock"`
 }
 type PlatformConfig struct {
-	Revision       int64     `json:"revision"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	Industry       string    `json:"industry"`
-	Timezone       string    `json:"timezone"`
-	ContactEmail   string    `json:"contact_email"`
-	Calendar       Calendar  `json:"calendar"`
-	Economics      Economics `json:"economics"`
-	SLA            SLAPolicy `json:"sla"`
-	ClosureReasons []Choice  `json:"closure_reasons"`
+	Process        ProcessSettings `json:"process"`
+	AI             AIPolicy        `json:"ai"`
+	Revision       int64           `json:"revision"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Industry       string          `json:"industry"`
+	Timezone       string          `json:"timezone"`
+	ContactEmail   string          `json:"contact_email"`
+	Calendar       Calendar        `json:"calendar"`
+	Economics      Economics       `json:"economics"`
+	SLA            SLAPolicy       `json:"sla"`
+	ClosureReasons []Choice        `json:"closure_reasons"`
 }
 
 func DefaultPlatformConfig() PlatformConfig {
@@ -62,6 +64,12 @@ var configID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 var currencyID = regexp.MustCompile(`^[A-Z]{3}$`)
 
 func (c *PlatformConfig) Validate() error {
+	if err := c.Process.Validate(); err != nil {
+		return err
+	}
+	if err := c.AI.Validate(); err != nil {
+		return err
+	}
 	c.Name = strings.TrimSpace(c.Name)
 	c.ContactEmail = strings.TrimSpace(c.ContactEmail)
 	if c.Name == "" || len([]rune(c.Name)) > 160 || len([]rune(c.Description)) > 4000 || len([]rune(c.Industry)) > 160 {

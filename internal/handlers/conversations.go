@@ -164,6 +164,8 @@ func decodeDialogue(w http.ResponseWriter, r *http.Request, value any) bool {
 
 func writeDialogueError(w http.ResponseWriter, err error) {
 	switch {
+	case incompleteTicketForm(err):
+		writeError(w, 409, "Заполните обязательные поля и вложения перед закрытием")
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, 404, "Обращение или ответ не найден")
 	case errors.Is(err, errDialogueClosed), errors.Is(err, errRequestConflict):

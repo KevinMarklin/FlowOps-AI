@@ -52,8 +52,8 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
-    operator: ['operator', 'knowledge', 'knowledge-review', 'employee'],
+    admin: ['admin', 'notifications', 'governance', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
+    operator: ['operator', 'notifications', 'knowledge', 'knowledge-review', 'employee'],
     analyst: ['analytics','optimization'],
     employee: ['employee']
   };
@@ -62,6 +62,9 @@
   function clearWorkspaceData() {
 	window.FlowOpsSupportUI?.clear();
     window.FlowOpsPlatform?.clear();
+ window.FlowOpsGovernance?.clear();
+ window.FlowOpsNotifications?.clear();
+ window.FlowOpsIntakeFields?.clear();
     window.FlowOpsAnalytics?.clear();
     window.FlowOpsOptimization?.clear();
     window.FlowOpsKnowledge?.clear();
@@ -259,6 +262,7 @@
     const workspaceID = $('#workspace-id-display'); if (workspaceID) workspaceID.textContent = me?.tenant_id || '';
     applyRoleUI();
     window.FlowOpsPlatform?.refreshPublic();
+ window.FlowOpsIntakeFields?.refresh();
     const gate = $('#auth-gate');
     const label = $('#workspace-name-label');
     const userLabel = $('#user-name-label');
@@ -841,8 +845,8 @@
     return `<section class="intake-context"><h4>Контекст для специалиста</h4><p>${escapeHTML(text.slice(index + marker.length))}</p></section>`;
   }
 
-  function prepareTicketRequest(email, text, details = {}) {
-    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim(), intake: details });
+  function prepareTicketRequest(email, text, details = {}, custom = {}) {
+    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim(), intake: details,...custom });
     if (!state.pendingTicket || state.pendingTicket.body !== body) {
       const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
       state.pendingTicket = { body, key: `web-${Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')}` };
@@ -878,7 +882,8 @@
     try {
       if (!await previewIntake(submittedProblem.trim()) || problem.value !== submittedProblem || !isCurrentSubmission()) return;
       if (progress) progress.textContent = 'Сохраняем обращение и проверяем базу регламентов…';
-      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails);
+      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails,typeof window!=='undefined'?(await window.FlowOpsIntakeFields?.payload()||{}):{});
+      if (!isCurrentSubmission()) return;
       const ticket = await api('/api/tickets', {
         method: 'POST', headers: { 'Idempotency-Key': request.key }, body: request.body
       });
@@ -1047,6 +1052,7 @@
         window.FlowOpsAnalytics?.attachTimeline(card,ticket);
         window.FlowOpsCopilot?.attach(card,ticket);
       } else if (state.user?.role === 'employee') { window.FlowOpsSupportUI?.open(ticket.id); window.FlowOpsAnalytics?.attachTimeline($('#ticket-detail-content'),ticket); }
+ window.FlowOpsTicketFields?.attach($('#ticket-detail-content'),ticket);
     } catch (error) {
       if (version === ticketRouteVersion && generation === sessionGeneration) $('#ticket-detail-status').textContent = error.message;
     }
@@ -1812,7 +1818,9 @@
         if (tab.dataset.tab === 'admin') { loadMembers(); loadAudit(); }
         if (tab.dataset.tab === 'knowledge') loadKnowledge();
         if (tab.dataset.tab === 'knowledge-review') window.FlowOpsKnowledge?.refresh();
-        if (tab.dataset.tab === 'structure') window.FlowOpsStructure?.refresh();
+        if (tab.dataset.tab === 'notifications') window.FlowOpsNotifications?.refresh();
+ if (tab.dataset.tab === 'governance') window.FlowOpsGovernance?.refresh();
+ if (tab.dataset.tab === 'structure') window.FlowOpsStructure?.refresh();
         if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();
         if (tab.dataset.tab === 'channels') {
           loadWidgetConfig();
@@ -1966,7 +1974,7 @@
     }, 5000);
   }
 
-  window.FlowOpsSupport={departmentsChanged:applyDepartments,organizationChanged:c=>{
+  window.FlowOpsSupport={can:permission=>!state.user?.permissions||state.user.permissions.includes(permission),closureReasons:()=>Object.entries(closureReasonLabels).filter(([id])=>id!=='unspecified'),departmentsChanged:applyDepartments,organizationChanged:c=>{
     if(c.name)$('#workspace-name-label').textContent=c.name;
     window.FlowOpsAnalytics?.setTimezone(c.timezone);
     if(Array.isArray(c.closure_reasons)){closureReasonLabels={unspecified:'Причина не указана',...Object.fromEntries(c.closure_reasons.map(x=>[x.id,x.label]))};}

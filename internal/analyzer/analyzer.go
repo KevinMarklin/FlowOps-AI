@@ -17,9 +17,11 @@ import (
 	"flowops-ai/internal/knowledge"
 	"flowops-ai/internal/security"
 	"flowops-ai/internal/settings"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Result struct {
+	AutoResolve      bool     `json:"-"`
 	Department       string   `json:"department"`
 	Priority         string   `json:"priority"`
 	ExtractedSummary string   `json:"extracted_summary"`
@@ -29,6 +31,7 @@ type Result struct {
 }
 
 type Analyzer struct {
+	policyDB       *pgxpool.Pool
 	providerLoader func() []approvedProvider
 	llmSlots       chan struct{}
 	budgetMu       sync.Mutex
@@ -52,7 +55,18 @@ type Analyzer struct {
 
 func (a *Analyzer) ResetKnowledge() error { return a.base.Reset() }
 func (a *Analyzer) TenantKnowledge(ctx context.Context) (*knowledge.Base, error) {
-	return a.base.TenantBase(security.TenantID(ctx))
+	base, err := a.base.TenantBase(security.TenantID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	policy, err := a.aiPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(policy.Sources) > 0 {
+		base = base.SelectSources(policy.Sources)
+	}
+	return base, nil
 }
 
 func New(base *knowledge.Base) *Analyzer {
@@ -94,7 +108,11 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 		providers = nil
 	}
 	sentToModel := false
-	if len(providers) > 0 && a.acquireModelSlot() {
+	policy, policyErr := a.aiPolicy(ctx)
+	if policyErr != nil || settings.Disabled(policy.Classification) || policy.Mode == "manual" || policy.DenyPersonalData && masked.MaskedCount > 0 {
+		providers = nil
+	}
+	if len(providers) > 0 && a.acquireGovernedSlot(ctx) {
 		defer func() { <-a.llmSlots }()
 		modelCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
@@ -121,7 +139,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 			result = a.attachSafeAnswer(ctx, result, rawText, builderConfig)
 			a.setActiveProvider("llm", provider.name, provider.model())
 			slog.Info(fmt.Sprintf("[AI] Analyzed by: %s | department=%s | priority=%s | duration_ms=%d", providerName, result.Department, result.Priority, time.Since(started).Milliseconds()))
-			return result
+			return a.applyAIPolicy(ctx, result)
 		}
 	}
 	if !sentToModel && masked.MaskedCount > 0 {
@@ -137,7 +155,7 @@ func (a *Analyzer) AnalyzeWithSender(ctx context.Context, rawText, sender string
 	}
 	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
 	slog.Info(fmt.Sprintf("[AI] Analyzed by: Local Heuristic (fallback) | department=%s | priority=%s | duration_ms=%d", result.Department, result.Priority, time.Since(started).Milliseconds()))
-	return result
+	return a.applyAIPolicy(ctx, result)
 }
 
 // AnalyzeSandbox runs the same local/LLM classification and RAG lookup as a
@@ -152,7 +170,11 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 	if !sensitiveModelInputAllowed(message, masked) {
 		providers = nil
 	}
-	if len(providers) > 0 && a.acquireModelSlot() {
+	policy, policyErr := a.aiPolicy(ctx)
+	if policyErr != nil || settings.Disabled(policy.Classification) || policy.Mode == "manual" || policy.DenyPersonalData && masked.MaskedCount > 0 {
+		providers = nil
+	}
+	if len(providers) > 0 && a.acquireGovernedSlot(ctx) {
 		defer func() { <-a.llmSlots }()
 		modelCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
@@ -172,7 +194,7 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 			result.PIIMaskedTypes = masked.MaskedTypes
 			result = a.attachSafeAnswer(ctx, result, message, builderConfig)
 			a.setActiveProvider("llm", provider.name, provider.model())
-			return result
+			return a.applyAIPolicy(ctx, result)
 		}
 	}
 	result := a.analyzeHeuristicallyForBuilder(message, builderConfig)
@@ -181,7 +203,7 @@ func (a *Analyzer) AnalyzeSandbox(ctx context.Context, message string) Result {
 	result.PIIMaskedCount = masked.MaskedCount
 	result.PIIMaskedTypes = masked.MaskedTypes
 	a.setActiveProvider("heuristic_fallback", "Локальный анализатор", "")
-	return result
+	return a.applyAIPolicy(ctx, result)
 }
 
 func unmaskResult(result Result, masked security.MaskResult) Result {

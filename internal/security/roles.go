@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -14,12 +15,14 @@ import (
 )
 
 type Principal struct {
-	ID       string `json:"id"`
-	TenantID string `json:"tenant_id"`
-	Name     string `json:"display_name"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	Owner    bool   `json:"owner"`
+	CustomRoleID string    `json:"custom_role_id,omitempty"`
+	Permissions  *[]string `json:"permissions,omitempty"`
+	ID           string    `json:"id"`
+	TenantID     string    `json:"tenant_id"`
+	Name         string    `json:"display_name"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	Owner        bool      `json:"owner"`
 }
 type principalKey struct{}
 
@@ -69,8 +72,17 @@ func AllowRequest(role, method, path string) bool {
 	if !ValidRole(role) {
 		return false
 	}
+	if path == "/api/v1/notifications/sla" {
+		return method == "GET" && (role == "admin" || role == "operator")
+	}
 	if path == "/api/v1/auth/me" && method == http.MethodGet {
 		return true
+	}
+	if path == "/api/v1/organization/directory" {
+		return method == "GET"
+	}
+	if path == "/api/v1/organization/ticket-form" {
+		return method == "GET" || role == "admin" && method == "PUT"
 	}
 	if path == "/api/v1/organization/units" {
 		return method == "GET" || role == "admin" && method == "POST"
@@ -133,6 +145,15 @@ func AllowRequest(role, method, path string) bool {
 		if len(parts) == 1 {
 			return method == http.MethodGet || (role == "operator" && method == http.MethodPatch)
 		}
+		if len(parts) == 2 && parts[1] == "fields" {
+			return method == "GET" || method == "PUT"
+		}
+		if len(parts) == 2 && parts[1] == "attachments" {
+			return method == "GET" || method == "POST"
+		}
+		if len(parts) == 3 && parts[1] == "attachments" {
+			return method == "GET"
+		}
 		if len(parts) == 2 && parts[1] == "copilot" {
 			return role == "operator" && (method == "GET" || method == "POST")
 		}
@@ -158,12 +179,43 @@ func AllowRequest(role, method, path string) bool {
 	return false
 }
 
-func authorizePrincipal(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, p Principal) bool {
+func authorizePrincipal(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, p *Principal) bool {
+	var permissionRaw []byte
+	policyErr := db.QueryRow(r.Context(), `SELECT a.id,a.permissions FROM organization_member_roles m JOIN organization_access_roles a ON a.tenant_id=m.tenant_id AND a.id=m.role_id WHERE m.tenant_id=$1 AND m.member_id=$2`, p.TenantID, p.ID).Scan(&p.CustomRoleID, &permissionRaw)
+	if policyErr != nil && policyErr != pgx.ErrNoRows {
+		ingestError(w, 503, "Не удалось проверить разрешения")
+		return false
+	}
+	if len(permissionRaw) > 0 && string(permissionRaw) != "null" {
+		var permissions []string
+		if json.Unmarshal(permissionRaw, &permissions) != nil {
+			ingestError(w, 503, "Некорректные разрешения роли")
+			return false
+		}
+		p.Permissions = &permissions
+		required, ok := requiredPermissions(w, r)
+		if !ok {
+			return false
+		}
+		for _, permission := range required {
+			found := false
+			for _, allowed := range permissions {
+				if allowed == permission {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ingestError(w, 403, "Роль не разрешает это действие")
+				return false
+			}
+		}
+	}
 	if !AllowRequest(p.Role, r.Method, r.URL.Path) {
 		ingestError(w, http.StatusForbidden, "Недостаточно прав для этого действия")
 		return false
 	}
-	if p.Role != "admin" {
+	{
 		var restricted bool
 		if err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM organization_member_roles m JOIN organization_access_roles a ON a.tenant_id=m.tenant_id AND a.id=m.role_id WHERE m.tenant_id=$1 AND m.member_id=$2 AND a.scope<>'organization')`, p.TenantID, p.ID).Scan(&restricted); err != nil {
 			ingestError(w, 503, "Не удалось проверить область доступа")
@@ -179,7 +231,7 @@ func authorizePrincipal(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool
 				id, err := strconv.Atoi(strings.Split(strings.TrimPrefix(path, "/api/tickets/"), "/")[0])
 				if err == nil {
 					var visible bool
-					if err = db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM tickets WHERE tenant_id=$1 AND id=$3 AND flowops_ticket_visible(tenant_id,$2,department,requester_id))`, p.TenantID, p.ID, id).Scan(&visible); err != nil {
+					if err = db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM tickets WHERE tenant_id=$1 AND id=$3 AND flowops_ticket_visible(tenant_id,$2,department,requester_id,id))`, p.TenantID, p.ID, id).Scan(&visible); err != nil {
 						ingestError(w, 503, "Не удалось проверить обращение")
 						return false
 					}

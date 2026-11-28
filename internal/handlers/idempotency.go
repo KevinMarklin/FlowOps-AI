@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"time"
 
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
@@ -48,14 +49,30 @@ func (h *TicketsHandler) beginCreation(ctx context.Context, namespace, scope, ke
 		return nil, err
 	}
 	g.tenant, g.scope, g.key, g.payload = namespace, requestHash([]byte(scope)), requestHash([]byte(key)), requestHash(encoded)
-	g.tx, err = h.db.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	g.query = g.tx
-	if _, err = g.tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, g.tenant+":"+g.scope+":"+g.key); err != nil {
-		g.close(ctx)
-		return nil, err
+	for {
+		g.tx, err = h.db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var acquired bool
+		err = g.tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))`, g.tenant+":"+g.scope+":"+g.key).Scan(&acquired)
+		if err != nil {
+			g.close(ctx)
+			return nil, err
+		}
+		if acquired {
+			g.query = g.tx
+			break
+		}
+		_ = g.tx.Rollback(ctx)
+		g.tx = nil
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	var previous string
 	var id int

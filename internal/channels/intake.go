@@ -19,7 +19,10 @@ type intakeDraft struct {
 	seenMessageKeys map[string]bool
 	Expires         time.Time
 }
-type intakeDrafts struct{ items map[int64]*intakeDraft }
+type intakeDrafts struct {
+	items  map[int64]*intakeDraft
+	planFn func(int64, string, intake.Details) intake.Plan
+}
 
 func newIntakeDrafts() *intakeDrafts     { return &intakeDrafts{items: make(map[int64]*intakeDraft)} }
 func (d *intakeDrafts) close(chat int64) { delete(d.items, chat) }
@@ -54,7 +57,7 @@ func (d *intakeDrafts) get(chat int64) *intakeDraft {
 func (d *intakeDrafts) advance(chat int64, text, key string) (*intakeDraft, string) {
 	v := d.get(chat)
 	if v == nil {
-		if intake.Evaluate(text, intake.Details{}).Ready {
+		if d.plan(chat, text, intake.Details{}).Ready {
 			return nil, ""
 		}
 		if len(d.items) >= 4096 {
@@ -74,7 +77,7 @@ func (d *intakeDrafts) advance(chat int64, text, key string) (*intakeDraft, stri
 		v = &intakeDraft{Message: text, Key: key, seenMessageKeys: map[string]bool{key: true}, Expires: time.Now().Add(15 * time.Minute)}
 		d.items[chat] = v
 	} else {
-		plan := intake.Evaluate(v.Message, v.Details)
+		plan := d.plan(chat, v.Message, v.Details)
 		if plan.Ready {
 			// A retry may follow a commit whose response was lost: keep its payload frozen.
 		} else if key != "" && v.seenMessageKeys[key] {
@@ -96,7 +99,7 @@ func (d *intakeDrafts) advance(chat int64, text, key string) (*intakeDraft, stri
 		d.close(chat)
 		return nil, "Не удалось подготовить уточнения. Опишите проблему короче и повторите отправку."
 	}
-	plan := intake.Evaluate(v.Message, v.Details)
+	plan := d.plan(chat, v.Message, v.Details)
 	if plan.Ready {
 		return v, ""
 	}
@@ -137,4 +140,11 @@ func maxFeedbackCommand(text string) (int, bool, bool) {
 		return 0, false, false
 	}
 	return id, fields[0] == "/yes", true
+}
+
+func (d *intakeDrafts) plan(chat int64, message string, details intake.Details) intake.Plan {
+	if d.planFn != nil {
+		return d.planFn(chat, message, details)
+	}
+	return intake.Evaluate(message, details)
 }

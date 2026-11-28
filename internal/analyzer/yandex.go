@@ -49,11 +49,15 @@ func (a *Analyzer) GenerateStructured(ctx context.Context, systemPrompt, userTex
 	if !sensitiveModelInputAllowed(userText, masked) || !providerAllowed("yandex") || strings.TrimSpace(os.Getenv("YANDEX_API_KEY")) == "" {
 		return "", false, nil
 	}
+	policy, policyErr := a.aiPolicy(ctx)
+	if policyErr != nil || policy.DenyPersonalData && masked.MaskedCount > 0 {
+		return "", false, nil
+	}
 	folder, model, err := yandexConfig()
 	if err != nil {
 		return "", false, err
 	}
-	if !a.acquireModelSlot() {
+	if !a.acquireGovernedSlot(ctx) {
 		return "", false, nil
 	}
 	defer func() { <-a.llmSlots }()

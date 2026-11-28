@@ -131,8 +131,8 @@ const analyticsBaseSQL = `WITH cohort AS (
  WHEN display_status<>'new' AND (NULLIF(BTRIM(operator_reply),'') IS NOT NULL OR work_seconds>0 OR operator_messages>0) THEN CASE WHEN NULLIF(BTRIM(rag_answer),'') IS NOT NULL THEN 'assisted' ELSE 'manual' END
  WHEN NULLIF(BTRIM(rag_answer),'') IS NOT NULL THEN 'automatic' ELSE 'manual' END processing,
  CASE WHEN first_response_due_at IS NULL AND resolution_due_at IS NULL THEN 'unconfigured'
- WHEN (first_response_due_at IS NOT NULL AND COALESCE(first_response_at,closed_at,NOW())>first_response_due_at)
- OR (resolution_due_at IS NOT NULL AND (CASE WHEN display_status='closed' THEN COALESCE(closed_at,NOW()) ELSE NOW() END)>resolution_due_at) THEN 'breached' ELSE 'met' END sla_result
+ WHEN (first_response_due_at IS NOT NULL AND COALESCE(first_response_at,closed_at,sla_paused_at,NOW())>first_response_due_at)
+ OR (resolution_due_at IS NOT NULL AND (CASE WHEN display_status='closed' THEN COALESCE(closed_at,sla_paused_at,NOW()) ELSE COALESCE(sla_paused_at,NOW()) END)>resolution_due_at) THEN 'breached' ELSE 'met' END sla_result
  FROM cohort
 ), filtered AS (SELECT * FROM classified WHERE ($8='' OR display_status=$8) AND ($9='' OR processing=$9) AND ($10='' OR sla_result=$10)) `
 

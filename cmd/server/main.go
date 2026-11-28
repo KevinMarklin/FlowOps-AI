@@ -95,7 +95,7 @@ func main() {
 		logger.Error("invalid callback allowlist")
 		os.Exit(1)
 	}
-	ticketAnalyzer := analyzer.New(knowledgeBase).WithBuilderConfig(loadBuilderConfig)
+	ticketAnalyzer := analyzer.New(knowledgeBase).WithBuilderConfig(loadBuilderConfig).WithAIPolicy(pool)
 	mode, configuredProvider, _ := ticketAnalyzer.ActiveProvider()
 	primaryProvider := "Local Heuristic only"
 	if mode == "llm" {
@@ -108,6 +108,17 @@ func main() {
 		"sensitive_data_to_external_llm", envBool("FLOWOPS_AI_ALLOW_SENSITIVE", false),
 	)
 	ticketsHandler := handlers.NewTicketsHandler(pool, logger, ticketAnalyzer).WithCallbacks(callbacks).WithBuilderConfig(loadBuilderConfig)
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			if err := ticketsHandler.EvaluateSLA(ctx); err != nil {
+				logger.Error("SLA evaluation failed")
+			}
+			cancel()
+		}
+	}()
 	smartHandler := handlers.NewSmartHandler(knowledgeBase, ticketAnalyzer).WithBuilderConfig(loadBuilderConfig).WithDraftStore(knowledgeHandler.ImportDraft)
 	channelContext, stopChannels := context.WithCancel(context.Background())
 	defer stopChannels()
@@ -205,6 +216,9 @@ func main() {
 	mux.HandleFunc("PATCH /api/v1/members/{id}", workspaceHandler.UpdateMember)
 	mux.HandleFunc("POST /api/v1/members/{id}/rotate", workspaceHandler.RotateMember)
 	mux.HandleFunc("POST /api/v1/workspaces", workspaceHandler.Create)
+	mux.HandleFunc("GET /api/v1/organization/directory", integrationsHandler.Directory)
+	mux.HandleFunc("GET /api/v1/organization/ticket-form", integrationsHandler.TicketForm)
+	mux.HandleFunc("PUT /api/v1/organization/ticket-form", integrationsHandler.TicketForm)
 	mux.HandleFunc("GET /api/v1/organization/roles", integrationsHandler.AccessRoles)
 	mux.HandleFunc("POST /api/v1/organization/roles", integrationsHandler.AccessRoles)
 	mux.HandleFunc("POST /api/v1/organization/roles/assign", integrationsHandler.AssignAccessRole)
@@ -215,7 +229,13 @@ func main() {
 	mux.HandleFunc("GET /api/v1/settings/organization", integrationsHandler.OrganizationConfig)
 	mux.HandleFunc("PUT /api/v1/settings/organization", integrationsHandler.OrganizationConfig)
 	mux.HandleFunc("GET /api/tickets", ticketsHandler.List)
+	mux.HandleFunc("GET /api/v1/notifications/sla", ticketsHandler.SLANotifications)
 	mux.HandleFunc("GET /api/tickets/{id}", ticketsHandler.Detail)
+	mux.HandleFunc("GET /api/tickets/{id}/fields", ticketsHandler.CustomFields)
+	mux.HandleFunc("PUT /api/tickets/{id}/fields", ticketsHandler.CustomFields)
+	mux.HandleFunc("GET /api/tickets/{id}/attachments", ticketsHandler.Attachments)
+	mux.HandleFunc("POST /api/tickets/{id}/attachments", ticketsHandler.Attachments)
+	mux.HandleFunc("GET /api/tickets/{id}/attachments/{attachment}", ticketsHandler.Attachments)
 	mux.HandleFunc("POST /api/tickets", ticketsHandler.Create)
 	mux.HandleFunc("POST /api/v1/intake/preview", ticketsHandler.IntakePreview)
 	mux.Handle("POST /api/v1/ingest", security.ProtectIngestWithKeys(http.HandlerFunc(ticketsHandler.Ingest), os.Getenv("FLOWOPS_INGEST_TOKEN"), pool))

@@ -40,10 +40,18 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION flowops_set_ticket_deadlines() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-DECLARE cfg JSONB;
+DECLARE cfg JSONB; rule JSONB;
 BEGIN
  SELECT platform_config INTO cfg FROM app_settings WHERE tenant_id=NEW.tenant_id AND id=TRUE;
  cfg:=COALESCE(cfg,'{}'::jsonb);
+ FOR rule IN SELECT value FROM jsonb_array_elements(COALESCE(NULLIF(cfg->'process'->'sla','null'::jsonb),'[]'::jsonb)) LOOP
+ IF flowops_rule_matches(rule,to_jsonb(NEW),cfg) THEN cfg:=cfg||jsonb_build_object('sla',rule->'policy','selected_sla_id',rule->>'id');
+ IF rule ? 'calendar' THEN cfg:=jsonb_set(cfg,'{calendar}',rule->'calendar');END IF;
+ IF NULLIF(rule->>'timezone','') IS NOT NULL THEN cfg:=jsonb_set(cfg,'{timezone}',rule->'timezone');END IF;
+ IF rule ? 'pause_statuses' THEN cfg:=jsonb_set(cfg,'{process,pause_statuses}',rule->'pause_statuses');END IF;
+ IF rule ? 'escalations' THEN cfg:=jsonb_set(cfg,'{process,escalations}',rule->'escalations');END IF;
+ EXIT;END IF;
+ END LOOP;
  NEW.sla_policy_snapshot:=cfg;
  NEW.first_response_due_at:=flowops_business_deadline(NEW.created_at AT TIME ZONE 'UTC',COALESCE((cfg->'sla'->>'first_response_minutes')::INTEGER,0),cfg);
  NEW.resolution_due_at:=flowops_business_deadline(NEW.created_at AT TIME ZONE 'UTC',COALESCE((cfg->'sla'->>'resolution_minutes')::INTEGER,0),cfg);

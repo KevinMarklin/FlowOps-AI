@@ -218,6 +218,9 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, AccessPolicySchema); err != nil {
 		return fmt.Errorf("apply access policy: %w", err)
 	}
+	if _, err := pool.Exec(ctx, TicketFormsSchema); err != nil {
+		return fmt.Errorf("apply ticket forms: %w", err)
+	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 
