@@ -86,6 +86,9 @@ func Validate(message string, d Details) error {
 }
 
 var impactEvidence = regexp.MustCompile(`(?i)(?:через\s+[0-9]{1,3}\s+минут[а-я]*|(?:занятие|пара)\s+уже\s+ид[её]т)`)
+var service1CEvidence = regexp.MustCompile(`(?i)(?:^|[^0-9a-zа-яё])1[сc](?:[^0-9a-zа-яё]|$)`)
+var errorEvidence = regexp.MustCompile(`(?i)ошибк[а-яё]*\s*[:№#]?\s*[0-9][0-9a-z_-]{1,15}`)
+var workplaceEvidence = regexp.MustCompile(`(?i)(?:кабинет|офис|рабочее место|аудитория)\s*[№#]?\s*[0-9][0-9а-яa-z-]{0,11}`)
 var locationEvidence = regexp.MustCompile(`(?i)корпус\s+[^,;\n]{1,60}[,;]?\s+ауд(?:итория|\.)?\s*[0-9а-яa-z-]{1,12}`)
 
 // Reuse explicit facts; do not invent a location, service or urgency.
@@ -93,20 +96,29 @@ func explicitDetails(message string, d Details) Details {
 	lower := strings.ToLower(message)
 	if d.Location == "" {
 		d.Location = locationEvidence.FindString(message)
+		if d.Location == "" {
+			d.Location = workplaceEvidence.FindString(message)
+		}
 	}
 	if d.Impact == "" {
 		d.Impact = impactEvidence.FindString(message)
 	}
 	if d.Service == "" {
-		for _, name := range []string{"личный кабинет", "образовательный портал", "корпоративная почта", "lk.fa.ru", "org.fa.ru", "itsm.fa.ru"} {
+		for _, name := range []string{"личный кабинет", "образовательный портал", "корпоративная почта", "корпоративной почте", "корпоративную почту", "vpn", "lk.fa.ru", "org.fa.ru", "itsm.fa.ru"} {
 			if strings.Contains(lower, name) {
 				d.Service = name
 				break
 			}
 		}
 	}
+	if d.Service == "" && service1CEvidence.MatchString(message) {
+		d.Service = "1С"
+	}
 	if d.Symptom == "" {
-		for _, symptom := range []string{"не показывает изображение", "нет изображения", "не включается", "неверный пароль", "доступ запрещён", "доступ запрещен"} {
+		d.Symptom = errorEvidence.FindString(message)
+	}
+	if d.Symptom == "" {
+		for _, symptom := range []string{"не показывает изображение", "нет изображения", "не включается", "неверный пароль", "доступ запрещён", "доступ запрещен", "не печатает", "зажевал бумагу", "замята бумага"} {
 			if strings.Contains(lower, symptom) {
 				d.Symptom = symptom
 				break
@@ -114,7 +126,7 @@ func explicitDetails(message string, d Details) Details {
 		}
 	}
 	if d.Tried == "" {
-		for _, step := range []string{"перезапуск не помог", "перезагрузка не помогла", "пока ничего", "ничего не пробовал"} {
+		for _, step := range []string{"перезапуск не помог", "перезагрузка не помогла", "пока ничего", "ничего не пробовал", "перезапускал", "перезагружал", "сеть проверил", "проверил подключение"} {
 			if strings.Contains(lower, step) {
 				d.Tried = step
 				break
@@ -134,10 +146,21 @@ func Evaluate(message string, d Details) Plan {
 		p.Kind = "classroom"
 		p.Title = "Помощь в аудитории"
 		keys = []string{"location", "symptom", "impact", "tried"}
-	case contains(text, "не могу войти", "не получается войти", "не могу зайти", "не удаётся войти", "не удается войти", "восстановить пароль", "забыл пароль"):
+	case contains(text, "не могу войти", "не получается войти", "не могу зайти", "не удаётся войти", "не удается войти", "восстановить пароль", "забыл пароль", "не могу авторизоваться", "не получается авторизоваться", "не удаётся авторизоваться", "не удается авторизоваться"):
 		p.Kind = "access"
-		p.Title = "Доступ к университетскому сервису"
+		p.Title = "Доступ к сервису"
 		keys = []string{"service", "symptom", "tried"}
+	case contains(text, "vpn") && contains(text, "не могу подключиться", "не подключается", "не работает", "ошибка"):
+		p.Kind = "connection"
+		p.Title = "Подключение к VPN"
+		keys = []string{"symptom", "tried"}
+	case contains(text, "принтер", "ноутбук") && contains(text, "не печатает", "не включается", "не работает", "ошибка", "замята бумага", "зажевал бумагу"):
+		p.Kind = "workplace"
+		p.Title = "Помощь с рабочим оборудованием"
+		keys = []string{"location", "symptom", "tried"}
+	case containsExact(text, "помогите", "помогите пожалуйста", "нужна помощь", "нужна помощь пожалуйста"):
+		p.Title = "Опишите проблему"
+		keys = []string{"symptom"}
 	}
 	if d.Skip {
 		return p
@@ -149,6 +172,18 @@ func Evaluate(message string, d Details) Plan {
 	}
 	p.Ready = len(p.Fields) == 0
 	return p
+}
+
+// Vague help is recognized only as a complete request, never inside a FAQ.
+func containsExact(text string, phrases ...string) bool {
+	text = strings.Trim(text, " \t\r\n.,!?…:;")
+	text = strings.Join(strings.Fields(strings.ReplaceAll(text, ",", " ")), " ")
+	for _, phrase := range phrases {
+		if text == phrase {
+			return true
+		}
+	}
+	return false
 }
 func contains(text string, words ...string) bool {
 	for _, word := range words {
@@ -179,4 +214,29 @@ func Compose(message string, d Details) string {
 		b.WriteString("\nУточнения пропущены: специалисту может потребоваться дополнительная информация.")
 	}
 	return b.String()
+}
+
+// EvaluateWithLimit applies an organization-wide question budget. A negative
+// limit preserves legacy behavior; zero asks no additional questions.
+func EvaluateWithLimit(message string, details Details, limit int) Plan {
+	plan := Evaluate(message, details)
+	if limit < 0 || plan.Ready {
+		return plan
+	}
+	answered := 0
+	for _, value := range []string{details.Location, details.Service, details.Symptom, details.Impact, details.Tried} {
+		if strings.TrimSpace(value) != "" {
+			answered++
+		}
+	}
+	remaining := limit - answered
+	if remaining <= 0 {
+		plan.Fields = []Field{}
+		plan.Ready = true
+		return plan
+	}
+	if len(plan.Fields) > remaining {
+		plan.Fields = plan.Fields[:remaining]
+	}
+	return plan
 }

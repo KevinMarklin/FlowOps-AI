@@ -1,0 +1,140 @@
+# Platform expansion — implementation record
+
+## Baseline audit (2026-11-28)
+
+Go net/http + PostgreSQL + vanilla JS. Existing tenant principal middleware, member-bound cookie sessions, CSRF, scoped bot identities, bounded durable delivery, ticket dialogue/idempotency, builder JSON configuration, file-backed tenant knowledge bases, operator work leases and aggregate /api/stats are reused.
+
+Critical seams:
+- organization configuration: app_settings, workspaces and settings.Loader;
+- authorization: internal/security/roles.go and tenant-bound SQL;
+- events: existing audit_logs are incomplete and have textual payloads; new structured events must preserve history and distinguish observed events from reconstructed creation timestamps;
+- analytics: existing /api/stats remains compatible; new exploration is server-side and tenant-scoped;
+- knowledge: only approved published documents may enter the existing tenant RAG base;
+- workflow: must use durable idempotent steps, not model-driven side effects;
+- UI: existing navy/teal tokens, settings subnavigation and ticket route are preserved.
+
+Current gaps: custom scoped roles, hierarchy/memberships, taxonomy/forms, calendars/SLA, filtered analytics, custom dashboards/reports, optimization review workflow, KB approval/version history, copilot, workflow engine, QR assets and AI usage accounting are not implemented at baseline. No financial savings, response times or AI charges may be fabricated for legacy records lacking evidence.
+
+## Work log
+
+This file records shipped stages and explicit remaining scope. See REQUEST.md for the complete acceptance criteria. An unchecked item is not a delivered feature.
+
+- [x] Baseline architecture/data-flow review.
+- [x] Organization profile/timezone/contact configuration, working calendar, economic inputs and customizable closure reasons with optimistic revisions.
+- [x] Structured process events, calendars and SLA.
+- [x] Server-side analytical exploration and report exports.
+- [x] Persisted dashboards and report templates/schedules.
+- [x] Organization hierarchy, custom roles, taxonomy/forms and rule-based routing.
+- [x] Optimization detection, evidence and recommendation workflow.
+- [x] Knowledge gaps, draft generation, approval and version lifecycle.
+- [x] Officially sourced demonstrational Financial University configuration and wider template catalog.
+- [x] Copilot, durable workflows and context QR resources.
+- [ ] Complete security/performance/end-to-end acceptance review.
+
+## Evidence constraints
+
+The official https://www.fa.ru/ returned HTTP 403 through the web tool on 2026-11-28. Existing docs/FA_KNOWLEDGE_SOURCES.md and tenant knowledge are useful baseline evidence, not proof of current internal regulations. University-specific limits, routes and deadlines remain demonstration data unless independently confirmed from an official source.
+
+### Stage 1 — organization configuration
+
+Added app_settings.platform_config/platform_revision with compatible defaults. GET/PUT /api/v1/settings/organization validates configuration and atomically updates workspace name and audit; only admins can write, analysts can read for calculations. GET /api/v1/organization returns the public subset without costs. Closure validation uses organization-specific reasons. Default workspace sync preserves edited names. UI: Organization and SLA subsection, calendar/cost/reason editors; pending settings-arrow request completed.
+
+Validation: organization isolation/revision/conflict tests, calendar/holiday/DST unit tests, existing 21 UI regression tests and mocked-browser form-save/mobile verification. Configured SLA targets are not yet operational until Stage 2 deadline capture. No existing deadlines have been invented.
+
+### Stage 2 — process events, SLA and analytical exploration
+
+Migration: ticket_events, indexed tenant/time/ticket lookups; transactional triggers for creation/status/closure/reopen/department/work transitions; policy snapshots and first-response/resolution deadlines. Business deadlines respect local working days, holidays and DST. Legacy creation dates are reconstructed and explicitly marked; historic transitions/deadlines are not invented. SQL timestamp sessions now use UTC; organization timezone is a presentation/calendar input. Existing textual audit remains compatible. Ticket transactions set a local actor for event attribution.
+
+API: GET /api/tickets/{id}/events with ownership enforcement and 100-event pages; GET /api/analytics/explore with combined cohort-date/department/requester/status/priority/channel/processing/SLA filters, PostgreSQL aggregation, median response/resolution metrics, load/dynamics, comparison-compatible bounds, documented methods, null unavailable metrics and CSV export. Administrator drill-down is bounded to 50 tickets; analysts receive aggregates and no ticket content. Maximum single report range is one year, query execution is bounded. /api/stats remains unchanged for compatibility.
+
+UI: new analytical explorer, prior-period comparison, real counts/charts, per-metric methods/sample sizes, admin drill-down, CSV export, ticket event timeline and persisted SLA due dates. Organization input controls and earlier settings-marker removal styled consistently.
+
+Validation: complete Go suite with isolated PostgreSQL passed; 21 JS tests passed; organization/SLA/analytics isolation and null-missing-data integration tests; live browser against isolated server verified settings save, dynamic empty/nonempty filtering, comparison and mobile no-overflow. Legacy records without reliable first-response/closure time show no data.
+
+Remaining within analytics: organization hierarchy/category dimensions; user-configurable dashboards; XLSX/PDF; report schedules; ticket-specific calendars/pause/escalation rules; provider billing; confirmed routing labels; richer process-variant analysis. These are not represented as delivered.
+
+### Stage 3 — persisted dashboards and report formats
+
+Migration: tenant-scoped analytics_dashboards with ownership, shared visibility, configuration JSON and optimistic revisions. API: GET/POST /api/analytics/dashboards and PUT/DELETE /{id}. Analysts manage personal dashboards; administrators publish/manage shared dashboards; another user's private layout cannot be edited. Configs cap widget counts and accepted filter/visualization keys. All mutations are audited.
+
+UI: multiple named dashboards, three templates, widget add/remove, keyboard move and drag ordering, width/height, per-widget filters, shared/personal copies. Nine visualizations use real aggregates. Distribution visualizes the distribution of group counts. The funnel is explicitly a sorted group distribution, not a claim of measured sequential process conversion. Report formats: authenticated server-generated CSV, XLSX and Unicode PDF with the bundled Golos font; no formulas or external spreadsheet references are emitted.
+
+Validation: full Go suite and 21 JS tests passed. Dashboard ownership/sharing/revision tests; report ZIP/XML/formula tests; PDF rendered and visually reviewed; extracted Cyrillic verified; XLSX opened with openpyxl. Live browser verified widget types, layout persistence across reload, mobile no-overflow and downloaded all three report formats.
+
+Remaining reporting scope: scheduled generation and fine-grained shared-dashboard grants. Current dashboard filters also serve as saved report selections, but there is no report scheduler yet. No unsupported sequential-funnel or AI-billing claim is made.
+
+### Stage 4 — optimization and governed knowledge lifecycle
+
+Migrations: optimization_decisions with optimistic versions and implementation tasks; semantic model-group snapshots; kb_articles and immutable kb_article_versions. Deterministic detectors cover exact normalized repeats, manually solved gaps, configured-SLA breaches, repeated redirection and old backlog. Recommendations retain evidence IDs, measured work, explicit scenario estimates, decisions, assignees, notes and tasks. Their saved baseline is distinct from the current selected period. PUT decisions is admin-only; analysts receive aggregate evidence without ticket IDs.
+
+Semantic analysis is an explicit real-model action over at most 30 masked tickets. Every returned source ID is validated against the tenant/filter snapshot; unsupported/foreign IDs reject the result. If the configured structured model is unavailable, the API returns 503 and creates no fake groups. Numeric counts and scenario estimates remain deterministic. Endpoints: GET /api/optimization, PUT /api/optimization/{id}, POST /api/optimization/semantic.
+
+Knowledge API: GET/POST /api/v1/kb/articles, PUT /articles/{id}, GET /articles/{id}/versions, POST /api/v1/kb/from-tickets. Draft/review/changes-requested/published/stale/archived states, revision conflicts, source provenance, review dates and restore-to-draft. Admin approval publishes; operators can author/submit. An edit preserves the previous approved revision in RAG until the new one is approved. Archive/stale withdraw publication; restore cannot auto-publish. The existing tenant knowledge module now takes an isolated approved-version snapshot per request; drafts never overwrite the shared RAG index. Legacy file-backed articles and editing remain compatible. Production smart-import persists drafts through the same lifecycle, and its existing form field/result-container mismatch was fixed.
+
+Economic improvements: department-specific rates now drive estimated time values; infrastructure/support allocations are prorated by actual calendar month. Partial effect is explicitly incomplete; ROI/payback and AI cost remain null without confirmed complete financial data.
+
+Validation: full Go suite and 21 JS tests passed after catching and correcting an overbroad KB path permission; new IDOR/evidence/revision/approval/RAG tests; concurrent snapshot isolation test; real browser verified accepted recommendation + task and full draft→review→publish→edit→archive→restore cycle against isolated DB. PDF/XLSX regression preserved.
+
+Remaining: automatic semantic scheduling, conflicting-instruction semantic review, confirmed before/after causal impact, organization hierarchy/custom scopes, copilot, durable workflows, QR and report scheduling. Manual legacy publication remains the pre-existing explicit human action; AI import does not publish. Existing built-in roles remain authoritative until the custom-role extension is delivered.
+
+### Stage 5 — sourced templates and specialist Copilot
+
+Added the explicitly demonstrational Financial University employee template, three verified official unit names, source URLs/verification dates and safe instructions requiring local confirmation. Added IT, manufacturing, retail, medical, logistics and empty-start templates. New workspaces retain their own template snapshot; existing workspaces are not reseeded. Arbitrary valid routing codes are preserved instead of silently becoming General. Empty organizations do not display unrelated example prompts.
+
+Copilot API: GET/POST /api/tickets/{id}/copilot for operators/admins only. Context includes approved knowledge and up to five keyword-matched solved tickets, bounded and PII-masked. Real structured-model summaries, response drafts, clarifying questions and routing suggestions validate source IDs and department codes. No automatic send, status or routing mutation. Missing model returns 503; the interface exposes sources and honest unavailable state. Inserting a draft requires a separate human send.
+
+Validation: full Go suite, template/tenant/snapshot/Copilot IDOR/model-source tests and live Copilot context/unavailable-provider browser check passed. No unverified university limits or deadlines are presented as official policy.
+
+### Stage 6 — organization hierarchy and memberships
+
+Migration: tenant-bound organization_units and organization_unit_members with composite foreign keys and stable routing codes. Arbitrary kind/depth, parent changes with cycle detection, multi-unit memberships and manager/deputy/responsible relations. Administrator mutations serialize through the workspace lock and use optimistic revisions. Deactivation recursively disables descendants and removes their managed routing queues; existing tickets/history remain. Member IDs are excluded from non-admin reads.
+
+API: GET/POST /api/v1/organization/units and PUT /{id}. Settings includes a responsive structure editor with parent selection, stable-code display and membership editing. Saved active routing codes update the existing department configuration and selector data.
+
+Validation: complete Go suite and 21 JS regressions passed; cycle/cross-tenant parent/member/routing/deactivation tests; explicit middleware route permission regression; live create/edit/member persistence and mobile overflow check. Browser verification caught and corrected administrator POST denied by the early read-only route rule. Structure does not yet grant scoped ticket/analytics access: built-in roles still govern resources. Custom roles/scopes, taxonomy, workflow/QR and schedules remain outstanding.
+
+### Stage 7 — Yandex and correctness fixes
+
+All production AI paths use Yandex AI Studio. Retired provider implementations remain only in historical test fixtures. Added JSON-mode generation for Copilot, imports and optimization with bounded responses, no provider fallback and explicit errors. Existing sensitive-input policy remains enforced. Runtime provider policy is Yandex-only; credentials are not committed.
+
+Unified governed catalogue lazily imports existing active knowledge with explicit inherited-publication provenance, preserves archived state across restarts and prevents old create/update routes from publishing new material. New knowledge always starts as a draft. Added server search/pagination, delayed-editor response guards, bounded parallel widget calculations, observed auto-response events for SLA, and flexible lexical matching for Copilot.
+
+Validation: full Go suite and 24 JS tests passed before role extension. New catalogue, archive/restart, >100 article search and first-response SLA regression checks passed.
+
+### Stage 8 — custom role definitions and ticket scopes
+
+Added tenant-scoped role definitions, optimistic updates and administrator-only assignment to non-administrator members with matching base roles. Own/organization/subtree scopes filter ticket lists and guard ticket-detail routes in middleware. Scope edits take effect on subsequent queries. Restricted members cannot use organization-wide analytics, knowledge or Copilot until those modules support matching scopes; the server denies these paths explicitly rather than leaking global context. Existing built-in role permissions and employee ownership restrictions remain in force.
+
+Validation: handler/security suites passed; subtree visibility, own-ticket visibility, immediate policy changes, tenant isolation and stale revision tests passed. Remaining: role editor UI, per-action configurable permissions, scoped aggregate/knowledge support, forms/attachments, routing rules, SLA escalation and AI governance settings. These stages do not complete the selected five tasks.
+
+
+### Stage 9 — five selected backend tasks (2026-11-28)
+
+This stage covers REQUEST sections 3.3–3.7, rather than the remaining sections of the whole platform roadmap.
+
+1. Roles: 18 backend action permissions, immediate reload/revocation, optimistic role edits and assignments; own/organization/unit subtree/explicit ticket scopes. Branches use the same organization subtree model. Self-assignment and editing one's assigned role are blocked. Base roles remain an upper bound; custom permissions restrict them. Queue listing, detail, assignment, attachments, fields and SLA inbox enforce ticket visibility. Organization-wide analytics, optimization and knowledge administration remain unavailable to roles with restricted ticket scope rather than exposing unrelated organizational data.
+2. Tickets: categories/subcategories, types, tags, grouped statuses/priorities, existing configurable closure reasons, multiple named forms and all nine custom-field types. Conditional fields use scalar parent values, with matching browser/server validation. Schema revisions are snapshotted on web and external-channel creation. Inline uploads (PDF/PNG/JPEG/text, combined 5 MiB) and their field references are inserted atomically with a web/API ticket. Later uploads/downloads are tenant/ticket-bound. Required completion is enforced again in PostgreSQL before closure, including bot/legacy feedback paths; external-channel tickets can have missing fields completed on the ticket page. Attachment contents are not automatically transmitted to the model.
+3. Routing: ordered first-match rules; category/form/type/priority/channel/requester role and hierarchy/custom scalar or multi values/business hours/load/AI-derived department conditions; active assignee validation, least-loaded eligible operator selection and fallback queue. Telegram/MAX conditions resolve their actual sender namespace. Removed destinations are skipped at execution; rule references are checked on save.
+4. SLA: conditional policies with calendar/timezone overrides, first-response and resolution deadlines, immutable policy snapshots, waiting pauses and business calendars. Observed first-response deadlines are no longer shifted by later pauses. Durable, deduplicated warning/breach notifications and multi-level reassignment run every minute; notifications are available in the application. Pause extension uses minute resolution, matching the configuration units. This stage does not add email/SMS notification delivery.
+5. AI: manual/assistant/partial/approved-automatic modes, independent classification/routing/priority/answer toggles, confirmation, question limits, approved source selection and persistent UTC daily invocation limits. All model generation uses Yandex. Additional confidentiality policy keeps detected personal-data requests local; mandatory system masking/access restrictions cannot be relaxed. Daily usage counts reserved provider attempts, not billed tokens or cost; local slot rejection does not consume the daily quota. AI policy and automation writes are checked separately against changed sections.
+
+UI: Settings → Rights and processes contains role, taxonomy/form, routing, SLA and AI editors. Employees choose a form on intake; a ticket exposes its saved fields, metadata and attachments. SLA has its own inbox. Existing settings navigation stays expanded on outside clicks.
+
+Validation: regression coverage includes actual feedback middleware, explicit-resource visibility/queue clearing, atomic mandatory uploads, duplicate/conditional forms, invalidated routes, bot channel routing, historical first-response SLA, durable escalation, empty JSON settings and persisted AI quotas across analyzer instances. Browser verified creating a named form and ticket #13 with its required field in an isolated synthetic database. A real Yandex structured call was verified separately with public synthetic input. Full Go suite (including isolated PostgreSQL integration tests), go vet and 24 existing JS checks passed before release. No user ticket data is used for fixtures.
+
+
+### Stage 10 — second selected part: workflows, QR, process analytics, reports and knowledge checks
+
+- Durable workflow definitions and immutable run snapshots. The validated DAG supports conditions, collection/completeness, assignment, linked tasks, departmental transfer, approvals, in-app notifications, observed-event waits, allowlisted HTTP POST and completion. Parallel branches have independent task states and join through dependencies. False branches propagate a skip; a join with an active branch may proceed. Conditions latch when a step starts. Failures stop later effects immediately; bounded retries, overall deadlines and cancellation persist. Runtime authorization is rechecked for the initiating account. Explicit task assignees may decide their own task without obtaining full access to another employee's ticket. A completion notification remains acknowledgeable after its run ends.
+- Local workflow effects and checkpoints commit together. Before external dispatch, preceding local effects commit. HTTP retries use a stable run/step Idempotency-Key. The allowlisted receiver must implement deduplication; the application does not claim distributed exactly-once execution against arbitrary servers. Configuration remains unavailable to AI; Copilot can only suggest an existing active process for a separate human launch.
+- Tenant-bound assets with revisions, deactivation and PNG QR export. QR encodes the public site address and opaque asset ID, never credentials or private asset context. Context is loaded after authentication and scope checks; scanning opens intake, and the saved ticket retains a context snapshot. FLOWOPS_PUBLIC_URL configures the address (localhost is the development default). The PNG encoder is [go-qrcode](https://github.com/skip2/go-qrcode), pinned in go.mod/go.sum.
+- Process analytics aggregates observed routes, status intervals, waits, route loops and workflow-step intervals on the server. It separates calendar duration from recorded active work, reports history coverage and supports observational before/after cohorts. Parallel intervals are explicitly non-additive. Routing loops also create evidence-backed signals in the optimization center. New assignment, pause/resume, classification, genuine employee-message, escalation and workflow events preserve context without reconstructing nonexistent past transitions.
+- Saved report templates and minute-polled recurring generation use the same analytical handler/exporters as interactive CSV/XLSX/PDF. Owner permissions are checked at generation and download; revoked owners pause their schedules. Claims, artifact storage and schedule advancement are transactional. Manual generation works for inactive templates. Reports remain on the site; this stage sends no report email or external message.
+- Knowledge metadata includes responsible owner, applicability, permanent/temporary/personal kind and validity dates. Expired and personal materials cannot enter governed RAG; personal cases cannot be published as reusable regulations. A bounded explicit Yandex check compares selected published revisions, validates every source ID, persists findings for human review and rejects changed source revisions. Empty findings are not a guarantee of consistency. Publication remains separate.
+- Distinct concurrent ticket creation now reserves database capacity for tenant AI policy and governed knowledge reads instead of allowing creation transactions to occupy the entire pool.
+
+Interfaces: Settings → Business processes / Objects and QR codes; main navigation → Tasks and approvals / Process analytics / Reports. Ticket pages show run progress, launch and cancellation. The knowledge approval page exposes metadata and conflict-review history. Employee navigation now includes the assigned-task surface.
+
+Verification: database-backed tests cover parallel approvals, duplicate starts, latched conditions, empty multi-values, genuine-message waits, terminal failure, scoped assigned-task access, QR tenant isolation/deactivation, durable report output and revocation, exact observed route intervals/loops, expired/personal knowledge exclusion, source-ID validation and bounded concurrent creation. Browser tests on the synthetic preview verified a named process, QR object, QR-context ticket #14, process launch→completion→notification acknowledgement, a generated CSV artifact and employee task navigation. Final mobile visual recheck was blocked by the browser approval service usage limit; it was not replaced with another browser automation mechanism.
+
+Release checks for Stage 10: complete `go test ./... -count=1 -timeout=240s` with isolated PostgreSQL passed (handlers 100.062s), `go vet ./...` passed, and 24 JavaScript regressions passed. Runtime and standalone operations migrations were compared. The bounded 4-connection / 8-request creation scenario passed.

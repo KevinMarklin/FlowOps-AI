@@ -21,21 +21,30 @@ import (
 	"flowops-ai/internal/security"
 	"flowops-ai/internal/settings"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TicketsHandler struct {
-	db               *pgxpool.Pool
-	logger           *slog.Logger
-	analyzer         *analyzer.Analyzer
-	dispatcher       *channels.Dispatcher
-	tenantDispatcher *channels.TenantDispatcher
-	builderConfig    settings.Loader
-	callbacks        *security.Callbacks
+	creationSlots       chan struct{}
+	structuredGenerator func(context.Context, string, string) (string, bool, error)
+	db                  *pgxpool.Pool
+	logger              *slog.Logger
+	analyzer            *analyzer.Analyzer
+	dispatcher          *channels.Dispatcher
+	tenantDispatcher    *channels.TenantDispatcher
+	builderConfig       settings.Loader
+	callbacks           *security.Callbacks
 }
 
 func NewTicketsHandler(db *pgxpool.Pool, logger *slog.Logger, ticketAnalyzer *analyzer.Analyzer, dispatchers ...*channels.Dispatcher) *TicketsHandler {
 	handler := &TicketsHandler{db: db, logger: logger, analyzer: ticketAnalyzer}
+	if db != nil {
+		handler.creationSlots = make(chan struct{}, max(1, int(db.Config().MaxConns)/2))
+	}
+	if ticketAnalyzer != nil {
+		handler.structuredGenerator = ticketAnalyzer.GenerateStructured
+	}
 	if len(dispatchers) > 0 {
 		handler.dispatcher = dispatchers[0]
 	}
@@ -66,7 +75,7 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// The router supplies tenant context for operator sessions; direct legacy
 	// handler calls continue to default to the compatible default workspace.
 	var request models.CreateTicketRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -89,7 +98,7 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, err.Error())
 			return
 		}
-		if !intake.Evaluate(request.RawText, *request.Intake).Ready {
+		if !h.IntakePlan(r.Context(), request.RawText, *request.Intake).Ready {
 			writeError(w, 400, "Заполните уточнения или выберите передачу без уточнений.")
 			return
 		}
@@ -115,16 +124,123 @@ func (h *TicketsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	assetSnapshot, assetErr := h.resolveAsset(r, request.AssetID, gate.query)
+	if assetErr != nil {
+		writeError(w, 400, assetErr.Error())
+		return
+	}
+	if request.AssetID != "" {
+		var asset OrganizationAsset
+		_ = json.Unmarshal(assetSnapshot, &asset)
+		request.RawText += "\n\nОбъект: " + asset.Name + " (" + asset.Kind + "). " + asset.Description
+		if len(request.RawText) > security.MaxTicketBytes {
+			writeError(w, 400, "Обращение с контекстом слишком большое")
+			return
+		}
+	}
+	var formRaw []byte
+	var form TicketFormDefinition
+	formErr := gate.query.QueryRow(ctx, `SELECT definition,revision FROM organization_ticket_forms WHERE tenant_id=$1`, security.TenantID(ctx)).Scan(&formRaw, &form.Revision)
+	if formErr != nil && formErr != pgx.ErrNoRows {
+		writeError(w, 503, "Не удалось загрузить форму обращения")
+		return
+	}
+	if len(formRaw) > 0 {
+		if json.Unmarshal(formRaw, &form) != nil {
+			writeError(w, 503, "Форма повреждена")
+			return
+		}
+	}
+	if form.Revision != request.FormRevision {
+		writeError(w, 409, "Форма изменилась. Обновите страницу")
+		return
+	}
+	if request.FormID != "" {
+		found := false
+		for _, variant := range form.Forms {
+			if variant.ID == request.FormID {
+				form.Fields = variant.Fields
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeError(w, 400, "Форма не найдена")
+			return
+		}
+	}
+	form.Forms = nil // Ticket snapshots contain only their selected schema.
+	if !taxonomyContains(form.Categories, request.Category) || !taxonomyContains(form.Types, request.TicketType) || !taxonomyContains(form.Priorities, request.PriorityID) || len(request.Tags) > 100 {
+		writeError(w, 400, "Неизвестная категория, тип или приоритет")
+		return
+	}
+	seenTags := map[string]bool{}
+	for _, tag := range request.Tags {
+		if !taxonomyContains(form.Tags, tag) || seenTags[tag] {
+			writeError(w, 400, "Некорректные теги")
+			return
+		}
+		seenTags[tag] = true
+	}
+	formSnapshot, _ := json.Marshal(form)
+	tagsJSON, _ := json.Marshal(request.Tags)
+	if request.Tags == nil {
+		tagsJSON = []byte("[]")
+	}
+	attachmentJSON, uploadErr := prepareTicketUploads(form, &request)
+	if uploadErr != nil {
+		writeError(w, 400, uploadErr.Error())
+		return
+	}
+	if err := validateFormValues(form, request.Fields); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	for _, field := range form.Fields {
+		value, ok := request.Fields[field.ID].(string)
+		if !ok || value == "" {
+			continue
+		}
+		var exists bool
+		switch field.Type {
+		case "member":
+			formErr = gate.query.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE tenant_id=$1 AND id=$2 AND is_active)`, security.TenantID(ctx), value).Scan(&exists)
+		case "unit":
+			formErr = gate.query.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM organization_units WHERE tenant_id=$1 AND id=$2 AND active)`, security.TenantID(ctx), value).Scan(&exists)
+		case "attachment":
+			continue
+		default:
+			continue
+		}
+		if formErr != nil || !exists {
+			writeError(w, 400, "Связанный ресурс недоступен")
+			return
+		}
+	}
+	if len(request.Category) > 100 || len(request.TicketType) > 100 {
+		writeError(w, 400, "Некорректная категория или тип")
+		return
+	}
+	fieldsJSON, _ := json.Marshal(request.Fields)
+	if request.Fields == nil {
+		fieldsJSON = []byte("{}")
+	}
 	channels.LogIncoming(h.logger, "web", request.UserEmail)
 	analysis := h.analyzer.Analyze(r.Context(), request.RawText)
+	for _, priority := range form.Priorities {
+		if priority.ID == request.PriorityID {
+			analysis.Priority = priority.State
+			break
+		}
+	}
 	status := initialTicketStatus(analysis)
 
-	const query = `INSERT INTO tickets (requester_id,tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status)
-VALUES ($11,$1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
+	const query = `WITH inserted AS (INSERT INTO tickets (requester_id,tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,category,ticket_type,custom_priority,tags,custom_data,form_snapshot,form_id,asset_id,asset_snapshot)
+VALUES ($11,$1,$2, 'web', NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10,$12,$13,$15,$16,$14,$17,$19,$20,$21)
+RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status), fields_saved AS (INSERT INTO ticket_custom_fields(tenant_id,ticket_id,revision,values) SELECT $1,id,1,$14::jsonb FROM inserted)  , attachments_saved AS (INSERT INTO ticket_attachments(id,tenant_id,ticket_id,author_id,filename,mime,content) SELECT a->>'id',$1,i.id,$11,a->>'filename',a->>'mime',decode(a->>'content','base64') FROM inserted i CROSS JOIN jsonb_array_elements($18::jsonb) a) SELECT * FROM inserted`
 
 	var ticket models.Ticket
-	err := gate.query.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context())).Scan(
+	err := gate.query.QueryRow(r.Context(), query, security.TenantID(r.Context()), request.UserEmail, request.RawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(r.Context()), request.Category, request.TicketType, fieldsJSON, request.PriorityID, tagsJSON, formSnapshot, attachmentJSON, request.FormID, request.AssetID, assetSnapshot).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply,
 		&ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
@@ -186,7 +302,7 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 		if err := intake.Validate(request.Message, *request.Intake); err != nil {
 			return channels.IngestResult{}, err
 		}
-		if !intake.Evaluate(request.Message, *request.Intake).Ready {
+		if !h.IntakePlan(ctx, request.Message, *request.Intake).Ready {
 			return channels.IngestResult{}, fmt.Errorf("incomplete intake")
 		}
 		request.Message = intake.Compose(request.Message, *request.Intake)
@@ -212,16 +328,35 @@ func (h *TicketsHandler) IngestMessage(ctx context.Context, request models.Inges
 	channels.LogIncoming(h.logger, request.Channel, request.Sender)
 	rawText := strings.TrimSpace(strings.Join([]string{request.Subject, request.Message}, "\n"))
 	analysis := h.analyzer.AnalyzeWithSender(ctx, rawText, request.Sender)
+	analysis.AutoResolve = false // External delivery must not be assumed successful.
 	status := initialTicketStatus(analysis)
 	tenant := security.TenantID(ctx)
-	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,requester_id,bot_tenant_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,$14,$15)
+	const query = `INSERT INTO tickets (tenant_id,user_email, channel, subject, callback_url, raw_text, department, priority, extracted_summary, rag_answer, pii_masked_count, pii_masked_types, status,requester_id,bot_tenant_id,form_snapshot)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,$14,$15,COALESCE((SELECT jsonb_set(definition,'{revision}',to_jsonb(revision)) FROM organization_ticket_forms WHERE tenant_id=$1),'{"revision":0,"fields":[]}'))
 	RETURNING id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary, rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status`
 	var ticket models.Ticket
 	err = gate.query.QueryRow(ctx, query, tenant, request.Sender, request.Channel, request.Subject, request.CallbackURL, rawText, analysis.Department, analysis.Priority, analysis.ExtractedSummary, analysis.RAGAnswer, analysis.PIIMaskedCount, analysis.PIIMaskedTypes, status, security.RequesterID(ctx), botTenant).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department, &ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus)
 	if err != nil {
 		return channels.IngestResult{}, err
+	}
+	if botTenant != "" {
+		keys := append([]string{request.IdempotencyKey}, request.BotMessageKeys...)
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			if !requestKeyPattern.MatchString(key) {
+				return channels.IngestResult{}, errRequestKey
+			}
+			var receiptID int
+			if err = gate.query.QueryRow(ctx, `INSERT INTO bot_dialogue_receipts(bot_tenant_id,sender,key_hash,ticket_id) VALUES($1,$2,$3,$4) ON CONFLICT(bot_tenant_id,sender,key_hash) DO UPDATE SET key_hash=EXCLUDED.key_hash RETURNING ticket_id`, botTenant, request.Sender, requestHash([]byte(key)), ticket.ID).Scan(&receiptID); err != nil {
+				return channels.IngestResult{}, err
+			}
+			if receiptID != ticket.ID {
+				return channels.IngestResult{}, errRequestConflict
+			}
+		}
 	}
 	if err := gate.finish(ctx, ticket.ID); err != nil {
 		return channels.IngestResult{}, err
@@ -251,6 +386,9 @@ func (h *TicketsHandler) ingestResult(ctx context.Context, ticket models.Ticket)
 
 // User-controlled channel/confirmation flags cannot authorize ticket closure.
 func initialTicketStatus(analysis analyzer.Result) string {
+	if analysis.AutoResolve && analysis.RAGAnswer != nil {
+		return "auto_resolved"
+	}
 	if analysis.RAGAnswer != nil {
 		return "awaiting_confirmation"
 	}
@@ -289,7 +427,7 @@ func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
 	if request.Resolved {
 		status = "auto_resolved"
 	}
-	tx, err := h.db.Begin(r.Context())
+	tx, err := h.beginTicketTx(r.Context())
 	if err != nil {
 		writeError(w, 500, "failed to record feedback")
 		return
@@ -325,7 +463,11 @@ func (h *TicketsHandler) Feedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `UPDATE tickets SET status=$1 WHERE id=$2 AND tenant_id=$3`, status, id, security.TenantID(r.Context())); err != nil {
-		writeError(w, 500, "failed to update ticket feedback")
+		if incompleteTicketForm(err) {
+			writeError(w, 409, "Заполните обязательные поля и вложения перед закрытием")
+		} else {
+			writeError(w, 500, "failed to update ticket feedback")
+		}
 		return
 	}
 	actor := security.RequesterID(r.Context())
@@ -357,6 +499,103 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	if request.WorkflowStatus != nil {
+		var raw []byte
+		var definition TicketFormDefinition
+		if err := h.db.QueryRow(r.Context(), `SELECT CASE WHEN form_snapshot<>'{}' THEN form_snapshot ELSE COALESCE((SELECT definition FROM organization_ticket_forms f WHERE f.tenant_id=t.tenant_id),'{}') END FROM tickets t WHERE tenant_id=$1 AND id=$2`, security.TenantID(r.Context()), id).Scan(&raw); err != nil {
+			writeError(w, 404, "Тикет не найден")
+			return
+		}
+		if json.Unmarshal(raw, &definition) != nil {
+			writeError(w, 503, "Не удалось прочитать статусы")
+			return
+		}
+		found := false
+		for _, status := range definition.Statuses {
+			if status.ID == *request.WorkflowStatus {
+				found = true
+				canonical := "assigned_to_operator"
+				if status.State == "new" {
+					canonical = "new"
+				}
+				if status.State == "waiting" {
+					canonical = "waiting_employee"
+				}
+				if status.State == "closed" {
+					canonical = "closed"
+					if request.ClosureReason == nil {
+						writeError(w, 400, "Укажите причину закрытия")
+						return
+					}
+					if p, ok := security.CurrentPrincipal(r.Context()); ok && p.Permissions != nil {
+						allowed := false
+						for _, permission := range *p.Permissions {
+							if permission == "ticket_close" {
+								allowed = true
+							}
+						}
+						if !allowed {
+							writeError(w, 403, "Роль не разрешает закрытие")
+							return
+						}
+					}
+				}
+				request.Status = &canonical
+				break
+			}
+		}
+		if !found {
+			writeError(w, 400, "Неизвестный статус")
+			return
+		}
+	}
+	if request.Category != nil || request.TicketType != nil || request.PriorityID != nil || request.Tags != nil {
+		var raw []byte
+		var definition TicketFormDefinition
+		if err := h.db.QueryRow(r.Context(), `SELECT COALESCE(NULLIF(form_snapshot,'{}'),(SELECT definition FROM organization_ticket_forms f WHERE f.tenant_id=t.tenant_id),'{}') FROM tickets t WHERE tenant_id=$1 AND id=$2`, security.TenantID(r.Context()), id).Scan(&raw); err != nil {
+			writeError(w, 404, "Тикет не найден")
+			return
+		}
+		if json.Unmarshal(raw, &definition) != nil {
+			writeError(w, 503, "Не удалось прочитать справочники")
+			return
+		}
+		if request.Category != nil && !taxonomyContains(definition.Categories, *request.Category) || request.TicketType != nil && !taxonomyContains(definition.Types, *request.TicketType) || request.PriorityID != nil && !taxonomyContains(definition.Priorities, *request.PriorityID) {
+			writeError(w, 400, "Неизвестное значение справочника")
+			return
+		}
+		if request.Tags != nil {
+			seen := map[string]bool{}
+			if len(*request.Tags) > 100 {
+				writeError(w, 400, "Слишком много тегов")
+				return
+			}
+			for _, tag := range *request.Tags {
+				if !taxonomyContains(definition.Tags, tag) || seen[tag] {
+					writeError(w, 400, "Некорректные теги")
+					return
+				}
+				seen[tag] = true
+			}
+		}
+		if request.PriorityID != nil {
+			for _, priority := range definition.Priorities {
+				if priority.ID == *request.PriorityID {
+					level := priority.State
+					request.Priority = &level
+					break
+				}
+			}
+		}
+	}
+	var reason string
+	if request.ClosureReason != nil {
+		reason = strings.TrimSpace(*request.ClosureReason)
+		if request.Status == nil || *request.Status != "closed" || !h.validClosureReason(r.Context(), reason) || request.OperatorReply != nil {
+			writeError(w, 400, "invalid closure reason")
+			return
+		}
+	}
 	fields := make([]string, 0, 3)
 	args := make([]any, 0, 5)
 	if request.Status != nil {
@@ -383,6 +622,35 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		fields = append(fields, "priority = $"+strconv.Itoa(len(args)+1))
 		args = append(args, *request.Priority)
 	}
+	for _, item := range []struct {
+		name  string
+		value *string
+	}{{"category", request.Category}, {"ticket_type", request.TicketType}, {"custom_priority", request.PriorityID}} {
+		if item.value != nil {
+			fields = append(fields, item.name+"=$"+strconv.Itoa(len(args)+1))
+			args = append(args, *item.value)
+		}
+	}
+	if request.Tags != nil {
+		raw, _ := json.Marshal(*request.Tags)
+		fields = append(fields, "tags=$"+strconv.Itoa(len(args)+1))
+		args = append(args, raw)
+	}
+	if request.WorkflowStatus != nil {
+		fields = append(fields, "workflow_status=$"+strconv.Itoa(len(args)+1))
+		args = append(args, *request.WorkflowStatus)
+	}
+	if request.Assignee != nil {
+		if *request.Assignee != "" {
+			var exists bool
+			if err := h.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM workspace_members m JOIN tickets t ON t.tenant_id=m.tenant_id WHERE m.tenant_id=$1 AND m.id=$2 AND t.id=$3 AND m.is_active AND m.role IN ('operator','admin') AND flowops_ticket_visible(m.tenant_id,m.id,t.department,t.requester_id,t.id))`, security.TenantID(r.Context()), *request.Assignee, id).Scan(&exists); err != nil || !exists {
+				writeError(w, 400, "Исполнитель недоступен")
+				return
+			}
+		}
+		fields = append(fields, "assignee_id=$"+strconv.Itoa(len(args)+1))
+		args = append(args, *request.Assignee)
+	}
 	if request.OperatorReply != nil {
 		fields = append(fields, "operator_reply = $"+strconv.Itoa(len(args)+1))
 		args = append(args, strings.TrimSpace(*request.OperatorReply))
@@ -398,8 +666,10 @@ func (h *TicketsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "operator reply exceeds limits or is empty")
 		return
 	}
-	if err := h.applyUpdate(r.Context(), id, query, args, request.OperatorReply); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if err := h.applyUpdate(r.Context(), id, query, args, request.OperatorReply, reason); err != nil {
+		if incompleteTicketForm(err) {
+			writeError(w, 409, "Заполните обязательные поля и вложения перед закрытием")
+		} else if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "ticket not found")
 		} else {
 			writeError(w, 500, "ticket update failed")
@@ -429,7 +699,9 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 	query := "UPDATE tickets SET operator_reply=$1 WHERE id=$2 AND tenant_id=$3"
 	if err := h.applyUpdate(r.Context(), id, query, []any{strings.TrimSpace(request.Reply), id, security.TenantID(r.Context())}, &request.Reply); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if incompleteTicketForm(err) {
+			writeError(w, 409, "Заполните обязательные поля и вложения перед закрытием")
+		} else if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "ticket not found")
 		} else {
 			writeError(w, 500, "ticket reply failed")
@@ -439,8 +711,8 @@ func (h *TicketsHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	h.Detail(w, r)
 }
 
-func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, args []any, reply *string) error {
-	tx, err := h.db.Begin(ctx)
+func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, args []any, reply *string, closureReasons ...string) error {
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -487,6 +759,11 @@ func (h *TicketsHandler) applyUpdate(ctx context.Context, id int, query string, 
 			return err
 		}
 	}
+	if newStatus == "closed" && len(closureReasons) > 0 && closureReasons[0] != "" {
+		if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(tenant_id,event_type,actor,ticket_id,details) VALUES($1,'TICKET_CLOSED',$2,$3,$4)`, security.TenantID(ctx), security.RequesterID(ctx), id, closureReasons[0]); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -521,6 +798,9 @@ func (h *TicketsHandler) Deliver(ctx context.Context, m delivery.Message) error 
 			}
 			if originalBotTenant != "" {
 				routeTenant = originalBotTenant
+			}
+			if m.BotRouteTenant != "" {
+				routeTenant = m.BotRouteTenant
 			}
 			// Recheck at delivery time: an old queued answer must never follow an
 			// unlinked, disabled or reassigned chat to another website account.
@@ -573,29 +853,6 @@ func (h *TicketsHandler) validateIngest(r models.IngestRequest) error {
 	return nil
 }
 
-func (h *TicketsHandler) Reset(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.db.Exec(r.Context(), `DELETE FROM ticket_deliveries WHERE ticket_id IN (SELECT id FROM tickets WHERE tenant_id=$1)`, security.TenantID(r.Context())); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
-		return
-	}
-	if _, err := h.db.Exec(r.Context(), `DELETE FROM tickets WHERE tenant_id=$1`, security.TenantID(r.Context())); err != nil {
-		h.logger.Error("failed to reset tickets", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to reset tickets")
-		return
-	}
-	base, err := h.analyzerBase(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reset knowledge base")
-		return
-	}
-	if err := base.Reset(); err != nil {
-		h.logger.Error("failed to reset knowledge base", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to reset knowledge base")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"reset": true})
-}
-
 func (h *TicketsHandler) Audit(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `SELECT id, created_at, event_type, actor, ticket_id, COALESCE(details, '') FROM audit_logs WHERE tenant_id=$1 ORDER BY created_at DESC, id DESC LIMIT 30`, security.TenantID(r.Context()))
 	if err != nil {
@@ -642,11 +899,13 @@ func ticketID(r *http.Request) (int, bool) {
 	return id, err == nil && id > 0
 }
 func validStatus(value string) bool {
-	return hasValue(value, "new", "awaiting_confirmation", "assigned_to_operator", "auto_resolved", "resolved", "closed")
+	if value == "waiting_employee" {
+		return true
+	}
+	return hasValue(value, "new", "awaiting_confirmation", "assigned_to_operator", "waiting_employee", "auto_resolved", "resolved", "closed")
 }
-func validDepartment(value string) bool {
-	return hasValue(knowledge.NormalizeDepartment(value), "IT", "Billing", "HR", "Accounting", "Facilities", "Academic", "Production", "Supply", "Security", "General")
-}
+func validDepartment(value string) bool { return knowledge.ValidDepartmentName(value) }
+
 func validPriority(value string) bool { return hasValue(value, "low", "medium", "high") }
 func hasValue(value string, values ...string) bool {
 	for _, candidate := range values {
@@ -674,13 +933,40 @@ func (h *TicketsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(search)) > 500 {
+		writeError(w, 400, "Поисковый запрос слишком длинный")
+		return
+	}
+	idText := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(search), "id"))
+	idText = strings.TrimSpace(strings.TrimLeft(idText, "#№: "))
+	searchID, _ := strconv.ParseInt(idText, 10, 32)
+	if searchID < 0 {
+		searchID = 0
+	}
+	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(strings.ReplaceAll(strings.ToLower(search), "ё", "е")) + "%"
+
+	queueStatus := r.URL.Query().Get("queue_status")
+	if queueStatus != "" && !hasValue(queueStatus, "new", "in_progress", "closed") {
+		writeError(w, 400, "invalid queue status")
+		return
+	}
 	const query = `
 SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE tenant_id=$1 AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
+       ($7::boolean AND status NOT IN ('closed','auto_resolved') AND (
+         NOT EXISTS(SELECT 1 FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6)
+         OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.id>COALESCE((SELECT r.last_message_id FROM ticket_operator_reads r WHERE r.tenant_id=t.tenant_id AND r.ticket_id=t.id AND r.operator_id=$6),0))
+       ))
+, ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `
+FROM tickets t WHERE tenant_id=$1 AND flowops_ticket_visible(t.tenant_id,$3,t.department,t.requester_id,t.id) AND ($2=FALSE OR requester_id=$3) AND ($4=0 OR id<$4)
+AND ($8<>'' OR NOT $7 OR NOT EXISTS(SELECT 1 FROM ticket_queue_hidden h WHERE h.tenant_id=t.tenant_id AND h.ticket_id=t.id AND h.operator_id=$6 AND NOT EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND m.role='employee' AND m.source_key<>'initial' AND m.id>h.last_employee_message_id)))
+AND ($8='' OR ($10::bigint>0 AND t.id=$10) OR ($10::bigint=0 AND (translate(concat_ws(E'\n',user_email,subject,raw_text,extracted_summary,operator_reply,` + ticketRequesterEmailSQL + `),'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9 OR EXISTS(SELECT 1 FROM ticket_messages m WHERE m.tenant_id=t.tenant_id AND m.ticket_id=t.id AND translate(m.body,'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯё','абвгдеежзийклмнопрстуфхцчшщъыьэюяе') ILIKE $9))))
+AND ($11='' OR (` + ticketDisplayStatusSQL + `)=$11)
 ORDER BY id DESC LIMIT $5`
 
-	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1)
+	reader := webDialogueActor(r.Context())
+	rows, err := h.db.Query(r.Context(), query, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context()), before, limit+1, reader.id, reader.operator, search, pattern, searchID, queueStatus)
 	if err != nil {
 		h.logger.Error("failed to list tickets")
 		writeError(w, http.StatusInternalServerError, "failed to list tickets")
@@ -694,7 +980,7 @@ ORDER BY id DESC LIMIT $5`
 		if err := rows.Scan(
 			&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
 			&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes,
-			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
+			&ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.UnreadEmployeeMessage, &ticket.DisplayStatus, &ticket.RequesterEmail,
 		); err != nil {
 			h.logger.Error("failed to scan ticket")
 			writeError(w, http.StatusInternalServerError, "failed to read tickets")
@@ -721,13 +1007,14 @@ func (h *TicketsHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid ticket id")
 		return
 	}
-	const query = `SELECT id, user_email, COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
-       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status
-FROM tickets WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
+	const query = `SELECT id, COALESCE(user_email,''), COALESCE(channel, 'web'), COALESCE(subject, ''), COALESCE(callback_url, ''), raw_text, department, priority, extracted_summary,
+       rag_answer, operator_reply, pii_masked_count, pii_masked_types, status, created_at, delivery_status,
+COALESCE((SELECT a.details FROM audit_logs a WHERE a.tenant_id=t.tenant_id AND a.ticket_id=t.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=t.created_at ORDER BY a.created_at DESC,a.id DESC LIMIT 1),''), ` + ticketDisplayStatusSQL + `, ` + ticketRequesterEmailSQL + `, first_response_due_at,resolution_due_at
+FROM tickets t WHERE id = $1 AND tenant_id=$2 AND ($3=FALSE OR requester_id=$4)`
 	var ticket models.Ticket
 	err := h.db.QueryRow(r.Context(), query, id, security.TenantID(r.Context()), security.IsEmployee(r.Context()), security.RequesterID(r.Context())).Scan(
 		&ticket.ID, &ticket.UserEmail, &ticket.Channel, &ticket.Subject, &ticket.CallbackURL, &ticket.RawText, &ticket.Department,
-		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus,
+		&ticket.Priority, &ticket.ExtractedSummary, &ticket.RAGAnswer, &ticket.OperatorReply, &ticket.PIIMaskedCount, &ticket.PIIMaskedTypes, &ticket.Status, &ticket.CreatedAt, &ticket.DeliveryStatus, &ticket.ClosureReason, &ticket.DisplayStatus, &ticket.RequesterEmail, &ticket.FirstResponseDueAt, &ticket.ResolutionDueAt,
 	)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "ticket not found")
@@ -746,4 +1033,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func incompleteTicketForm(err error) bool {
+	var pgerr *pgconn.PgError
+	return errors.As(err, &pgerr) && pgerr.ConstraintName == "ticket_form_complete"
 }

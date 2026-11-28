@@ -10,7 +10,7 @@ import (
 )
 
 func TestOrganizationStartersLoadWithTheirDepartments(t *testing.T) {
-	for _, kind := range []string{"education", "bakery", "bank", "other"} {
+	for _, kind := range []string{"education", "bakery", "bank", "other", "financial_university", "it_company", "manufacturing", "retail", "medical", "logistics", "blank"} {
 		t.Run(kind, func(t *testing.T) {
 			template, ok := settings.Organization(kind)
 			if !ok {

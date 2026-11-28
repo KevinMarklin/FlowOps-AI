@@ -26,7 +26,7 @@ func scanBotTicket(row interface{ Scan(...any) error }) (models.Ticket, error) {
 }
 
 func (h *TicketsHandler) BotTickets(ctx context.Context, sender string, before int) ([]models.Ticket, error) {
-	if !validTelegramSender(sender) || before < 0 {
+	if security.BotSenderChannel(sender) == "" || before < 0 {
 		return nil, pgx.ErrNoRows
 	}
 	ctx, err := security.BotContext(ctx, h.db, sender)
@@ -50,14 +50,11 @@ func (h *TicketsHandler) BotTickets(ctx context.Context, sender string, before i
 }
 
 func (h *TicketsHandler) BotTicket(ctx context.Context, sender string, id int) (models.Ticket, error) {
-	if !validTelegramSender(sender) || id <= 0 {
-		return models.Ticket{}, pgx.ErrNoRows
-	}
-	ctx, err := security.BotContext(ctx, h.db, sender)
+	linked, actor, err := h.botDialogueActor(ctx, sender)
 	if err != nil {
 		return models.Ticket{}, err
 	}
-	return scanBotTicket(h.db.QueryRow(ctx, `SELECT `+botTicketColumns+` FROM tickets WHERE tenant_id=$1 AND (($4<>'' AND requester_id=$4) OR ($4='' AND channel='bot' AND user_email=$2 AND requester_id='')) AND id=$3`, security.TenantID(ctx), sender, id, security.RequesterID(ctx)))
+	return h.readDialogue(linked, id, actor, 0)
 }
 
 func (h *TicketsHandler) BotFeedback(ctx context.Context, sender string, id int, resolved bool) (models.Ticket, error) {
@@ -73,7 +70,7 @@ func (h *TicketsHandler) BotFeedback(ctx context.Context, sender string, id int,
 	if resolved {
 		status = "auto_resolved"
 	}
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.beginTicketTx(ctx)
 	if err != nil {
 		return models.Ticket{}, err
 	}

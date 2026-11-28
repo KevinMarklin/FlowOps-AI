@@ -67,6 +67,9 @@ func (c *Callbacks) Validate(endpoint string) error {
 }
 
 func (c *Callbacks) Post(ctx context.Context, endpoint string, body io.Reader) error {
+	return c.PostWithKey(ctx, endpoint, body, "")
+}
+func (c *Callbacks) PostWithKey(ctx context.Context, endpoint string, body io.Reader, key string) error {
 	if endpoint == "" || c.Validate(endpoint) != nil {
 		return ErrCallbackDenied
 	}
@@ -75,6 +78,9 @@ func (c *Callbacks) Post(ctx context.Context, endpoint string, body io.Reader) e
 		return ErrCallbackDenied
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return errors.New("callback delivery failed")

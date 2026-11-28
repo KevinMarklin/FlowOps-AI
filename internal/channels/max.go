@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,11 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"flowops-ai/internal/intake"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
 )
 
 type maxUpdate struct {
+	Callback *struct {
+		ID      string `json:"callback_id"`
+		Payload string `json:"payload"`
+		User    struct {
+			UserID int64 `json:"user_id"`
+		} `json:"user"`
+	} `json:"callback"`
 	UpdateType string `json:"update_type"`
 	Marker     int64  `json:"marker"`
 	User       struct {
@@ -81,18 +90,94 @@ func sendMaxMessage(ctx context.Context, cfg Config, targetType, targetID, text 
 	return nil
 }
 
+func sendMaxScreen(ctx context.Context, cfg Config, userID int64, screen telegramScreen) error {
+	buttons := [][]map[string]string{}
+	for _, row := range screen.Buttons {
+		converted := []map[string]string{}
+		for _, b := range row {
+			converted = append(converted, map[string]string{"type": "callback", "text": b.Text, "payload": b.Data})
+		}
+		buttons = append(buttons, converted)
+	}
+	text := telegramTextPages(screen.Text, 3500)[0]
+	body := map[string]any{"text": FormatMAXMarkdown(text), "attachments": []any{map[string]any{"type": "inline_keyboard", "payload": map[string]any{"buttons": buttons}}}}
+	resp, err := maxRequest(ctx, cfg, http.MethodPost, "/messages", url.Values{"user_id": {strconv.FormatInt(userID, 10)}}, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("MAX screen returned %s", resp.Status)
+	}
+	return nil
+}
+
+func handleMaxCallback(ctx context.Context, cfg Config, update maxUpdate, service EmployeeTickets) error {
+	if update.Callback == nil || update.Callback.User.UserID <= 0 || strings.EqualFold(update.Message.Recipient.ChatType, "chat") || strings.EqualFold(update.Message.Recipient.ChatType, "channel") {
+		return nil
+	}
+	callback := update.Callback
+	user := callback.User.UserID
+	sender := fmt.Sprintf("max:%d", user)
+	resp, err := maxRequest(ctx, cfg, http.MethodPost, "/answers", url.Values{"callback_id": {callback.ID}}, map[string]string{"notification": "Принято"})
+	if err == nil {
+		resp.Body.Close()
+	}
+	action := callback.Payload
+	if len(action) > 128 {
+		return nil
+	}
+	if strings.HasPrefix(action, "emp:rate:") {
+		parts := strings.Split(action, ":")
+		if len(parts) != 5 {
+			return nil
+		}
+		id, e1 := strconv.Atoi(parts[2])
+		message, e2 := strconv.ParseInt(parts[3], 10, 64)
+		score, e3 := strconv.Atoi(parts[4])
+		dialogue, ok := service.(EmployeeDialogue)
+		if !ok || e1 != nil || e2 != nil || e3 != nil {
+			return nil
+		}
+		if err = dialogue.BotRate(ctx, sender, id, message, score); err != nil {
+			return sendMaxMessage(ctx, cfg, "user_id", strconv.FormatInt(user, 10), "Не удалось оценить ответ. Откройте своё обращение заново.")
+		}
+		action = fmt.Sprintf("emp:ticket:%d", id)
+	}
+	if action == "emp:new" {
+		if dialogue, ok := service.(EmployeeDialogue); ok {
+			if err = dialogue.BotActivate(ctx, sender, 0); err != nil {
+				return err
+			}
+		}
+	}
+	return sendMaxScreen(ctx, cfg, user, employeeAction(ctx, sender, action, service, cfg.BuilderConfig))
+}
+
 func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface {
 	Info(string, ...any)
 	Error(string, ...any)
 }, services ...EmployeeTickets) {
 	ctx = security.WithTenantID(ctx, cfg.TenantID)
 	cfg.updateStatus("max", "starting", "")
+	var employeeTickets EmployeeTickets
+	if len(services) > 0 {
+		employeeTickets = services[0]
+	}
 	drafts := newIntakeDrafts()
+	if planner, ok := employeeTickets.(interface {
+		BotIntakePlan(context.Context, string, string, intake.Details) intake.Plan
+	}); ok {
+		drafts.planFn = func(chat int64, message string, details intake.Details) intake.Plan {
+			return planner.BotIntakePlan(ctx, fmt.Sprintf("max:%d", chat), message, details)
+		}
+	}
 	receipts := newMessageReceipts()
 	var marker int64
 	for ctx.Err() == nil {
 		drafts.purgeExpired()
-		query := url.Values{"timeout": {"30"}, "types": {"message_created,bot_started"}}
+		query := url.Values{"timeout": {"30"}, "types": {"message_created,bot_started,message_callback"}}
 		if marker > 0 {
 			query.Set("marker", strconv.FormatInt(marker, 10))
 		}
@@ -118,6 +203,19 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 					for _, update := range updates {
 						if update.Marker > marker {
 							marker = update.Marker
+						}
+						if update.UpdateType == "message_callback" {
+							var service EmployeeTickets
+							if len(services) > 0 {
+								service = services[0]
+							}
+							if update.Callback != nil {
+								drafts.close(update.Callback.User.UserID)
+							}
+							if err := handleMaxCallback(ctx, cfg, update, service); err != nil {
+								logger.Error("MAX callback failed", "error", "operation failed")
+							}
+							continue
 						}
 						if update.UpdateType == "bot_started" {
 							userID := update.User.UserID
@@ -208,6 +306,22 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 							continue
 						}
 						if privateUser {
+							if text == "/new" {
+								if dialogue, ok := service.(EmployeeDialogue); ok {
+									_ = dialogue.BotActivate(ctx, sender, 0)
+								}
+								drafts.close(userID)
+								_ = sendMaxScreen(ctx, cfg, userID, employeeAction(ctx, sender, "emp:new", service, cfg.BuilderConfig))
+								continue
+							}
+							if text == "/menu" || strings.HasPrefix(text, "/ticket ") {
+								action := "emp:menu"
+								if strings.HasPrefix(text, "/ticket ") {
+									action = "emp:ticket:" + strings.TrimSpace(strings.TrimPrefix(text, "/ticket "))
+								}
+								_ = sendMaxScreen(ctx, cfg, userID, employeeAction(ctx, sender, action, service, cfg.BuilderConfig))
+								continue
+							}
 							if drafts.expired(userID) {
 								drafts.close(userID)
 								_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Время уточнения истекло. Опишите проблему заново.")
@@ -219,6 +333,15 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 								continue
 							}
 							if id, resolved, handled := maxFeedbackCommand(text); handled {
+								if dialogue, ok := service.(EmployeeDialogue); ok {
+									ticket, err := dialogue.BotDecide(ctx, sender, id, resolved)
+									if err == nil {
+										_ = sendMaxScreen(ctx, cfg, userID, employeeTicketScreen(ticket, 0))
+									} else {
+										_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Не удалось изменить обращение. Проверьте номер и состояние.")
+									}
+									continue
+								}
 								reply := "Не удалось обновить обращение. Проверьте номер: доступны только ваши обращения."
 								if service != nil {
 									if _, err := service.BotFeedback(ctx, sender, id, resolved); err == nil {
@@ -241,6 +364,20 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						if update.Message.Body.MID != "" {
 							request.IdempotencyKey = "max-message:" + update.Message.Body.MID
 						}
+						if privateUser && drafts.get(userID) == nil {
+							if dialogue, ok := service.(EmployeeDialogue); ok {
+								ticket, err := dialogue.BotContinue(ctx, sender, text, request.IdempotencyKey)
+								if err == nil {
+									_ = sendMaxScreen(ctx, cfg, userID, employeeDialogueUpdate(ticket))
+									continue
+								}
+								if !errors.Is(err, ErrNoActiveDialogue) {
+									receipts.forget(receiptKey)
+									_ = sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), "Не удалось добавить сообщение. Проверьте, что обращение открыто, и повторите отправку.")
+									continue
+								}
+							}
+						}
 						var draft *intakeDraft
 						if privateUser {
 							var question string
@@ -258,6 +395,8 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 								request.IdempotencyKey = draft.Key
 							}
 						}
+						// Every consumed clarification ID belongs to the same creation.
+						request.BotMessageKeys = intakeMessageKeys(draft, request.IdempotencyKey)
 						result, ingestErr := ingest(ctx, request)
 						if ingestErr != nil {
 							receipts.forget(receiptKey)
@@ -268,9 +407,19 @@ func runMax(ctx context.Context, cfg Config, ingest IngestFunc, logger interface
 						if privateUser {
 							drafts.close(userID)
 						}
+						if privateUser {
+							if dialogue, ok := service.(EmployeeDialogue); ok {
+								if err := dialogue.BotActivate(ctx, sender, result.TicketID); err == nil {
+									if ticket, err := service.BotTicket(ctx, sender, result.TicketID); err == nil {
+										_ = sendMaxScreen(ctx, cfg, userID, employeeTicketScreen(ticket, 0))
+										continue
+									}
+								}
+							}
+						}
 						reply := intakeReceipt(draft) + result.ReplyText
 						if privateUser && result.AutoReplied && result.Status == "awaiting_confirmation" {
-							reply += fmt.Sprintf("\n\nПомогло: /yes %d\nНужен специалист: /no %d", result.TicketID, result.TicketID)
+							reply += fmt.Sprintf("\n\nВопрос решён: /yes %d\nНе помогло: /no %d", result.TicketID, result.TicketID)
 						}
 						if sendErr := sendMaxMessage(ctx, cfg, targetType, strconv.FormatInt(targetID, 10), reply); sendErr != nil {
 							LogOutgoing(logger, "bot", sender, result.TicketID, "AI", sendErr)

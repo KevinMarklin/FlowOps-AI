@@ -28,7 +28,7 @@ func TestAnalyzeVPNSummaryAndRAGSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := New(base).Analyze(context.Background(), "Срочно! Не работает корпоративный VPN, ошибка 809.")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Срочно! Не работает корпоративный VPN, ошибка 809.")
 	if result.Department != "IT" || result.Priority != "high" {
 		t.Fatalf("unexpected classification: %#v", result)
 	}
@@ -50,7 +50,7 @@ func TestAnalyzeUnknownTopicHasNoRAGAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := New(base).Analyze(context.Background(), "Упал продакшен-кластер Kubernetes после деплоя, нужна помощь девопса.")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Упал продакшен-кластер Kubernetes после деплоя, нужна помощь девопса.")
 	if result.RAGAnswer != nil || result.Department != "Unassigned" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
@@ -79,7 +79,7 @@ func TestAnalyzeWithGeminiMockAndTrailingSlash(t *testing.T) {
 	t.Setenv("AI_API_KEY", "test-key")
 	t.Setenv("AI_BASE_URL", server.URL+"/v1/")
 	t.Setenv("AI_MODEL", "gemini-2.5-flash")
-	result := New(base).Analyze(context.Background(), "Не работает VPN, ошибка 809")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Не работает VPN, ошибка 809")
 	if result.Department != "IT" || result.Priority != "high" || result.RAGAnswer == nil {
 		t.Fatalf("unexpected result: %#v", result)
 	}
@@ -98,7 +98,7 @@ func TestAnalyzeFallsBackAfterNetworkError(t *testing.T) {
 	t.Setenv("AI_API_KEY", "test-key")
 	t.Setenv("AI_BASE_URL", "http://127.0.0.1:1/v1")
 	t.Setenv("AI_MODEL", "gemini-2.5-flash")
-	result := New(base).Analyze(context.Background(), "Срочно, не работает VPN, ошибка 809")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Срочно, не работает VPN, ошибка 809")
 	if result.Department != "IT" || result.RAGAnswer == nil {
 		t.Fatalf("expected heuristic fallback, got %#v", result)
 	}
@@ -122,7 +122,7 @@ func TestLLMEmptyRAGIsNotReplacedByUnrelatedHeuristicDocument(t *testing.T) {
 	t.Setenv("AI_API_KEY", "test-key")
 	t.Setenv("AI_BASE_URL", server.URL)
 	t.Setenv("AI_MODEL", "gemini-2.5-flash")
-	result := New(base).Analyze(context.Background(), "Не открывается мобильный банк на Android, ошибка сертификата SSL_PINNING_ERR")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Не открывается мобильный банк на Android, ошибка сертификата SSL_PINNING_ERR")
 	if result.RAGAnswer != nil {
 		t.Fatalf("unrelated RAG answer returned: %v", result.RAGAnswer)
 	}
@@ -156,7 +156,7 @@ func TestHeuristicRoutesAllDepartmentsAndLeavesUnknownGeneral(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result := New(base).Analyze(context.Background(), test.text)
+			result := newLegacyAnalyzer(base).Analyze(context.Background(), test.text)
 			if result.Department != test.department || result.Priority != test.priority {
 				t.Fatalf("got %#v", result)
 			}
@@ -171,7 +171,7 @@ func TestHeuristicRoutesBillingSeparatelyFromIT(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("AI_API_KEY", "")
-	result := New(base).Analyze(context.Background(), "С корпоративной карты дважды списалась оплата за тариф Pro, верните деньги на баланс")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "С корпоративной карты дважды списалась оплата за тариф Pro, верните деньги на баланс")
 	if result.Department != "Billing" || result.Priority != "medium" {
 		t.Fatalf("unexpected billing result: %#v", result)
 	}
@@ -210,7 +210,7 @@ func TestGoogleNativeRESTDiscoversFlashModelAfter404(t *testing.T) {
 	t.Setenv("AI_BASE_URL", "")
 	t.Setenv("AI_GOOGLE_BASE_URL", server.URL+"/v1beta")
 	t.Setenv("AI_MODEL", "gemini-3.8-flash")
-	result := New(base).Analyze(context.Background(), "Дважды списали оплату за тариф")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Дважды списали оплату за тариф")
 	if result.Department != "Billing" || len(calls) != 3 {
 		t.Fatalf("unexpected result/calls: %#v %v", result, calls)
 	}
@@ -253,7 +253,7 @@ func TestAnalyzeSendsMaskedTextToGeminiAndUnmasksSummary(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("AI_GOOGLE_BASE_URL", server.URL)
-	result := New(base).Analyze(context.Background(), "Пишите ivanov@example.ru, телефон +7 999 123-45-67")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Пишите ivanov@example.ru, телефон +7 999 123-45-67")
 	if !strings.Contains(result.ExtractedSummary, "ivanov@example.ru") || !strings.Contains(result.ExtractedSummary, "+7 999 123-45-67") || result.PIIMaskedCount != 2 {
 		t.Fatalf("PII was not restored or counted: %#v", result)
 	}
@@ -283,7 +283,7 @@ func TestAnalyzeDoesNotSendSenderEmailToGemini(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("AI_GOOGLE_BASE_URL", server.URL)
-	result := New(base).Analyze(context.Background(), "Вопрос от sender.private@example.ru")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Вопрос от sender.private@example.ru")
 	if !strings.Contains(result.ExtractedSummary, "sender.private@example.ru") || result.PIIMaskedCount != 1 {
 		t.Fatalf("expected sender value restored for display: %#v", result)
 	}
@@ -298,7 +298,7 @@ func TestHeuristicFallbackReturnsPIIMetrics(t *testing.T) {
 	t.Setenv("GIGACHAT_AUTH_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("AI_API_KEY", "")
-	result := New(base).Analyze(context.Background(), "Иванов Иван Иванович звонит по номеру 8 (999) 123-45-67")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Иванов Иван Иванович звонит по номеру 8 (999) 123-45-67")
 	if result.PIIMaskedCount != 0 || len(result.PIIMaskedTypes) < 1 || !strings.Contains(strings.Join(result.PIIMaskedTypes, ","), "ФИО") || !strings.Contains(result.ExtractedSummary, "Иванов Иван Иванович") {
 		t.Fatalf("heuristic path did not return restored PII metrics: %#v", result)
 	}
@@ -369,7 +369,7 @@ func TestGigaChatOAuthCachingAndCompletionParsing(t *testing.T) {
 	t.Setenv("GIGACHAT_INSECURE_TLS", "false")
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("AI_API_KEY", "")
-	a := New(base)
+	a := newLegacyAnalyzer(base)
 	for i := 0; i < 2; i++ {
 		result := a.Analyze(context.Background(), "Заявка от ivanov@example.ru, телефон +7 (999) 123-45-67")
 		if result.Department != "Billing" || result.Priority != "medium" || !strings.Contains(result.ExtractedSummary, "ivanov@example.ru") || !strings.Contains(result.ExtractedSummary, "+7 (999) 123-45-67") || result.PIIMaskedCount != 2 || result.RAGAnswer != nil {
@@ -412,7 +412,7 @@ func TestGigaChatFailureFallsBackToGemini(t *testing.T) {
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("AI_GOOGLE_BASE_URL", geminiServer.URL)
 	t.Setenv("AI_MODEL", "gemini-test")
-	result := New(base).Analyze(context.Background(), "Дважды списана оплата за тариф")
+	result := newLegacyAnalyzer(base).Analyze(context.Background(), "Дважды списана оплата за тариф")
 	if result.Department != "Billing" || result.ExtractedSummary != "Оплата тарифа" {
 		t.Fatalf("expected Gemini fallback, got %#v", result)
 	}
@@ -438,11 +438,11 @@ func TestLiveGoogleAIStudioLLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := New(base).analyzeWithAI(context.Background(), "Срочно! Не работает корпоративный VPN, ошибка 809.", settings.DefaultBuilderConfig())
+	result, err := newLegacyAnalyzer(base).analyzeWithAI(context.Background(), "Срочно! Не работает корпоративный VPN, ошибка 809.", settings.DefaultBuilderConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !New(base).valid(result) {
+	if !newLegacyAnalyzer(base).valid(result) {
 		t.Fatalf("live LLM returned invalid result: %#v", result)
 	}
 }

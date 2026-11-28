@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"flowops-ai/internal/knowledge"
@@ -18,8 +19,11 @@ import (
 )
 
 type KnowledgeHandler struct {
-	base *knowledge.Base
-	db   *pgxpool.Pool
+	base            *knowledge.Base
+	db              *pgxpool.Pool
+	governed        bool
+	catalogMu       sync.Mutex
+	catalogImported map[string]bool
 }
 
 func NewKnowledgeHandler(base *knowledge.Base, db ...*pgxpool.Pool) *KnowledgeHandler {
@@ -29,6 +33,9 @@ func NewKnowledgeHandler(base *knowledge.Base, db ...*pgxpool.Pool) *KnowledgeHa
 		base.SetAuditTTLCallback(func(_ string) {
 			handler.audit(context.Background(), "TTL_PURGED", "system", nil, "Автоматически удалён временный регламент")
 		})
+	}
+	if handler.db != nil {
+		handler.configureManagedKnowledge()
 	}
 	return handler
 }
@@ -110,6 +117,15 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		value := time.Now().Add(time.Duration(ttl) * time.Second)
 		expiresAt = &value
 	}
+	if h.governed {
+		article, err := h.createManagedArticle(r.Context(), ArticleDocument{Title: request.Title, Department: request.Department, Keywords: request.Keywords, Content: request.Content, ReviewDue: expiresAt, Sources: []KnowledgeSource{{Type: "manual", ID: "legacy-form"}}})
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, 201, map[string]any{"filename": "kb-managed-" + article.ID + ".md", "article_id": article.ID, "state": "draft", "title": article.Document.Title})
+		return
+	}
 	document, err := base.AddWithOptions(request.Department, request.Title, request.Keywords, request.Content, request.Kind, request.IncidentState, expiresAt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -121,6 +137,14 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if h.governed {
+		writeError(w, 409, "Редактируйте регламент через единый каталог и согласование")
+		return
+	}
+	if strings.HasPrefix(filepath.Base(r.PathValue("filename")), "kb-managed-") {
+		writeError(w, 409, "Измените статью через согласование базы знаний")
+		return
+	}
 	base, err := h.tenantBase(r)
 	if err != nil {
 		writeError(w, 500, "failed to load tenant knowledge base")
@@ -187,6 +211,14 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if h.governed {
+		writeError(w, 409, "Архивируйте регламент через единый каталог и согласование")
+		return
+	}
+	if strings.HasPrefix(filepath.Base(r.PathValue("filename")), "kb-managed-") {
+		writeError(w, 409, "Архивируйте статью через согласование базы знаний")
+		return
+	}
 	base, err := h.tenantBase(r)
 	if err != nil {
 		writeError(w, 500, "failed to load tenant knowledge base")

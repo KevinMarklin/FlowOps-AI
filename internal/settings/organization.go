@@ -10,13 +10,23 @@ type StarterDocument struct {
 	Slug, Department, Title, Keywords, Content string
 }
 
+type TemplateSource struct {
+	URL       string `json:"url"`
+	Topic     string `json:"topic"`
+	CheckedAt string `json:"checked_at"`
+}
+
 type OrganizationTemplate struct {
-	Type      string            `json:"type"`
-	Name      string            `json:"name"`
-	Heading   string            `json:"heading"`
-	Examples  []string          `json:"examples"`
-	Builder   BuilderConfig     `json:"-"`
-	Documents []StarterDocument `json:"-"`
+	ExampleTitles []string          `json:"example_titles,omitempty"`
+	Demonstration bool              `json:"demonstration"`
+	Notice        string            `json:"notice,omitempty"`
+	Sources       []TemplateSource  `json:"sources,omitempty"`
+	Type          string            `json:"type"`
+	Name          string            `json:"name"`
+	Heading       string            `json:"heading"`
+	Examples      []string          `json:"examples"`
+	Builder       BuilderConfig     `json:"-"`
+	Documents     []StarterDocument `json:"-"`
 }
 
 // Organization returns a fresh template. Existing workspaces are never reseeded.
@@ -66,7 +76,7 @@ func Organization(kind string) (OrganizationTemplate, bool) {
 			{"equipment", "Facilities", "Оборудование на рабочем месте", "оборудование, рабочее место, неисправность", "Укажите расположение и неисправность оборудования. При признаках опасности прекратите использование и сообщите ответственному. Не выполняйте самостоятельный ремонт. Передайте специалисту сведения о влиянии на работу."},
 		}
 	default:
-		return OrganizationTemplate{}, false
+		return additionalOrganization(kind)
 	}
 	t.Builder.StartTemplate = "Здравствуйте! Это служба поддержки: " + t.Name + ". Опишите вопрос — проверим инструкции или передадим обращение специалисту. Не отправляйте пароли и конфиденциальные данные."
 	return t, true

@@ -41,7 +41,7 @@ func (h *TicketsHandler) Work(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid JSON body")
 		return
 	}
-	tx, err := h.db.Begin(r.Context())
+	tx, err := h.beginTicketTx(r.Context())
 	if err != nil {
 		writeError(w, 503, "Не удалось учесть время")
 		return

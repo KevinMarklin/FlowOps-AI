@@ -35,22 +35,16 @@ func providerAllowed(name string) bool {
 }
 
 func (a *Analyzer) approvedProviders() []approvedProvider {
-	var providers []approvedProvider
-	if providerAllowed("yandex") && strings.TrimSpace(os.Getenv("YANDEX_API_KEY")) != "" {
-		providers = append(providers, approvedProvider{"Alice AI (Yandex AI Studio)", func() string { _, model, _ := yandexConfig(); return model }, a.analyzeWithYandex})
+	if a.providerLoader != nil {
+		return a.providerLoader()
 	}
-	giga := loadGigaChatConfig()
-	if giga.authKey != "" && !giga.insecure && providerAllowed("gigachat") {
-		providers = append(providers, approvedProvider{"GigaChat (РФ контур)", func() string { return giga.model }, a.analyzeWithGigaChat})
+	if !providerAllowed("yandex") || strings.TrimSpace(os.Getenv("YANDEX_API_KEY")) == "" {
+		return nil
 	}
-	if key := googleAPIKey(); key != "" && providerAllowed("gemini") {
-		providers = append(providers, approvedProvider{"Gemini", a.currentGoogleModel, func(ctx context.Context, text string, config settings.BuilderConfig) (Result, error) {
-			return a.analyzeWithGoogle(ctx, text, key, config)
-		}})
-	} else if key == "" && os.Getenv("AI_API_KEY") != "" && providerAllowed("compatible") {
-		providers = append(providers, approvedProvider{"AI API", func() string { _, model := aiConfig(); return model }, a.analyzeWithAI})
+	if _, _, err := yandexConfig(); err != nil {
+		return nil
 	}
-	return providers
+	return []approvedProvider{{"Yandex AI Studio", func() string { _, model, _ := yandexConfig(); return model }, a.analyzeWithYandex}}
 }
 
 var sensitiveTopic = regexp.MustCompile(`(?i)(зарплат|оклад|выплат|плат[её]ж|оплат|финанс|банков|паспорт|снилс|персональн|сч[её]т|salary|payroll|payment|bank|account|passport|medical)`)

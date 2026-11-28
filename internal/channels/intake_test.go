@@ -97,3 +97,45 @@ func TestBotDraftRetriesKeepOriginalAndRejectCommandsAsData(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramVPNClarificationPreservesOriginalRequest(t *testing.T) {
+	drafts := newTelegramDrafts()
+	drafts.open(17)
+	var saved []models.IngestRequest
+	var screen string
+	ingest := func(_ context.Context, r models.IngestRequest) (IngestResult, error) {
+		saved = append(saved, r)
+		return IngestResult{TicketID: 42, Status: "assigned_to_operator"}, nil
+	}
+	command := func(_ context.Context, method string, value any) error {
+		if method == "sendMessage" {
+			screen = value.(map[string]any)["text"].(string)
+		}
+		return nil
+	}
+	send := func(text string, id int64) {
+		u := decodeTelegramUpdate(t, fmt.Sprintf(`{"message":{"message_id":%d,"text":%q,"from":{"id":17},"chat":{"id":17,"type":"private"}}}`, id, text))
+		if err := handleTelegramEmployee(context.Background(), u, nil, nil, ingest, command, drafts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("Не работает VPN", 401)
+	if len(saved) != 0 || !strings.Contains(screen, "Что именно происходит") {
+		t.Fatalf("missing initial VPN clarification: %s", screen)
+	}
+	send("Ошибка 809", 402)
+	if len(saved) != 0 || !strings.Contains(screen, "Что уже проверили") {
+		t.Fatalf("missing attempted-actions question: %s", screen)
+	}
+	send("Сеть проверил, перезапуск не помог", 403)
+	if len(saved) != 1 {
+		t.Fatalf("wanted one eventual request, got %d", len(saved))
+	}
+	r := saved[0]
+	if r.Intake == nil || r.Message != "Не работает VPN" || r.Intake.Symptom != "Ошибка 809" || r.Intake.Tried != "Сеть проверил, перезапуск не помог" || r.IdempotencyKey != "tg-message:401" || r.Sender != "tg:17" {
+		t.Fatalf("original request or clarification lost: %+v", r)
+	}
+	if drafts.waiting(17) || drafts.intake.get(17) != nil {
+		t.Fatal("completed draft retained")
+	}
+}

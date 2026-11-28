@@ -148,12 +148,12 @@ func TestTelegramCallbacksUseVerifiedPrivateSenderAndAcknowledgeFirst(t *testing
 }
 
 func TestTelegramTextCreatesConfirmedTicketAndActionButtons(t *testing.T) {
-	update := decodeTelegramUpdate(t, `{"message":{"text":"Не работает VPN","from":{"id":17},"chat":{"id":17,"type":"private"}}}`)
+	update := decodeTelegramUpdate(t, `{"message":{"text":"Не работает VPN, ошибка 809, сеть проверил","from":{"id":17},"chat":{"id":17,"type":"private"}}}`)
 	drafts := newTelegramDrafts()
 	drafts.open(17)
 	var sent map[string]any
 	err := handleTelegramEmployee(context.Background(), update, nil, nil, func(_ context.Context, r models.IngestRequest) (IngestResult, error) {
-		if r.Sender != "tg:17" || r.Channel != "bot" || !r.RequireConfirmation || r.Message != "Не работает VPN" {
+		if r.Sender != "tg:17" || r.Channel != "bot" || !r.RequireConfirmation || r.Message != "Не работает VPN, ошибка 809, сеть проверил" {
 			t.Fatal("incorrect ingest identity")
 		}
 		return IngestResult{TicketID: 42, Status: "awaiting_confirmation", AutoReplied: true, Department: "IT", Priority: "medium", ReplyText: "Проверьте подключение."}, nil
@@ -216,7 +216,7 @@ func TestEmployeeMenuPaginationFeedbackAndEscaping(t *testing.T) {
 	if strings.Contains(body["text"].(string), "<script>") {
 		t.Fatal("untrusted markup not escaped")
 	}
-	for _, status := range []string{"assigned_to_operator", "auto_resolved", "resolved", "closed"} {
+	for _, status := range []string{"auto_resolved", "closed"} {
 		service.ticket.Status = status
 		s := employeeTicketScreen(service.ticket, 0)
 		for _, row := range s.Buttons {
@@ -274,7 +274,7 @@ func TestTelegramReplyUsesRealClientAndRejectsAPIFailure(t *testing.T) {
 		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.ChatID != 17 || payload.Mode != "HTML" || len(payload.Markup.Buttons) != 3 || payload.Markup.Buttons[0][0].Data != "emp:ticket:42" {
+		if payload.ChatID != 17 || payload.Mode != "HTML" || len(payload.Markup.Buttons) != 4 || payload.Markup.Buttons[0][0].Data != "emp:ticket:42" || payload.Markup.Buttons[2][1].Text != "Не помогло" {
 			t.Fatal("employee keyboard not sent through Telegram transport")
 		}
 		if strings.Contains(payload.Text, "<script>") {

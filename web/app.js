@@ -8,7 +8,9 @@
     currentTicketId: null,
     employeePoll: null,
     operatorLoading: false,
+    queueEpoch: 0,
     replyDrafts: new Map(),
+    ticketRowsOpen: new Set(),
     historyTickets: [],
     user: null
   };
@@ -50,19 +52,31 @@
   let settingsRefresh = null;
   const roleNames = { admin: 'Администратор', operator: 'Оператор', analyst: 'Аналитик', employee: 'Сотрудник' };
   const roleTabs = {
-    admin: ['admin', 'operator', 'analytics', 'knowledge', 'builder', 'channels', 'employee'],
-    operator: ['operator', 'knowledge', 'employee'],
-    analyst: ['analytics'],
-    employee: ['employee']
+    admin: ['admin', 'one-c', 'workflows','workflow-tasks','assets','process-analytics','reports', 'notifications', 'governance', 'structure', 'operator', 'analytics', 'optimization', 'knowledge', 'knowledge-review', 'builder', 'channels', 'platform', 'employee'],
+    operator: ['operator','workflow-tasks', 'notifications', 'knowledge', 'knowledge-review', 'employee'],
+    analyst: ['analytics','optimization','process-analytics','reports','workflow-tasks'],
+    employee: ['employee','workflow-tasks']
   };
-  const canTab = name => (roleTabs[state.user?.role] || []).includes(name);
+  const canTab = name => {if(!(roleTabs[state.user?.role]||[]).includes(name))return false;const p=state.user?.permissions;if(!p)return true;const required={'workflows':['automation_manage'],'assets':['units_manage'],'workflow-tasks':['ticket_view'],'process-analytics':['analytics_view'],'reports':['analytics_view','data_export'],'analytics':['analytics_view'],'structure':['units_manage'],'knowledge':['knowledge_manage'],'knowledge-review':['knowledge_manage'],'one-c':['integrations_manage'],'channels':['integrations_manage']};if(name==='governance')return ['automation_manage','ai_configure','roles_manage'].some(x=>p.includes(x));return (required[name]||[]).every(x=>p.includes(x));};
 
   function clearWorkspaceData() {
+	window.FlowOpsSupportUI?.clear();
+    window.FlowOpsPlatform?.clear();
+ window.FlowOpsGovernance?.clear();
+ window.FlowOpsOperations?.clear();
+ window.FlowOpsOneC?.clear();
+ window.FlowOpsNotifications?.clear();
+ window.FlowOpsIntakeFields?.clear();
+    window.FlowOpsAnalytics?.clear();
+    window.FlowOpsOptimization?.clear();
+    window.FlowOpsKnowledge?.clear();
+    window.FlowOpsStructure?.clear();
     $('#user-settings')?.close();
     clearPersonalCodes();
+    if ($('#settings-nav')) $('#settings-nav').open = false;
     workState = { id: null, seconds: 0, running: false, busy: false, activity: 0 };
     state.pendingTicket = null;
-    state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear();
+    state.tickets = []; state.currentTicketId = null; state.replyDrafts.clear(); state.ticketRowsOpen.clear();
     state.historyTickets = []; state.historyBefore = 0; state.operatorBefore = 0;
     ['#history-search', '#queue-search'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
     ['#priority-filter', '#department-filter', '#status-filter'].forEach(selector => { if ($(selector)) $(selector).value = ''; });
@@ -75,8 +89,16 @@
     $$('#builder input, #builder textarea').forEach(field => { field.value = ''; });
     const snippet = $('#widget-snippet-box'); if (snippet) snippet.hidden = true;
     const curl = $('#crm-curl'); if (curl) curl.textContent = '';
+    ++ticketRouteVersion; leaveTicketContent(); $('#closure-reasons')?.remove();
     const toastBox = $('#toast'); if (toastBox) { toastBox.textContent = ''; toastBox.classList.remove('show'); }
     if (initialAnalysis) $('#analysis-result')?.replaceWith(initialAnalysis.cloneNode(true));
+  }
+
+  function selectSettingsPanel(panel = 'connections') {
+    $$('#builder [data-settings-section]').forEach(section => { section.hidden = section.dataset.settingsSection !== panel; });
+    const button = $(`#settings-nav [data-settings-panel="${panel}"]`);
+    const title = $('#builder .page-heading h1');
+    if (title && button) title.textContent = button.textContent;
   }
 
   function applyRoleUI(selectDefault = true) {
@@ -97,6 +119,8 @@
     if (!canTab('analytics')) $('#metrics').replaceChildren();
     if (!canTab('knowledge')) $('#knowledge-list').replaceChildren();
     if (!canTab('admin')) { $('#members-list').replaceChildren(); $('#audit-list').replaceChildren(); $('#member-issued').replaceChildren(); }
+    const settingsNav = $('#settings-nav');
+    if (settingsNav) { settingsNav.hidden = ![...settingsNav.querySelectorAll('.tab')].some(tab=>canTab(tab.dataset.tab)); if (settingsNav.hidden) settingsNav.open = false; }
     const current = $('.tab.active');
     if (selectDefault || !current || !canTab(current.dataset.tab)) {
       const target = roleTabs[role]?.[0];
@@ -111,12 +135,16 @@
 
   let analyticsLoading = false;
   async function loadAnalytics() {
+    if(window.FlowOpsAnalytics)return window.FlowOpsAnalytics.refresh();
     if (!hasSession() || !canTab('analytics') || analyticsLoading) return;
     analyticsLoading = true;
     const status = $('#metrics-status');
     try {
       const stats = await api('/api/stats', { cache: 'no-store' });
       renderMetrics(stats);
+      let reasons = $('#closure-reasons');
+      if (!reasons) { reasons=document.createElement('section');reasons.id='closure-reasons';reasons.className='panel builder-block';$('#metrics').after(reasons); }
+      reasons.innerHTML = '<h2>Причины закрытия тикетов</h2>' + (Object.entries(stats.closure_reasons || {}).length ? '<dl class="closure-reason-counts">'+Object.entries(stats.closure_reasons).map(([reason,count])=>`<div><dt>${escapeHTML(closureReasonLabels[reason]||reason)}</dt><dd>${Number(count)||0}</dd></div>`).join('')+'</dl>' : '<p class="muted">Закрытых тикетов пока нет.</p>');
       status.textContent = `Обновлено ${new Date(stats.observed_at).toLocaleTimeString('ru-RU')} · каждые 5 с`;
       status.classList.remove('stale');
     } catch (error) {
@@ -219,6 +247,7 @@
     const gate = $('#auth-gate');
     const message = $('#auth-error');
     if (gate) gate.hidden = false;
+    document.title = 'Вход — FlowOps AI';
     document.body.classList.add('auth-required');
     if (message) {
       message.textContent = error;
@@ -235,6 +264,9 @@
     bindTabMember(state.user?.id);
     const workspaceID = $('#workspace-id-display'); if (workspaceID) workspaceID.textContent = me?.tenant_id || '';
     applyRoleUI();
+    window.FlowOpsPlatform?.refreshPublic();
+ window.FlowOpsIntakeFields?.refresh();
+ window.FlowOpsOperations?.restoreContext();
     const gate = $('#auth-gate');
     const label = $('#workspace-name-label');
     const userLabel = $('#user-name-label');
@@ -294,7 +326,7 @@
       hideAuth(me);
       setAPIStatus(true); renderChannels(['Web']); $('#api-status').textContent = 'Сервис доступен';
       $('#login-password').value = ''; $('#activation-password').value = ''; $('#activation-confirm').value = ''; $('#operator-token').value = '';
-      document.querySelector('.tab.active')?.click();
+      restoreSectionRoute();
       return true;
     } catch { showAuth('Не удалось подключиться к сервису. Проверьте соединение.'); return false; }
   }
@@ -423,13 +455,16 @@
     const industry = $('#service-industry');
     if (industry) industry.textContent = organization?.name || 'Выберите близкую ситуацию';
     const examples = organization?.examples || ['Не получается войти в рабочий сервис.', 'Не работает оборудование на рабочем месте.', 'Как запросить кадровую справку?'];
-    const titles = {
+    const titles = organization?.example_titles || {
       education: ['Оборудование в аудитории', 'Учебные сервисы', 'Справка об обучении'],
       bakery: ['Оборудование пекарни', 'Касса и продажи', 'Поставки сырья'],
       bank: ['Внутренние системы', 'Безопасность', 'Кадровые документы'],
       other: ['Доступ к сервису', 'Оборудование', 'Документы и справки']
-    }[organization?.type] || ['Доступ к сервису', 'Оборудование', 'Документы и справки'];
+    }[organization?.type] || examples.map(text=>String(text).split('.')[0].slice(0,45));
+    const exampleSection=$('#employee .service-examples');if(exampleSection)exampleSection.hidden=examples.length===0;
+    let notice=$('#organization-template-notice');if(!notice){notice=document.createElement('p');notice.id='organization-template-notice';notice.className='field-help';$('#employee .page-heading').after(notice);}notice.textContent=organization?.notice||'';notice.hidden=!notice.textContent;
     $$('.service-examples [data-demo]').forEach((button, index) => {
+      button.hidden=!examples.length;if(!examples.length)return;
       button.dataset.demo = examples[index] || examples[0];
       $('b', button).textContent = titles[index];
       $('span', button).textContent = button.dataset.demo;
@@ -538,6 +573,7 @@
     if (requestGeneration !== sessionGeneration) throw new Error('Сессия изменилась. Повторите действие.');
     if (response.status === 401) clearLocalSession();
     if (response.status === 403 && path !== '/api/v1/auth/me') await checkAPI();
+    if(response.ok && options.responseType === 'blob') return response.blob();
     const data = response.status === 204 ? null : await response.json().catch(() => ({}));
     if (response.status === 409 && data?.code === 'session_changed') {
       sessionChanged();
@@ -637,7 +673,8 @@
     const element = $('#channel-indicators');
     if (!element) return;
     const labels = { Web: 'Сайт', Telegram: 'Telegram', MAX: 'MAX', Email: 'Почта' };
-    element.innerHTML = active
+    element.hidden=!active.some(channel=>channel!=='Web');
+    element.innerHTML = active.filter(channel=>channel!=='Web')
       .map(
         channel =>
           `<span class="channel-indicator" title="Канал подключён"><i></i>${escapeHTML(labels[channel] || channel)}</span>`
@@ -669,16 +706,16 @@
     if (older) { older.hidden = tickets.length < size; older.dataset.before = tickets.length ? String(tickets[tickets.length - 1].id) : ''; }
     if (newest) newest.hidden = !cursor;
     const note = $(`#${prefix}-page-note`);
-    if (note) note.textContent = cursor ? 'Более ранние обращения. Поиск работает на этой странице.' : 'Последние обращения. Поиск работает на этой странице.';
+    if (note) note.textContent = 'Поиск по ID, слову или фразе работает по всей доступной истории.';
   }
 
   async function loadHistory() {
     if (!hasSession() || !canTab('employee')) return;
     try {
       const email = $('#email');
-      const cursor = state.historyBefore;
-      const tickets = await api(`/api/tickets?limit=20&before_id=${cursor}`);
-      if (cursor !== state.historyBefore) return;
+      const cursor = state.historyBefore, query = ($('#history-search')?.value || '').trim(), generation = sessionGeneration;
+      const tickets = await api(`/api/tickets?limit=20&before_id=${cursor}&q=${encodeURIComponent(query)}`);
+      if (cursor !== state.historyBefore || query !== ($('#history-search')?.value || '').trim() || generation !== sessionGeneration) return;
       updateTicketPaging('history', tickets, 20, cursor);
       state.tickets = tickets;
       const value = email ? email.value.trim() : '';
@@ -702,43 +739,40 @@
     if (!list) return;
     if (tickets) state.historyTickets = tickets;
     const query = ($('#history-search')?.value || '').trim().toLocaleLowerCase('ru');
-    tickets = state.historyTickets.filter(ticket => !query || `${ticket.id} ${ticket.extracted_summary || ''} ${ticket.raw_text || ''}`.toLocaleLowerCase('ru').includes(query)).slice(0, 20);
+    tickets = state.historyTickets.slice(0, 20);
     list.innerHTML = tickets.length
       ? tickets
           .map(
             ticket =>
-              `<details class="history-row" data-ticket-id="${ticket.id}"><summary><div><strong>#${ticket.id} · ${escapeHTML(ticket.extracted_summary || ticket.raw_text)}</strong><p>${channelTag(ticket.channel)} <span class="history-status">${escapeHTML(statusLabel(ticket.status))}</span></p></div>${priorityTag(ticket.priority)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${regulationMarkup(ticket.rag_answer)}</div>` : ''}${intakeContextMarkup(ticket.raw_text)}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
+              `<details class="history-row ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`history:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket)}</summary><div class="history-detail">${ticket.rag_answer ? `<b>Предложенный регламент ИИ</b><div class="rag-mini">${regulationMarkup(ticket.rag_answer)}</div>` : ''}${intakeContextMarkup(ticket.raw_text)}${ticket.operator_reply ? `<b>Ответ специалиста поддержки</b><div class="support-reply">${escapeHTML(ticket.operator_reply)}</div>` : ['closed', 'resolved'].includes(ticket.status) ? '<div class="support-reply">Ответ специалиста: тикет закрыт</div>' : '<p class="muted">Ответ специалиста пока не добавлен.</p>'}</div></details>`
           )
           .join('')
       : `<p class="muted">${query ? 'Ничего не найдено. Попробуйте другой номер или слово.' : 'Пока нет обращений. Опишите проблему в форме — ответ появится здесь.'}</p>`;
 
-    $$('.history-row', list).forEach(row =>
+    $$('.history-row', list).forEach(row => {
+      row.addEventListener('toggle',()=>{const key=`history:${row.dataset.ticketId}`;if(row.open)state.ticketRowsOpen.add(key);else state.ticketRowsOpen.delete(key);});
       on(row, 'click', event => {
         if (event.target.closest('button, a')) return;
         const ticket = state.tickets.find(item => String(item.id) === String(row.dataset.ticketId));
         if (!ticket) return;
         state.currentTicketId = ticket.id;
         renderAnalysis(ticket);
-      })
-    );
+      });
+    });
   }
 
   function renderAnalysis(ticket) {
     const result = $('#analysis-result');
     if (!result) return;
+    window.FlowOpsSupportUI?.open(ticket.id);
     const operatorReply = String(ticket.operator_reply || '').trim();
     const complete = ['auto_resolved', 'closed', 'resolved'].includes(ticket.status);
     const waiting = ticket.rag_answer && !operatorReply && !complete && ticket.status !== 'assigned_to_operator';
     const title = operatorReply ? 'Ответ специалиста' : complete ? 'Обращение решено' : waiting ? 'Нашли инструкцию для вас' : 'Передано специалисту';
-    const description = operatorReply ? 'Ответ сохранён в истории обращения.' : complete ? 'Обращение закрыто. Решение останется в истории.' : waiting ? 'Выполните действия из регламента и сообщите, помогли ли они.' : ticket.rag_answer ? 'Регламент не помог. Специалист выбранного отдела продолжит работу.' : 'Готового регламента нет. Обращение направлено в нужный отдел.';
-    const answer = operatorReply
-      ? `<section class="operator-solution"><h3>Решение</h3><p>${escapeHTML(operatorReply)}</p></section>`
-      : ticket.rag_answer
-        ? `<section class="regulation-answer"><h3>Ответ из базы знаний</h3><div class="rag-box">${regulationMarkup(ticket.rag_answer)}</div></section>${waiting ? '<div class="feedback-question">Удалось решить проблему?</div><div class="result-actions"><button type="button" class="resolve" data-feedback="true">Да, проблема решена</button><button type="button" class="escalate" data-feedback="false">Нет, нужен специалист</button></div>' : ''}`
-        : '';
-    const next = !complete && !waiting && !operatorReply ? '<p class="next-action">Ответ специалиста появится в этом обращении. Повторно отправлять вопрос не нужно.</p>' : '';
+    const description = operatorReply ? 'Ответ сохранён в переписке ниже. Продолжайте диалог или подтвердите решение.' : complete ? 'Обращение закрыто. Решение останется в истории.' : waiting ? 'Выполните действия из регламента и сообщите, помогли ли они.' : ticket.rag_answer ? 'Регламент не помог. Специалист выбранного отдела продолжит работу.' : 'Готового регламента нет. Обращение направлено в нужный отдел.';
+    const next = !complete && !waiting && !operatorReply ? '<p class="next-action">Переписка доступна ниже. Пока обращение открыто, вы можете дополнять его сообщениями.</p>' : '';
     result.classList.remove('empty');
-    result.innerHTML = `<div class="result-heading"><span class="ticket-reference">Обращение #${ticket.id}</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div><h2>${title}</h2><p class="result-description">${description}</p><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || ticket.raw_text || 'Суть не выделена')}</div><dl class="routing-details"><div><dt>Ответственный отдел</dt><dd>${departmentTag(ticket.department)}</dd></div><div><dt>Приоритет</dt><dd>${priorityTag(ticket.priority)}</dd></div></dl>${answer}${next}`;
+    result.innerHTML = `<div class="result-heading"><span class="ticket-reference">Обращение #${ticket.id}</span><span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div><h2>${title}</h2><p class="result-description">${description}</p><div class="analysis-summary">${escapeHTML(ticket.extracted_summary || ticket.raw_text || 'Суть не выделена')}</div><dl class="routing-details"><div><dt>Ответственный отдел</dt><dd>${departmentTag(ticket.department)}</dd></div><div><dt>Приоритет</dt><dd>${priorityTag(ticket.priority)}</dd></div></dl>${next}`;
     $$('[data-feedback]', result).forEach(button => on(button, 'click', () => handleFeedback(ticket, result, button)));
   }
 
@@ -814,8 +848,8 @@
     return `<section class="intake-context"><h4>Контекст для специалиста</h4><p>${escapeHTML(text.slice(index + marker.length))}</p></section>`;
   }
 
-  function prepareTicketRequest(email, text, details = {}) {
-    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim(), intake: details });
+  function prepareTicketRequest(email, text, details = {}, custom = {}) {
+    const body = JSON.stringify({ user_email: email.trim(), raw_text: text.trim(), intake: details,...custom });
     if (!state.pendingTicket || state.pendingTicket.body !== body) {
       const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
       state.pendingTicket = { body, key: `web-${Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')}` };
@@ -851,7 +885,8 @@
     try {
       if (!await previewIntake(submittedProblem.trim()) || problem.value !== submittedProblem || !isCurrentSubmission()) return;
       if (progress) progress.textContent = 'Сохраняем обращение и проверяем базу регламентов…';
-      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails);
+      const request = prepareTicketRequest(email.value, submittedProblem, intakeDetails,typeof window!=='undefined'?({...await window.FlowOpsIntakeFields?.payload(),...await window.FlowOpsOperations?.intakeContext()}):{});
+      if (!isCurrentSubmission()) return;
       const ticket = await api('/api/tickets', {
         method: 'POST', headers: { 'Idempotency-Key': request.key }, body: request.body
       });
@@ -885,15 +920,17 @@
   async function loadOperator(forceRender = false) {
     if (!hasSession() || !canTab('operator') || state.operatorLoading) return;
     state.operatorLoading = true;
+    const query = ($('#queue-search')?.value || '').trim(), epoch = state.queueEpoch, generation = sessionGeneration;
     try {
       const cursor = state.operatorBefore;
-      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}`);
-      if (cursor !== state.operatorBefore) return;
+      const tickets = await api(`/api/tickets?limit=100&before_id=${cursor}&q=${encodeURIComponent(query)}&queue_status=${encodeURIComponent($('#status-filter')?.value || '')}`);
+      if (cursor !== state.operatorBefore || query !== ($('#queue-search')?.value || '').trim() || epoch !== state.queueEpoch || generation !== sessionGeneration) return;
       updateTicketPaging('queue', tickets, 100, cursor);
       state.tickets = tickets;
+      tickets.forEach(ticket=>setTicketUnread(ticket.id,ticket.unread_employee_message));
       if (forceRender === true || !$('#ticket-list')?.contains(document.activeElement)) renderTickets();
       const emptyOperator = $('#operator-empty');
-      if (emptyOperator) emptyOperator.hidden = tickets.length !== 0;
+      if (emptyOperator) {emptyOperator.hidden = tickets.length !== 0; $('h3',emptyOperator).textContent=query?'По запросу ничего не найдено':'Личный список тикетов пуст';}
       setAPIStatus(true);
     } catch (error) {
       setAPIStatus(false);
@@ -905,6 +942,7 @@
       toast(error.message);
     } finally {
       state.operatorLoading = false;
+      if (generation === sessionGeneration && (query !== ($('#queue-search')?.value || '').trim() || epoch !== state.queueEpoch)) loadOperator(true);
     }
   }
 
@@ -972,9 +1010,8 @@
     const tickets = state.tickets.filter(
       ticket =>
         (!department || !department.value || ticket.department === department.value) &&
-        (!status || !status.value || ticket.status === status.value) &&
-        (!priority || ticket.priority === priority) &&
-        (!query || `${ticket.id} ${ticket.user_email || ''} ${ticket.subject || ''} ${ticket.extracted_summary || ''} ${ticket.raw_text || ''}`.toLocaleLowerCase('ru').includes(query))
+        (!status || !status.value || ticket.display_status === status.value) &&
+        (!priority || ticket.priority === priority)
     );
     const count = $('#queue-count');
     if (count) count.textContent = `Найдено: ${tickets.length} из ${state.tickets.length}`;
@@ -986,31 +1023,119 @@
     $$('.ticket-card', list).forEach(bindTicketControls);
   }
 
-  function ticketCard(ticket) {
+  let restoringSectionRoute = false;
+  function restoreSectionRoute() {
+    if (location.pathname.startsWith('/tickets/')) { renderTicketRoute(); return; }
+    const route = window.FlowOpsRoutes.match(location.pathname);
+    let tab = route && canTab(route.tab) ? $(`.tab[data-tab="${route.tab}"]${route.panel ? `[data-settings-panel="${route.panel}"]` : ''}`) : $('.tab.active');
+    if (!tab || !canTab(tab.dataset.tab)) tab = $(`.tab[data-tab="${roleTabs[state.user?.role]?.[0]}"]`);
+    restoringSectionRoute = true;
+    try { tab?.click(); } finally { restoringSectionRoute = false; }
+    // Keep QR parameters on the intake URL; inaccessible routes resolve to a permitted section.
+    const path = window.FlowOpsRoutes.path(tab?.dataset.tab, tab?.dataset.settingsPanel);
+    if (path && (!route || !canTab(route.tab))) history.replaceState({}, '', path + (location.pathname === '/' ? location.search : ''));
+  }
+  let ticketRouteVersion = 0;
+  function navigateTicket(id) {
+    history.pushState({}, '', `/tickets/${Number(id)}`);
+    renderTicketRoute();
+  }
+  async function renderTicketRoute() {
+    const version = ++ticketRouteVersion;
+    const match = location.pathname.match(/^\/tickets\/(\d+)\/?$/);
+    if (!match || !authReady) return;
+    const generation = sessionGeneration;
+    leaveTicketContent();
+    $$('.view').forEach(view => view.classList.remove('active'));
+    $('#ticket-detail').classList.add('active');
+    $('.skip-link').href = '#ticket-detail';
+    document.title = `Тикет #${match[1]} — FlowOps AI`;
+    $('#ticket-detail-title').textContent = `Тикет #${match[1]}`;
+    $('[data-ticket-back]').href = window.FlowOpsRoutes.path(canTab('operator') ? 'operator' : canTab('employee') ? 'employee' : roleTabs[state.user?.role]?.[0]);
+    $('#ticket-detail-status').textContent = 'Загрузка тикета…';
+    try {
+      const ticket = await api(`/api/tickets/${match[1]}`);
+      if (version !== ticketRouteVersion || generation !== sessionGeneration) return;
+      $('#ticket-detail-status').textContent = '';
+      $('#ticket-detail-title').textContent = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
+      document.title = `Тикет #${ticket.id}: ${ticketRowTitle(ticket)} — FlowOps AI`;
+      if (canTab('operator')) {
+        const template = document.createElement('template');
+        template.innerHTML = ticketCard(ticket, 'detail');
+        const card = template.content.querySelector('.ticket-card');
+        $('#ticket-detail-content').append(card);
+        bindTicketControls(card);
+        window.FlowOpsSupportUI?.openOperator(ticket.id);
+        card.querySelector('.work-status').before($('#operator-dialogue'));
+        card.querySelector('[data-open-dialogue]')?.remove();
+        window.FlowOpsAnalytics?.attachTimeline(card,ticket);
+        window.FlowOpsCopilot?.attach(card,ticket);
+      } else if (state.user?.role === 'employee') { window.FlowOpsSupportUI?.open(ticket.id); window.FlowOpsAnalytics?.attachTimeline($('#ticket-detail-content'),ticket); }
+ window.FlowOpsTicketFields?.attach($('#ticket-detail-content'),ticket);
+ window.FlowOpsOperations?.attach($('#ticket-detail-content'),ticket);
+    } catch (error) {
+      if (version === ticketRouteVersion && generation === sessionGeneration) $('#ticket-detail-status').textContent = error.message;
+    }
+    window.scrollTo({top:0,behavior:'instant'});
+  }
+  function leaveTicketContent() {
+    const operator = $('#operator-dialogue');
+    if (operator) { operator.hidden = true; $('#ticket-list').before(operator); }
+    const employee = $('#employee-dialogue');
+    if (employee) { employee.hidden = true; $('#analysis-result').after(employee); }
+    $('#ticket-detail-content')?.replaceChildren();
+  }
+  function leaveTicketRoute() {
+    ++ticketRouteVersion;
+    leaveTicketContent();
+  }
+
+  function ticketRowTitle(ticket) {
+    return String(ticket.subject || ticket.extracted_summary || ticket.raw_text || 'Без темы').split(/\s*Уточнения (?:заявителя|пропущены)/i)[0].replace(/\s+/g,' ').trim() || 'Без темы';
+  }
+
+  function ticketRowSummary(ticket, indicator = false) {
+    const title = `ID ${ticket.id}: ${ticketRowTitle(ticket)}`;
+    const status = statusLabel(ticket.status);
+    const compactStatus=({new:'Новый',in_progress:'В работе',closed:'Закрыт'}[ticket.display_status]) || {new:'Новый',awaiting_confirmation:'Ждёт подтверждения',assigned_to_operator:'В работе',auto_resolved:'Закрыт',resolved:'Есть ответ',closed:'Закрыт'}[ticket.status]||status;
+    const date = new Date(ticket.created_at).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'});
+    return `<span class="ticket-row-status" title="${escapeHTML(status)}">${escapeHTML(compactStatus)}</span><a class="ticket-row-title" href="/tickets/${ticket.id}" title="${escapeHTML(title)}">${escapeHTML(title)}</a><time class="ticket-row-date" datetime="${escapeHTML(ticket.created_at)}">${escapeHTML(date)}</time>${indicator?`<span class="ticket-unread-dot" data-unread="${Boolean(ticket.unread_employee_message)}" role="img" aria-label="Новое обращение или сообщение сотрудника" aria-hidden="${!ticket.unread_employee_message}"></span>`:''}`;
+  }
+
+  function setTicketUnread(id, unread) {
+    const dot = document.querySelector(`#ticket-list .ticket-row[data-ticket-id="${Number(id)}"] .ticket-unread-dot`);
+    if(dot){dot.dataset.unread=String(Boolean(unread));dot.setAttribute('aria-hidden',String(!unread));}
+  }
+
+  let closureReasonLabels = {solved:'Вопрос решён',duplicate:'Дубликат обращения',cancelled:'Отменено сотрудником',no_response:'Нет ответа сотрудника',out_of_scope:'Вне зоны поддержки',other:'Другая причина',unspecified:'Причина не указана'};
+  function ticketCard(ticket, scope = 'queue') {
     const departmentCodes = [...new Set([...(state.departmentCodes || ['IT', 'Billing', 'HR', 'Accounting', 'Facilities', 'General']), ticket.department].filter(Boolean))];
     const priorityCodes = ['high', 'medium', 'low'];
     const piiBadge =
       Number(ticket.pii_masked_count) > 0
         ? `<div class="pii-badge">ПДн обезличены перед отправкой в ИИ (скрыто: ${Number(ticket.pii_masked_count)} — ${escapeHTML((ticket.pii_masked_types || []).join(', '))})</div>`
         : '';
-    return `<article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.user_email || 'Email не указан')}</span></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<details class="operator-reply reply-composer"><summary>Ответить сотруднику</summary><textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника...">${escapeHTML(ticket.operator_reply || '')}</textarea><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
-      .filter(item => item !== 'General')
-      .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
-      .join('')}</select><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить ответ сотруднику</button></details><div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="ticket-bottom"><div class="ticket-controls"><select data-field="department" aria-label="Отдел">${departmentCodes
+    return `<details class="ticket-row" data-ticket-id="${ticket.id}" ${state.ticketRowsOpen?.has(`queue:${ticket.id}`)?'open':''}><summary class="ticket-row-summary">${ticketRowSummary(ticket,true)}</summary><article class="ticket-card" data-id="${ticket.id}" data-status="${escapeHTML(ticket.status)}" data-closure-reason="${escapeHTML(ticket.closure_reason || '')}"><div class="ticket-top"><span class="ticket-id">#${ticket.id} · ${new Date(ticket.created_at).toLocaleString('ru-RU')}</span><span class="ticket-email">${escapeHTML(ticket.requester_email || (/^(tg:|max:)/.test(ticket.user_email || '') ? 'Почта не привязана' : ticket.user_email) || 'Email не указан')}</span></div><div class="ticket-assignment"><select data-field="department" aria-label="Отдел">${departmentCodes
       .map(
         item => `<option value="${escapeHTML(item)}" ${item === ticket.department ? 'selected' : ''}>${escapeHTML(departments[item] || item)}</option>`
       )
       .join('')}</select><select data-field="priority" aria-label="Приоритет">${priorityCodes
       .map(item => `<option value="${item}" ${item === ticket.priority ? 'selected' : ''}>${priorities[item]}</option>`)
-      .join('')}</select><button type="button" data-action="take">Взять в работу</button><button type="button" class="close" data-action="close">Закрыть тикет</button></div></div></article>`;
+      .join('')}</select></div>${piiBadge}<h3 class="ticket-summary">${escapeHTML(ticket.subject || ticket.extracted_summary || 'Без выделенной сути')}</h3><details class="original-request"><summary>Исходное обращение</summary><p class="ticket-raw">${escapeHTML(ticket.raw_text)}</p></details>${intakeContextMarkup(ticket.raw_text)}<div class="ticket-meta">${departmentTag(ticket.department)}${priorityTag(ticket.priority)}${channelTag(ticket.channel)}<span class="status ${statusClass(ticket.status)}">${escapeHTML(statusLabel(ticket.status))}</span></div>${ticket.rag_answer ? `<div class="rag-mini"><b>Предложенный регламент</b><br>${regulationMarkup(ticket.rag_answer)}</div>` : ''}${ticket.operator_reply ? `<div class="operator-reply existing"><b>Отправленный ответ</b><p>${escapeHTML(ticket.operator_reply)}</p></div>` : ''}<div class="work-status"><span data-work-time="${ticket.id}">Время пока не учитывается</span><button type="button" class="secondary-button" data-action="work-pause" hidden>Пауза</button></div><div class="operator-reply reply-composer"><label class="rag-check"><input type="checkbox" data-rag-toggle> Пополнить базу знаний этим решением</label><select data-rag-department aria-label="Категория регламента"><option value="General">Общее / Авто (без отдела)</option>${departmentCodes
+      .filter(item => item !== 'General')
+      .map(item => `<option value="${escapeHTML(item)}">${escapeHTML(departments[item] || item)}</option>`)
+      .join('')}</select><label class="reply-label">Ответ сотруднику<textarea data-reply aria-label="Ответ сотруднику" placeholder="Напишите решение или ответ для сотрудника..." rows="4"></textarea></label><input class="rag-title" data-rag-title placeholder="Название регламента (необязательно)" hidden><select class="rag-ttl" data-rag-ttl hidden><option value="0">Бессрочно</option><option value="15">Демо-таймер: 15 секунд</option><option value="1800">На 30 минут</option><option value="7200">На 2 часа</option></select><input class="rag-keywords" data-rag-keywords placeholder="Ключевые слова через запятую" hidden><button type="button" class="reply-button" data-action="reply">Отправить</button></div><div class="ticket-bottom"><div class="ticket-controls"><button type="button" class="close" data-action="close" popovertarget="close-ticket-${scope}-${ticket.id}">Закрыть тикет</button><div id="close-ticket-${scope}-${ticket.id}" class="close-ticket-choice" popover><h3>Причина закрытия</h3><label>Выберите причину<select data-close-reason><option value="">Выберите…</option>${Object.entries(closureReasonLabels).filter(([key])=>key!=='unspecified').map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}</select></label><p class="field-help">Клик снаружи или Escape отменяет выбор.</p><button type="button" class="close" data-confirm-close>Закрыть тикет</button></div></div></div></article></details>`;
   }
 
   function bindTicketControls(card) {
     const id = card.dataset.id;
+    const row=card.closest('.ticket-row');
+    row?.addEventListener('toggle',()=>{const key=`queue:${id}`;if(row.open)state.ticketRowsOpen.add(key);else state.ticketRowsOpen.delete(key);});
+    const dialogueButton=document.createElement('button');dialogueButton.type='button';dialogueButton.className='secondary-button';dialogueButton.dataset.openDialogue='';dialogueButton.textContent='Раскрыть диалог';
+    dialogueButton.addEventListener('click',()=>location.pathname===`/tickets/${id}`?window.FlowOpsSupportUI?.openOperator(id):navigateTicket(id));$('.ticket-controls',card)?.prepend(dialogueButton);
     const draftFields = '[data-reply], [data-rag-toggle], [data-rag-department], [data-rag-title], [data-rag-ttl], [data-rag-keywords]';
     const draft = state.replyDrafts.get(id);
     const fields = $$(draftFields, card);
-    if (draft && $('[data-reply]', card)) $('.reply-composer', card).open = true;
     if (draft) fields.forEach((field, index) => {
       if (field.type === 'checkbox') field.checked = draft[index];
       else field.value = draft[index];
@@ -1020,28 +1145,36 @@
     on(card, 'change', saveDraft);
     const ragEnabled = card.querySelector('[data-rag-toggle]')?.checked;
     card.querySelectorAll('[data-rag-keywords], [data-rag-title], [data-rag-ttl]').forEach(field => field.hidden = !ragEnabled);
-    const take = card.querySelector('[data-action="take"]');
     const close = card.querySelector('[data-action="close"]');
     const status = card.dataset.status;
-    if (take) take.textContent = 'Работать с обращением';
-    if (status === 'closed') {
-      if (take) take.disabled = true;
+    if (status === 'closed' || status === 'auto_resolved') {
       if (close) {
         close.disabled = true;
         close.textContent = 'Закрыт';
+        close.removeAttribute('popovertarget');
+        const reason = document.createElement('span'); reason.className = 'ticket-closure-reason';
+        const ticket = state.tickets.find(item => String(item.id) === id);
+        const code = card.dataset.closureReason || ticket?.closure_reason || '';
+        reason.textContent = `Причина: ${closureReasonLabels[code] || (status === 'auto_resolved' ? 'Решено по регламенту' : 'Не указана')}`;
+        close.after(reason);
+        card.querySelector('.reply-composer').hidden = true;
       }
     }
     card.querySelectorAll('select[data-field]').forEach(select =>
       on(select, 'change', () => updateTicket(id, { [select.dataset.field]: select.value }))
     );
-    on(take, 'click', async () => {
-      if (await trackWork(id, 'start')) { const composer = $('.reply-composer', card); if (composer) composer.open = true; $('[data-reply]', card)?.focus(); }
-    });
     on($('[data-action="work-pause"]', card), 'click', () => trackWork(id, 'pause'));
     on(card, 'input', () => { if (String(workState.id) === id) { workState.activity = Date.now(); if (!workState.running) trackWork(id, 'start'); } });
     on($('[data-reply]', card), 'focus', () => { if (!workState.running || String(workState.id) !== id) trackWork(id, 'start'); });
     renderWork();
-    on(close, 'click', event => updateTicket(id, { status: 'closed' }, event.currentTarget));
+    const choice = card.querySelector('.close-ticket-choice');
+    on(choice, 'toggle', event => { if (event.newState === 'closed') choice.querySelector('[data-close-reason]').value = ''; });
+    on(card.querySelector('[data-confirm-close]'), 'click', async event => {
+      const reason = choice.querySelector('[data-close-reason]');
+      if (!reason.value) { reason.focus(); toast('Выберите причину закрытия'); return; }
+      const saved = await updateTicket(id, {status:'closed',closure_reason:reason.value}, event.currentTarget);
+      if (saved && choice.isConnected) choice.hidePopover();
+    });
     const toggle = card.querySelector('[data-rag-toggle]');
     on(toggle, 'change', () => {
       card
@@ -1061,14 +1194,14 @@
     }
     if (button) button.disabled = true;
     try {
-      await api(`/api/tickets/${id}/reply`, {
+      await api(`/api/tickets/${id}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ operator_reply: reply.value.trim() })
+        body: JSON.stringify(window.FlowOpsSupportUI.replyRequest(id,reply.value.trim()))
       });
       if (String(workState.id) === String(id)) await trackWork(id, 'pause');
       const toggle = card.querySelector('[data-rag-toggle]');
       if (toggle && toggle.checked) {
-        const ticket = state.tickets.find(item => String(item.id) === String(id));
+        const ticket = state.tickets.find(item => String(item.id) === String(id)) || {raw_text:''};
         const keywords = card.querySelector('[data-rag-keywords]');
         const department = card.querySelector('[data-rag-department]');
         const supplied = (keywords ? keywords.value : '')
@@ -1097,7 +1230,9 @@
         toast('Ответ отправлен сотруднику');
       }
       state.replyDrafts.delete(String(id));
+      window.FlowOpsSupportUI.replySent(id);
       await loadOperator(true);
+      if (location.pathname === `/tickets/${id}`) renderTicketRoute();
     } catch (error) {
       toast(error.message);
     } finally {
@@ -1421,7 +1556,7 @@
       $('#smart-import-input') ||
       $('#builder-smart-text');
     const departmentSelect = $('#smart-import-department') || $('#builder-smart-department');
-    const resultBox = $('#smart-import-result');
+    const resultBox = $('#smart-import-results');
     const button = $('#smart-import-submit');
     const text = input?.value.trim() || '';
     if (!text) {
@@ -1433,15 +1568,15 @@
       const response = await api('/api/v1/kb/smart-import', {
         method: 'POST',
         body: JSON.stringify({
-          text,
-          department: departmentSelect?.value || 'General'
+          raw_text:text,
+          default_department: departmentSelect?.value || 'General'
         })
       });
       const articles = response.articles || response.items || response.documents || [];
       const count = response.count ?? articles.length;
       if (resultBox) {
         resultBox.hidden = false;
-        resultBox.innerHTML = `<div class="smart-import-summary">Добавлено статей: ${Number(count)} · источник: ${escapeHTML(response.provider || response.source || 'ai')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
+        resultBox.innerHTML = `<div class="smart-import-summary">Создано черновиков: ${Number(count)} · источник: ${escapeHTML(response.source==='fallback'?'разбор текста без ИИ':response.source==='yandex'?'Yandex AI':response.provider||response.source||'не указан')} · замаскировано ПДн: ${Number(response.pii_masked_count || 0)}</div>${articles
           .map(
             item =>
               `<article class="smart-import-card"><strong>${escapeHTML(item.title || 'Регламент')}</strong><small>${escapeHTML(item.department || '')}${item.keywords?.length ? ` · ${escapeHTML(item.keywords.join(', '))}` : ''}</small><pre>${escapeHTML(item.content || '')}</pre></article>`
@@ -1542,12 +1677,15 @@
     }
     try {
       await api(`/api/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(changes) });
+      if (location.pathname === `/tickets/${id}` && changes.status === 'closed') renderTicketRoute();
       const ticket = state.tickets.find(item => String(item.id) === String(id));
       if (ticket) ticket.status = changes.status || ticket.status;
       await loadOperator(true);
       toast(changes.status === 'closed' ? `Тикет #${id} закрыт` : `Тикет #${id} взят в работу`);
+      return true;
     } catch (error) {
       toast(error.message);
+      return false;
     } finally {
       if (button) {
         button.classList.remove('is-loading');
@@ -1557,16 +1695,20 @@
     }
   }
 
-  async function resetData() {
-    if (!confirm('Удалить все тикеты и сбросить нумерацию?')) return;
+  async function clearQueue() {
+    const button=$('#clear-queue'); if(button.disabled)return;
+    button.disabled=true;
+    const generation=sessionGeneration;
     try {
-      await api('/api/tickets/reset', { method: 'DELETE' });
+      await api('/api/tickets/queue/clear', {method:'POST',body:'{}'});
+      if(generation!==sessionGeneration)return;
+      state.queueEpoch++;state.operatorBefore=0;state.tickets=[];
+      $('#queue-search').value='';renderTickets();
+      window.FlowOpsSupportUI?.hideOperator();
       await loadOperator(true);
-      await loadHistory();
-      toast('База тикетов очищена');
-    } catch (error) {
-      toast(error.message);
-    }
+      toast('Личный список очищен. Тикеты доступны через поиск.');
+    } catch(error) {if(generation===sessionGeneration)toast(error.message);}
+    finally {if(generation===sessionGeneration)button.disabled=false;}
   }
 
   async function loadKnowledge() {
@@ -1635,7 +1777,7 @@
       });
       if (form) form.reset();
       await loadKnowledge();
-      toast('Регламент сохранен и доступен ИИ');
+      toast('Создан черновик. Для ответов ИИ требуется согласование');
     } catch (error) {
       toast(error.message);
     }
@@ -1674,27 +1816,52 @@
     });
     $$('[data-toggle-password]').forEach(button => on(button, 'click', () => { const field = document.getElementById(button.dataset.togglePassword); field.type = field.type === 'password' ? 'text' : 'password'; button.setAttribute('aria-label', field.type === 'password' ? 'Показать пароль' : 'Скрыть пароль'); }));
     on($('#logout'), 'click', logout);
+    on($('.skip-link'), 'click', event => {
+      const view = $('.view.active'); if (!view) return;
+      event.preventDefault(); view.setAttribute('tabindex','-1');
+      view.focus({preventScroll:true}); view.scrollIntoView({block:'start'});
+    });
 
     $$('.tab').forEach(tab =>
       on(tab, 'click', () => {
         if (!canTab(tab.dataset.tab)) return;
+        const wasBuilder = $('#builder')?.classList.contains('active');
+        leaveTicketRoute();
+        const sectionPath = window.FlowOpsRoutes.path(tab.dataset.tab, tab.dataset.settingsPanel);
+        const asset = new URLSearchParams(location.search).get('asset');
+        const path = sectionPath && sectionPath + (tab.dataset.tab === 'employee' && asset ? '?asset=' + encodeURIComponent(asset) : '');
+        if (!restoringSectionRoute && path && location.pathname + location.search !== path) history.pushState({}, '', path);
         $$('.tab, .view').forEach(element => element.classList.remove('active'));
         tab.classList.add('active');
+        if (tab.closest('#settings-nav')) $('#settings-nav').open = true;
+        if (tab.dataset.tab === 'builder') selectSettingsPanel(tab.dataset.settingsPanel);
         $$('.tab').forEach(item => item.setAttribute('aria-current', item === tab ? 'page' : 'false'));
         const view = $(`#${tab.dataset.tab}`);
-        if (view) view.classList.add('active');
+        if (view) {
+          view.classList.add('active');
+          const skip = $('.skip-link'); if(skip) skip.href = '#' + view.id;
+          document.title = `${$('h1',view)?.textContent || 'Служба поддержки'} — FlowOps AI`;
+        }
         window.scrollTo({ top: 0, behavior: 'instant' });
         if (!hasSession()) return;
         if (tab.dataset.tab === 'employee') loadHistory();
         if (tab.dataset.tab === 'operator') loadOperator();
         if (tab.dataset.tab === 'analytics') loadAnalytics();
+        if (tab.dataset.tab === 'optimization') window.FlowOpsOptimization?.refresh();
         if (tab.dataset.tab === 'admin') { loadMembers(); loadAudit(); }
         if (tab.dataset.tab === 'knowledge') loadKnowledge();
+        if (tab.dataset.tab === 'knowledge-review') window.FlowOpsKnowledge?.refresh();
+        if (tab.dataset.tab === 'notifications') window.FlowOpsNotifications?.refresh();
+ if (['workflows','workflow-tasks','assets','process-analytics','reports'].includes(tab.dataset.tab)) window.FlowOpsOperations?.refresh(tab.dataset.tab);
+ if (tab.dataset.tab === 'governance') window.FlowOpsGovernance?.refresh();
+ if (tab.dataset.tab === 'structure') window.FlowOpsStructure?.refresh();
+        if (tab.dataset.tab === 'platform') window.FlowOpsPlatform?.openSettings();
+        if (tab.dataset.tab === 'one-c') window.FlowOpsOneC?.refresh();
         if (tab.dataset.tab === 'channels') {
           loadWidgetConfig();
           loadAPIKeys();
         }
-        if (tab.dataset.tab === 'builder') {
+        if (tab.dataset.tab === 'builder' && !wasBuilder) {
           loadBuilderSettings();
           loadWidgetConfig();
           loadAPIKeys();
@@ -1734,12 +1901,12 @@
     on($('#history-newest'), 'click', () => { state.historyBefore = 0; loadHistory(); });
     on($('#queue-older'), 'click', () => { state.operatorBefore = Number($('#queue-older').dataset.before) || 0; loadOperator(true); });
     on($('#queue-newest'), 'click', () => { state.operatorBefore = 0; loadOperator(true); });
-    on($('#reset-data'), 'click', resetData);
+    on($('#clear-queue'), 'click', clearQueue);
     on($('#department-filter'), 'change', renderTickets);
-    on($('#status-filter'), 'change', renderTickets);
+    on($('#status-filter'), 'change', () => {state.queueEpoch++;state.operatorBefore=0;loadOperator(true);});
     on($('#priority-filter'), 'change', renderTickets);
-    on($('#queue-search'), 'input', renderTickets);
-    on($('#history-search'), 'input', () => renderHistory());
+    on($('#queue-search'), 'input', () => {state.queueEpoch++;state.operatorBefore=0;clearTimeout(state.queueSearchTimer);state.queueSearchTimer=setTimeout(()=>loadOperator(true),250);});
+    on($('#history-search'), 'input', () => {state.historyBefore=0;clearTimeout(state.historySearchTimer);state.historySearchTimer=setTimeout(loadHistory,250);});
     on($('#knowledge-form'), 'submit', submitKnowledge);
     on($('#refresh-knowledge'), 'click', loadKnowledge);
 
@@ -1792,6 +1959,31 @@
       });
     });
 
+    on(document, 'click', event => {
+      if (event.target.closest('[data-ticket-back]')) {
+        event.preventDefault(); leaveTicketRoute();
+        $(`.tab[data-tab="${canTab('operator')?'operator':canTab('employee')?'employee':roleTabs[state.user?.role]?.[0]}"]`)?.click(); return;
+      }
+      const analyticsLink = event.target.closest('[data-analytics-ticket]');
+      if(analyticsLink && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){event.preventDefault();navigateTicket(analyticsLink.dataset.analyticsTicket);return;}
+      const summary = event.target.closest('.ticket-row-summary');
+      if (!summary || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const id = summary.closest('[data-ticket-id]')?.dataset.ticketId;
+      if (id) { event.preventDefault(); navigateTicket(id); }
+    });
+    on(window, 'popstate', () => {
+      if (hasSession()) restoreSectionRoute();
+    });
+
+    $$('dialog').forEach(dialog => on(dialog, 'click', event => {
+      if (event.target !== dialog) return;
+      const box = dialog.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
+    }));
+
+    selectSettingsPanel();
+    on(document, 'keydown', event => { if (event.key === 'Escape' && $('#settings-nav').open) { $('#settings-nav').open = false; $('#settings-nav summary').focus(); } });
+
     restoreSession();
 
     on(document, 'visibilitychange', () => { if (!document.hidden && authReady) checkAPI(); });
@@ -1800,7 +1992,7 @@
     setInterval(() => {
       if (!workState.running || workState.busy || !hasSession()) return;
       const focusedCard = document.activeElement?.closest('.ticket-card');
-      const active = !document.hidden && document.hasFocus() && $('#operator')?.classList.contains('active') && focusedCard?.dataset.id === String(workState.id) && Date.now() - workState.activity < 60000;
+      const active = !document.hidden && document.hasFocus() && ($('#operator')?.classList.contains('active') || $('#ticket-detail')?.classList.contains('active')) && focusedCard?.dataset.id === String(workState.id) && Date.now() - workState.activity < 60000;
       trackWork(workState.id, active ? 'heartbeat' : 'pause');
     }, 15000);
     on(window, 'blur', () => { if (workState.running) trackWork(workState.id, 'pause'); });
@@ -1816,6 +2008,16 @@
     }, 5000);
   }
 
+  window.FlowOpsSupport={can:permission=>!state.user?.permissions||state.user.permissions.includes(permission),closureReasons:()=>Object.entries(closureReasonLabels).filter(([id])=>id!=='unspecified'),departmentsChanged:applyDepartments,organizationChanged:c=>{
+    if(c.name)$('#workspace-name-label').textContent=c.name;
+    window.FlowOpsAnalytics?.setTimezone(c.timezone);
+    if(Array.isArray(c.closure_reasons)){closureReasonLabels={unspecified:'Причина не указана',...Object.fromEntries(c.closure_reasons.map(x=>[x.id,x.label]))};}
+  },requestBlob:(path,options={})=>api(path,{...options,responseType:'blob'}),role:()=>state.user?.role,request:api,identity:()=>authReady?state.user?.id:'',generation:()=>sessionGeneration,canRate:()=>state.user?.role==='employee',notify:toast,regulation:regulationMarkup,read:(id,unread)=>{
+    const ticket=state.tickets.find(item=>String(item.id)===String(id));if(ticket)ticket.unread_employee_message=unread;setTicketUnread(id,unread);
+  },changed:(id,status,messages)=>{
+    for(const ticket of [...state.tickets,...state.historyTickets]){if(String(ticket.id)!==String(id))continue;ticket.status=status;const operator=messages.filter(message=>message.role==='operator').at(-1);if(operator)ticket.operator_reply=operator.body;}
+    const current=state.tickets.find(ticket=>String(ticket.id)===String(id));if(current&&String(state.currentTicketId)===String(id))renderAnalysis(current);renderHistory();
+  }};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();

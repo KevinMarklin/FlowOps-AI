@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"flowops-ai/internal/security"
 )
@@ -26,12 +27,16 @@ type Document struct {
 }
 
 type Base struct {
-	mu         sync.RWMutex
-	directory  string
-	tenantRoot string
-	tenants    map[string]*Base
-	documents  []Document
-	auditTTL   func(string)
+	mu              sync.RWMutex
+	directory       string
+	tenantRoot      string
+	tenants         map[string]*Base
+	documents       []Document
+	auditTTL        func(string)
+	managedLoader   func(string) ([]Document, error)
+	managedOnly     bool
+	fileParent      *Base
+	managedSnapshot []Document
 }
 
 func (b *Base) SetAuditTTLCallback(callback func(string)) {
@@ -79,7 +84,53 @@ func Load(dir string) (*Base, error) {
 
 // TenantBase returns the isolated file-backed KB for a tenant. Tenant IDs are
 // constrained before being used as path components.
+func (b *Base) SetManagedLoader(loader func(string) ([]Document, error)) {
+	b.mu.Lock()
+	b.managedLoader = loader
+	b.mu.Unlock()
+}
 func (b *Base) TenantBase(tenant string) (*Base, error) {
+	target, err := b.fileTenantBase(tenant)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.RLock()
+	loader := b.managedLoader
+	only := b.managedOnly
+	b.mu.RUnlock()
+	if loader != nil {
+		if tenant == "" {
+			tenant = "default"
+		}
+		documents, err := loader(tenant)
+		if err != nil {
+			return nil, err
+		}
+		// Each request keeps its own approved-version snapshot. Concurrent RAG loads
+		// must never overwrite another request's approved/unpublished document set.
+		combined := documents
+		if !only {
+			combined = append(target.Documents(), documents...)
+		}
+		return &Base{directory: target.directory, tenantRoot: target.tenantRoot, fileParent: target, managedSnapshot: documents, documents: combined, managedOnly: only}, nil
+	}
+
+	return target, nil
+}
+func (b *Base) refreshFileSnapshot() {
+	if b.fileParent == nil {
+		return
+	}
+	documents := b.managedSnapshot
+	if !b.managedOnly {
+		documents = append(b.fileParent.Documents(), documents...)
+	}
+	b.mu.Lock()
+	b.documents = documents
+	b.mu.Unlock()
+}
+
+func (b *Base) fileTenantBase(tenant string) (*Base, error) {
 	if tenant == "" {
 		tenant = "default"
 	}
@@ -159,6 +210,11 @@ func (b *Base) Add(department, title string, keywords []string, content string) 
 // ReplaceWithOptions validates first, writes a temporary file, then replaces the
 // original. Invalid updates and write failures must not erase an existing rule.
 func (b *Base) ReplaceWithOptions(filename, department, title string, keywords []string, content, kind, state string, expiresAt *time.Time) (Document, error) {
+	if b.fileParent != nil {
+		d, e := b.fileParent.ReplaceWithOptions(filename, department, title, keywords, content, kind, state, expiresAt)
+		b.refreshFileSnapshot()
+		return d, e
+	}
 	if err := security.ValidateKnowledge(title, keywords, content); err != nil {
 		return Document{}, err
 	}
@@ -206,6 +262,11 @@ func (b *Base) ReplaceWithOptions(filename, department, title string, keywords [
 }
 
 func (b *Base) AddWithOptions(department, title string, keywords []string, content, kind, state string, expiresAt *time.Time) (Document, error) {
+	if b.fileParent != nil {
+		d, e := b.fileParent.AddWithOptions(department, title, keywords, content, kind, state, expiresAt)
+		b.refreshFileSnapshot()
+		return d, e
+	}
 	if err := security.ValidateKnowledge(title, keywords, content); err != nil {
 		return Document{}, err
 	}
@@ -248,6 +309,11 @@ func (b *Base) AddWithOptions(department, title string, keywords []string, conte
 
 // Reset removes demo-created documents from disk and the in-memory index.
 func (b *Base) Reset() error {
+	if b.fileParent != nil {
+		e := b.fileParent.Reset()
+		b.refreshFileSnapshot()
+		return e
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	entries, err := os.ReadDir(b.directory)
@@ -277,6 +343,11 @@ func (b *Base) Reset() error {
 }
 
 func (b *Base) PurgeExpired() error {
+	if b.fileParent != nil {
+		e := b.fileParent.PurgeExpired()
+		b.refreshFileSnapshot()
+		return e
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := time.Now()
@@ -304,6 +375,11 @@ func (b *Base) PurgeExpired() error {
 }
 
 func (b *Base) Delete(filename string) error {
+	if b.fileParent != nil {
+		e := b.fileParent.Delete(filename)
+		b.refreshFileSnapshot()
+		return e
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for i, doc := range b.documents {
@@ -321,6 +397,8 @@ func (b *Base) Delete(filename string) error {
 func (b *Base) FindRelevant(text, department string) *Document {
 	_ = b.PurgeExpired()
 	query := strings.ToLower(text)
+	query, _, _ = strings.Cut(query, "\nуточнения пропущены:")
+	queryWords := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 	isUnassigned := strings.EqualFold(strings.TrimSpace(department), "unassigned") || strings.TrimSpace(department) == ""
 	department = NormalizeDepartment(department)
 	b.mu.RLock()
@@ -336,18 +414,14 @@ func (b *Base) FindRelevant(text, department string) *Document {
 		if !matchesBuiltinTopic(document.Filename, query) {
 			continue
 		}
+		if isDefinitionRequest(query) && !explainsRequestedTopic(document, query, queryWords) {
+			continue
+		}
 		score := 0
 		for _, term := range append(append([]string{}, document.Keywords...), strings.Fields(strings.ToLower(document.Title))...) {
 			term = strings.Trim(term, ".,!?():;\"'")
-			if len(term) >= 3 && !isStopWord(term) && strings.Contains(query, strings.ToLower(term)) {
+			if len([]rune(term)) >= 3 && !isStopWord(term) && matchesTerm(query, queryWords, strings.ToLower(term)) {
 				score++
-			}
-		}
-		for _, term := range strings.Fields(strings.ToLower(document.Content)) {
-			term = strings.Trim(term, ".,!?():;\"'")
-			if len(term) >= 5 && !isStopWord(term) && strings.Contains(query, term) {
-				score++
-				break
 			}
 		}
 		if score > bestScore {
@@ -362,6 +436,48 @@ func (b *Base) FindRelevant(text, department string) *Document {
 	return &copy
 }
 
+func matchesTerm(query string, words []string, term string) bool {
+	if strings.Contains(query, term) {
+		return true
+	}
+	// Inflections should not make «справку» invisible to a «справка» rule.
+	// Phrase keywords still require the whole phrase, not one generic word.
+	if strings.ContainsAny(term, " -_/") {
+		return false
+	}
+	stem := russianStem(term)
+	if stem == term && len([]rune(term)) < 5 {
+		return false
+	}
+	for _, word := range words {
+		if russianStem(word) == stem {
+			return true
+		}
+	}
+	return false
+}
+
+func russianStem(word string) string {
+	word = strings.ReplaceAll(word, "ё", "е")
+	if len([]rune(word)) < 5 {
+		return word
+	}
+	for _, r := range word {
+		if r < 'а' || r > 'я' {
+			return word
+		}
+	}
+	for _, suffix := range []string{"иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "ая", "яя", "ое", "ее", "ые", "ие", "ый", "ий", "ой", "ам", "ям", "ах", "ях", "ов", "ев", "ом", "ем", "ию", "ии", "ия", "ью", "я", "а", "у", "ы", "и", "е", "о"} {
+		if strings.HasSuffix(word, suffix) {
+			stem := strings.TrimSuffix(word, suffix)
+			if len([]rune(stem)) >= 4 {
+				return stem
+			}
+		}
+	}
+	return word
+}
+
 func matchesBuiltinTopic(filename, query string) bool {
 	switch filename {
 	case "fa_study_certificate.md":
@@ -371,7 +487,7 @@ func matchesBuiltinTopic(filename, query string) bool {
 	case "fa_wifi.md":
 		return strings.Contains(query, "wi-fi") || strings.Contains(query, "wifi") || strings.Contains(query, "вайфай") || strings.Contains(query, "вай-фай")
 	case "fa_portal_password.md":
-		return (strings.Contains(query, "парол") || strings.Contains(query, "доступ")) && (strings.Contains(query, "лк") || strings.Contains(query, "кабинет") || strings.Contains(query, "портал"))
+		return (strings.Contains(query, "парол") || strings.Contains(query, "доступ") || strings.Contains(query, "войти") || strings.Contains(query, "вход")) && (strings.Contains(query, "лк") || strings.Contains(query, "кабинет") || strings.Contains(query, "портал"))
 	case "fa_business_trip.md":
 		return strings.Contains(query, "командиров") && !strings.Contains(query, "авансов")
 	case "fa_advance_report.md":
@@ -398,7 +514,7 @@ func matchesBuiltinTopic(filename, query string) bool {
 
 func isStopWord(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ошибка", "ошибки", "ошибкой", "не", "работает", "проблема", "проблему", "срочно", "помогите", "сертификат":
+	case "как", "что", "для", "при", "или", "после", "нужно", "получить", "инструкция", "регламент", "информация", "специалист", "помощь", "поддержка", "обращение", "ошибка", "ошибки", "ошибкой", "не", "работает", "проблема", "проблему", "срочно", "помогите", "сертификат":
 		return true
 	default:
 		return false
@@ -525,6 +641,21 @@ func validDepartment(value string) bool {
 	return value == "IT" || value == "HR" || value == "Accounting" || value == "Facilities" || value == "General" || value == "Unassigned"
 }
 
+// ValidDepartmentName preserves organization-defined codes without allowing
+// path components, markup or control characters into metadata/front matter.
+func ValidDepartmentName(value string) bool {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) == 0 || len([]rune(value)) > 100 {
+		return false
+	}
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != ' ' && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 func NormalizeDepartment(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "billing", "биллинг", "финансы и биллинг", "оплата":
@@ -548,6 +679,10 @@ func NormalizeDepartment(value string) string {
 	case "general", "общее", "общее / без отдела", "не назначен", "unassigned", "":
 		return "General"
 	default:
+		normalized := strings.TrimSpace(value)
+		if ValidDepartmentName(normalized) {
+			return normalized
+		}
 		return "General"
 	}
 }
@@ -558,4 +693,28 @@ func titleFromMarkdown(content, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func (b *Base) UseManagedOnly() { b.mu.Lock(); b.managedOnly = true; b.mu.Unlock() }
+func (b *Base) LegacyDocuments(tenant string) ([]Document, error) {
+	base, err := b.fileTenantBase(tenant)
+	if err != nil {
+		return nil, err
+	}
+	return base.Documents(), nil
+}
+
+// SelectSources returns an isolated read-only retrieval snapshot.
+func (b *Base) SelectSources(names []string) *Base {
+	allowed := map[string]bool{}
+	for _, name := range names {
+		allowed[name] = true
+	}
+	documents := []Document{}
+	for _, document := range b.Documents() {
+		if allowed[document.Filename] {
+			documents = append(documents, document)
+		}
+	}
+	return &Base{directory: b.directory, tenantRoot: b.tenantRoot, documents: documents}
 }

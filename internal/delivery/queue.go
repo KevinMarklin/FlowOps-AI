@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,7 @@ import (
 )
 
 type Message struct {
+	BotRouteTenant                 string
 	ReplyVersion                   int
 	ID                             int64
 	TicketID                       int
@@ -31,7 +33,7 @@ func EnqueueReply(ctx context.Context, tx pgx.Tx, ticketID int, channel, sender,
 	}
 	// Deduplicate only within a revision. A -> B -> A is a new revision of A.
 	if _, err := tx.Exec(ctx, `UPDATE ticket_deliveries SET state='superseded',locked_until=NULL
- WHERE ticket_id=$1 AND reply_version<>$2 AND state IN ('pending','processing','failed')`, ticketID, version); err != nil {
+ WHERE ticket_id=$1 AND reply_version<>$2 AND conversation_message_id IS NULL AND state IN ('pending','processing','failed')`, ticketID, version); err != nil {
 		return err
 	}
 	var messages []Message
@@ -54,17 +56,59 @@ func EnqueueReply(ctx context.Context, tx pgx.Tx, ticketID int, channel, sender,
 	return RefreshTicket(ctx, tx, ticketID)
 }
 
+// Conversation messages are immutable events: a newer answer never supersedes
+// an older one that is still waiting for delivery.
+func EnqueueConversationMessage(ctx context.Context, tx pgx.Tx, ticketID int, messageID int64, channel, sender, callback, body string) error {
+	var version int
+	if err := tx.QueryRow(ctx, `UPDATE tickets SET reply_version=reply_version+1 WHERE id=$1 RETURNING reply_version`, ticketID).Scan(&version); err != nil {
+		return err
+	}
+	var messages []Message
+	if channel == "email" || channel == "bot" {
+		messages = append(messages, Message{Kind: "channel", Channel: channel, Recipient: sender, Body: body})
+	}
+	if callback != "" {
+		messages = append(messages, Message{Kind: "callback", Recipient: callback, Body: body})
+	}
+	rows, err := tx.Query(ctx, `SELECT l.bot_tenant_id,l.sender FROM tickets t JOIN workspace_members m ON m.id=t.requester_id AND m.tenant_id=t.tenant_id JOIN member_bot_links l ON l.member_id=m.id AND l.auth_version=m.auth_version WHERE t.id=$1 AND m.is_active AND m.role='employee'`, ticketID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var route, recipient string
+		if err = rows.Scan(&route, &recipient); err != nil {
+			rows.Close()
+			return err
+		}
+		if channel != "bot" || recipient != sender {
+			messages = append(messages, Message{Kind: "channel", Channel: "bot", Recipient: recipient, Body: body, BotRouteTenant: route})
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, m := range messages {
+		hash := sha256.Sum256([]byte(fmt.Sprintf("message:%d:%s:%s:%s", messageID, m.Kind, m.Recipient, m.BotRouteTenant)))
+		if _, err = tx.Exec(ctx, `INSERT INTO ticket_deliveries(ticket_id,kind,channel,recipient,body,dedupe_key,reply_version,conversation_message_id,bot_route_tenant) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(ticket_id,reply_version,dedupe_key) DO NOTHING`, ticketID, m.Kind, m.Channel, m.Recipient, m.Body, hex.EncodeToString(hash[:]), version, messageID, m.BotRouteTenant); err != nil {
+			return err
+		}
+	}
+	return RefreshTicket(ctx, tx, ticketID)
+}
+
 // Callers lock the ticket before modifying events; this keeps lock ordering the
 // same between API transactions and delivery acknowledgements.
 func RefreshTicket(ctx context.Context, tx pgx.Tx, ticketID int) error {
 	_, err := tx.Exec(ctx, `WITH summary AS (
 	 SELECT CASE
-	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND d.reply_version=t.reply_version AND d.state='failed') THEN 'failed'
-	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND d.reply_version=t.reply_version AND d.state IN ('pending','processing')) THEN 'pending'
-	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND d.reply_version=t.reply_version) THEN 'sent'
+	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND (d.reply_version=t.reply_version OR d.conversation_message_id IS NOT NULL) AND d.state='failed') THEN 'failed'
+	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND (d.reply_version=t.reply_version OR d.conversation_message_id IS NOT NULL) AND d.state IN ('pending','processing')) THEN 'pending'
+	 WHEN EXISTS(SELECT 1 FROM ticket_deliveries d WHERE d.ticket_id=t.id AND (d.reply_version=t.reply_version OR d.conversation_message_id IS NOT NULL)) THEN 'sent'
 	 ELSE 'not_required' END AS result FROM tickets t WHERE t.id=$1)
 	UPDATE tickets SET delivery_status=summary.result,
-	status=CASE WHEN status IN ('resolved','closed') THEN CASE WHEN summary.result IN ('sent','not_required') THEN 'closed' ELSE 'resolved' END ELSE status END
+	status=CASE WHEN requester_closed THEN status WHEN EXISTS(SELECT 1 FROM audit_logs a WHERE a.tenant_id=tickets.tenant_id AND a.ticket_id=tickets.id AND a.event_type='TICKET_CLOSED' AND a.created_at>=tickets.created_at) THEN 'closed' WHEN status IN ('resolved','closed') THEN CASE WHEN summary.result IN ('sent','not_required') THEN 'closed' ELSE 'resolved' END ELSE status END
 	FROM summary WHERE tickets.id=$1`, ticketID)
 	return err
 }
@@ -86,7 +130,7 @@ func (q *Queue) ProcessOnce(ctx context.Context) (bool, error) {
 	 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1)
 	 UPDATE ticket_deliveries d SET state='processing',attempts=d.attempts+1,locked_until=NOW()+INTERVAL '1 minute'
 	 FROM candidate WHERE d.id=candidate.id
-	 RETURNING d.id,d.ticket_id,d.kind,d.channel,d.recipient,d.body,d.attempts,d.reply_version`).Scan(&m.ID, &m.TicketID, &m.Kind, &m.Channel, &m.Recipient, &m.Body, &m.Attempt, &m.ReplyVersion)
+	 RETURNING d.id,d.ticket_id,d.kind,d.channel,d.recipient,d.body,d.attempts,d.reply_version,d.bot_route_tenant`).Scan(&m.ID, &m.TicketID, &m.Kind, &m.Channel, &m.Recipient, &m.Body, &m.Attempt, &m.ReplyVersion, &m.BotRouteTenant)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

@@ -18,6 +18,7 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse database config: %w", err)
 	}
 	config.ConnConfig.RuntimeParams["client_encoding"] = "UTF8"
+	config.ConnConfig.RuntimeParams["timezone"] = "UTC"
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -193,6 +194,39 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);`);
 	if _, err := pool.Exec(ctx, IdempotencySchema); err != nil {
 		return fmt.Errorf("apply request idempotency migration: %w", err)
 	}
+	if _, err := pool.Exec(ctx, ConversationsSchema); err != nil {
+		return fmt.Errorf("apply conversation migration: %w", err)
+	}
+	if _, err := pool.Exec(ctx, PlatformSchema); err != nil {
+		return fmt.Errorf("apply platform settings: %w", err)
+	}
+	if _, err := pool.Exec(ctx, ProcessSchema); err != nil {
+		return fmt.Errorf("apply process events: %w", err)
+	}
+	if _, err := pool.Exec(ctx, DashboardSchema); err != nil {
+		return fmt.Errorf("apply dashboards: %w", err)
+	}
+	if _, err := pool.Exec(ctx, OptimizationSchema); err != nil {
+		return fmt.Errorf("apply optimization: %w", err)
+	}
+	if _, err := pool.Exec(ctx, KnowledgeLifecycleSchema); err != nil {
+		return fmt.Errorf("apply knowledge lifecycle: %w", err)
+	}
+	if _, err := pool.Exec(ctx, StructureSchema); err != nil {
+		return fmt.Errorf("apply organization structure: %w", err)
+	}
+	if _, err := pool.Exec(ctx, AccessPolicySchema); err != nil {
+		return fmt.Errorf("apply access policy: %w", err)
+	}
+	if _, err := pool.Exec(ctx, TicketFormsSchema); err != nil {
+		return fmt.Errorf("apply ticket forms: %w", err)
+	}
+	if _, err := pool.Exec(ctx, OperationsSchema); err != nil {
+		return fmt.Errorf("apply operations: %w", err)
+	}
+	if _, err := pool.Exec(ctx, OneCSchema); err != nil {
+		return fmt.Errorf("apply 1C connections: %w", err)
+	}
 	return security.ScrubStoredChannelErrors(ctx, pool)
 }
 
@@ -204,7 +238,7 @@ func SyncDefaultWorkspace(ctx context.Context, pool *pgxpool.Pool, token string)
 	}
 	hash := sha256.Sum256([]byte(token))
 	_, err := pool.Exec(ctx, `INSERT INTO workspaces(tenant_id,name,token_prefix,token_hash) VALUES('default','FlowOps AI', $1, $2)
-	ON CONFLICT (tenant_id) DO UPDATE SET token_prefix=EXCLUDED.token_prefix,token_hash=EXCLUDED.token_hash,name=EXCLUDED.name`, tokenPrefix(token), hex.EncodeToString(hash[:]))
+	ON CONFLICT (tenant_id) DO UPDATE SET token_prefix=EXCLUDED.token_prefix,token_hash=EXCLUDED.token_hash`, tokenPrefix(token), hex.EncodeToString(hash[:]))
 	if err != nil {
 		return fmt.Errorf("synchronize default workspace: %w", err)
 	}

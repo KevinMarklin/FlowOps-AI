@@ -266,18 +266,19 @@ func (h *IntegrationsHandler) BuilderSettings(w http.ResponseWriter, r *http.Req
 		writeError(w, 400, "invalid JSON body")
 		return
 	}
-	if len(input.Departments) > 20 || (input.Tone != "friendly" && input.Tone != "formal" && input.Tone != "concise" && input.Tone != "warm") || len(input.StartTemplate) > 2000 || len(input.HandoffTemplate) > 2000 || len(input.Signature) > 500 {
+	if len(input.Departments) > 1000 || (input.Tone != "friendly" && input.Tone != "formal" && input.Tone != "concise" && input.Tone != "warm") || len(input.StartTemplate) > 2000 || len(input.HandoffTemplate) > 2000 || len(input.Signature) > 500 {
 		writeError(w, 400, "constructor settings are invalid or exceed limits")
 		return
 	}
 	seen := map[string]bool{}
-	for _, department := range input.Departments {
+	for index, department := range input.Departments {
 		name := strings.TrimSpace(department.Name)
-		if name == "" || len(name) > 80 || len(department.Description) > 500 || seen[strings.ToLower(name)] {
+		if !validDepartment(name) || len(name) > 80 || len(department.Description) > 500 || seen[strings.ToLower(name)] {
 			writeError(w, 400, "department names must be unique and valid")
 			return
 		}
 		seen[strings.ToLower(name)] = true
+		input.Departments[index].Name = name
 	}
 	data, err := json.Marshal(input)
 	if err != nil {

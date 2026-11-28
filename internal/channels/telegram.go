@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flowops-ai/internal/intake"
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
 	"flowops-ai/internal/settings"
@@ -72,6 +73,7 @@ func sendTelegramMessage(ctx context.Context, token string, chatID int64, text s
 	}
 	screen := employeeReplyScreen(id, text)
 	if id > 0 {
+		screen.Buttons = append(screen.Buttons, []telegramButton{{"Вопрос решён", fmt.Sprintf("emp:yes:%d", id)}, {"Не помогло", fmt.Sprintf("emp:no:%d", id)}})
 		screen.Buttons = append(screen.Buttons, []telegramButton{{"✅ Прочитано", fmt.Sprintf("emp:read:%d", id)}})
 	}
 	return sendTelegramScreen(ctx, token, chatID, screen)
@@ -112,6 +114,9 @@ func telegramCommandResult(ctx context.Context, token, method string, body any) 
 }
 func telegramScreenBody(chatID int64, screen telegramScreen) map[string]any {
 	body := map[string]any{"chat_id": chatID, "text": FormatTelegramMarkdown(screen.Text), "parse_mode": "HTML"}
+	if screen.KeepHistory {
+		body["keep_history"] = true
+	}
 	if len(screen.Buttons) > 0 {
 		body["reply_markup"] = map[string]any{"inline_keyboard": screen.Buttons}
 	}
@@ -131,6 +136,18 @@ func runTelegram(ctx context.Context, tenantID, token string, builderConfig sett
 	}
 	ui := newTelegramUI(token)
 	drafts := newTelegramDrafts()
+	if planner, ok := employeeTickets.(interface {
+		BotIntakePlan(context.Context, string, string, intake.Details) intake.Plan
+	}); ok {
+		drafts.intake.planFn = func(chat int64, message string, details intake.Details) intake.Plan {
+			return planner.BotIntakePlan(ctx, fmt.Sprintf("tg:%d", chat), message, details)
+		}
+	}
+	setupCtx, setupCancel := context.WithTimeout(ctx, 10*time.Second)
+	if setupErr := configureTelegramMenu(setupCtx, token); setupErr != nil {
+		logger.Error("Telegram menu setup failed", "error", "operation failed")
+	}
+	setupCancel()
 	var offset int64
 	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: rejectChannelRedirect}
 	for ctx.Err() == nil {
@@ -207,6 +224,14 @@ func runTelegram(ctx context.Context, tenantID, token string, builderConfig sett
 			waitContext(ctx, 3*time.Second)
 		}
 	}
+}
+
+func configureTelegramMenu(ctx context.Context, token string) error {
+	commands := []map[string]string{{"command": "menu", "description": "Меню поддержки"}, {"command": "new", "description": "Новое обращение"}, {"command": "ticket", "description": "Открыть обращение по номеру"}, {"command": "help", "description": "Как работает поддержка"}}
+	if err := telegramCommand(ctx, token, "setMyCommands", map[string]any{"commands": commands}); err != nil {
+		return err
+	}
+	return telegramCommand(ctx, token, "setChatMenuButton", map[string]any{"menu_button": map[string]string{"type": "commands"}})
 }
 func waitContext(ctx context.Context, delay time.Duration) {
 	timer := time.NewTimer(delay)

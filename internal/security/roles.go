@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -14,12 +15,14 @@ import (
 )
 
 type Principal struct {
-	ID       string `json:"id"`
-	TenantID string `json:"tenant_id"`
-	Name     string `json:"display_name"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	Owner    bool   `json:"owner"`
+	CustomRoleID string    `json:"custom_role_id,omitempty"`
+	Permissions  *[]string `json:"permissions,omitempty"`
+	ID           string    `json:"id"`
+	TenantID     string    `json:"tenant_id"`
+	Name         string    `json:"display_name"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	Owner        bool      `json:"owner"`
 }
 type principalKey struct{}
 
@@ -63,11 +66,32 @@ func LookupPrincipal(ctx context.Context, db *pgxpool.Pool, token string) (Princ
 
 // AllowRequest is deny-by-default. UI navigation never grants access.
 func AllowRequest(role, method, path string) bool {
+	if path == "/api/tickets/reset" {
+		return false
+	}
 	if !ValidRole(role) {
 		return false
 	}
+	if path == "/api/v1/notifications/sla" {
+		return method == "GET" && (role == "admin" || role == "operator")
+	}
 	if path == "/api/v1/auth/me" && method == http.MethodGet {
 		return true
+	}
+	if path == "/api/v1/organization/directory" {
+		return method == "GET"
+	}
+	if path == "/api/v1/organization/ticket-form" {
+		return method == "GET" || role == "admin" && method == "PUT"
+	}
+	if path == "/api/v1/organization/units" {
+		return method == "GET" || role == "admin" && method == "POST"
+	}
+	if path == "/api/v1/organization" {
+		return method == http.MethodGet
+	}
+	if path == "/api/v1/settings/organization" {
+		return method == http.MethodGet && (role == "analyst" || role == "admin") || method == http.MethodPut && role == "admin"
 	}
 	if path == "/api/v1/profile/bots" {
 		return method == http.MethodGet
@@ -77,6 +101,46 @@ func AllowRequest(role, method, path string) bool {
 	}
 	if role == "admin" {
 		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/assets/") && strings.HasSuffix(path, "/context") {
+		return method == "GET"
+	}
+	if path == "/api/v1/workflow-tasks" {
+		return method == "GET"
+	}
+	if strings.HasPrefix(path, "/api/v1/workflow-tasks/") {
+		return method == "POST"
+	}
+	if path == "/api/v1/workflows" {
+		return role == "operator" && method == "GET"
+	}
+	if strings.HasPrefix(path, "/api/v1/workflow-runs/") {
+		return role == "operator" && method == "POST"
+	}
+	if strings.HasPrefix(path, "/api/analytics/reports") {
+		return role == "analyst" && (method == "GET" || method == "POST" || method == "PUT")
+	}
+	if path == "/api/analytics/dashboards" || strings.HasPrefix(path, "/api/analytics/dashboards/") {
+		return role == "analyst" && (method == "GET" || method == "POST" || method == "PUT" || method == "DELETE")
+	}
+	if path == "/api/v1/kb/checks" {
+		return role == "operator" && (method == "GET" || method == "POST")
+	}
+	if path == "/api/v1/kb/articles" {
+		return role == "operator" && (method == "GET" || method == "POST")
+	}
+	if path == "/api/v1/kb/from-tickets" {
+		return role == "operator" && method == "POST"
+	}
+	if strings.HasPrefix(path, "/api/v1/kb/articles/") {
+		return role == "operator" && (method == "PUT" || method == "GET" && strings.HasSuffix(path, "/versions"))
+	}
+
+	if path == "/api/optimization" {
+		return role == "analyst" && method == "GET"
+	}
+	if path == "/api/analytics/explore" || path == "/api/analytics/processes" {
+		return role == "analyst" && method == http.MethodGet
 	}
 	if path == "/api/stats" {
 		return role == "analyst" && method == http.MethodGet
@@ -90,6 +154,9 @@ func AllowRequest(role, method, path string) bool {
 	if path == "/api/tickets" {
 		return method == http.MethodGet || method == http.MethodPost
 	}
+	if path == "/api/tickets/queue/clear" {
+		return role == "operator" && method == http.MethodPost
+	}
 	if strings.HasPrefix(path, "/api/tickets/") {
 		parts := strings.Split(strings.TrimPrefix(path, "/api/tickets/"), "/")
 		id, err := strconv.Atoi(parts[0])
@@ -99,8 +166,35 @@ func AllowRequest(role, method, path string) bool {
 		if len(parts) == 1 {
 			return method == http.MethodGet || (role == "operator" && method == http.MethodPatch)
 		}
+		if len(parts) == 2 && parts[1] == "workflows" {
+			return method == "GET" || role == "operator" && method == "POST"
+		}
+		if len(parts) == 2 && parts[1] == "fields" {
+			return method == "GET" || method == "PUT"
+		}
+		if len(parts) == 2 && parts[1] == "attachments" {
+			return method == "GET" || method == "POST"
+		}
+		if len(parts) == 3 && parts[1] == "attachments" {
+			return method == "GET"
+		}
+		if len(parts) == 2 && parts[1] == "copilot" {
+			return role == "operator" && (method == "GET" || method == "POST")
+		}
 		if len(parts) == 2 && method == http.MethodPost {
+			if parts[1] == "read" {
+				return role == "operator"
+			}
+			if parts[1] == "messages" || (parts[1] == "decision" && role == "employee") {
+				return true
+			}
 			return parts[1] == "feedback" || (role == "operator" && (parts[1] == "reply" || parts[1] == "work"))
+		}
+		if len(parts) == 2 && (parts[1] == "messages" || parts[1] == "events") && method == http.MethodGet {
+			return true
+		}
+		if len(parts) == 4 && parts[1] == "messages" && parts[3] == "rating" {
+			return role == "employee" && method == http.MethodPost
 		}
 	}
 	if role == "operator" && (path == "/api/knowledge" || strings.HasPrefix(path, "/api/knowledge/")) {
@@ -109,10 +203,69 @@ func AllowRequest(role, method, path string) bool {
 	return false
 }
 
-func authorizePrincipal(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, p Principal) bool {
+func authorizePrincipal(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, p *Principal) bool {
+	var permissionRaw []byte
+	policyErr := db.QueryRow(r.Context(), `SELECT a.id,a.permissions FROM organization_member_roles m JOIN organization_access_roles a ON a.tenant_id=m.tenant_id AND a.id=m.role_id WHERE m.tenant_id=$1 AND m.member_id=$2`, p.TenantID, p.ID).Scan(&p.CustomRoleID, &permissionRaw)
+	if policyErr != nil && policyErr != pgx.ErrNoRows {
+		ingestError(w, 503, "Не удалось проверить разрешения")
+		return false
+	}
+	if len(permissionRaw) > 0 && string(permissionRaw) != "null" {
+		var permissions []string
+		if json.Unmarshal(permissionRaw, &permissions) != nil {
+			ingestError(w, 503, "Некорректные разрешения роли")
+			return false
+		}
+		p.Permissions = &permissions
+		required, ok := requiredPermissions(w, r)
+		if !ok {
+			return false
+		}
+		for _, permission := range required {
+			found := false
+			for _, allowed := range permissions {
+				if allowed == permission {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ingestError(w, 403, "Роль не разрешает это действие")
+				return false
+			}
+		}
+	}
 	if !AllowRequest(p.Role, r.Method, r.URL.Path) {
 		ingestError(w, http.StatusForbidden, "Недостаточно прав для этого действия")
 		return false
+	}
+	{
+		var restricted bool
+		if err := db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM organization_member_roles m JOIN organization_access_roles a ON a.tenant_id=m.tenant_id AND a.id=m.role_id WHERE m.tenant_id=$1 AND m.member_id=$2 AND a.scope<>'organization')`, p.TenantID, p.ID).Scan(&restricted); err != nil {
+			ingestError(w, 503, "Не удалось проверить область доступа")
+			return false
+		}
+		if restricted {
+			path := r.URL.Path
+			if strings.HasPrefix(path, "/api/analytics") || path == "/api/stats" || strings.HasPrefix(path, "/api/optimization") || strings.HasPrefix(path, "/api/knowledge") || strings.HasPrefix(path, "/api/v1/kb/") || strings.HasSuffix(path, "/copilot") {
+				ingestError(w, 403, "Для этого раздела требуется доступ ко всей организации")
+				return false
+			}
+			if strings.HasPrefix(path, "/api/tickets/") {
+				id, err := strconv.Atoi(strings.Split(strings.TrimPrefix(path, "/api/tickets/"), "/")[0])
+				if err == nil {
+					var visible bool
+					if err = db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM tickets WHERE tenant_id=$1 AND id=$3 AND flowops_ticket_visible(tenant_id,$2,department,requester_id,id))`, p.TenantID, p.ID, id).Scan(&visible); err != nil {
+						ingestError(w, 503, "Не удалось проверить обращение")
+						return false
+					}
+					if !visible {
+						ingestError(w, 404, "Обращение не найдено")
+						return false
+					}
+				}
+			}
+		}
 	}
 	if p.Role == "employee" && strings.HasPrefix(r.URL.Path, "/api/tickets/") {
 		id := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/tickets/"), "/")[0]

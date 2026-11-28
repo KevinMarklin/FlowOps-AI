@@ -48,3 +48,8 @@ knowledge_base/ws_*/
 # Local browser verification artifacts
 output/playwright/
 .playwright-cli/
+output/report-qa/
+
+# Local TLS inspection trust configuration
+docker-compose.override.yml
+.local/

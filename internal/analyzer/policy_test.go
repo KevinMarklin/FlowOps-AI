@@ -37,7 +37,7 @@ func TestProviderPolicyPreventsNetworkAndSenderExport(t *testing.T) {
 	t.Setenv("FLOWOPS_AI_PROVIDERS", "")
 	t.Setenv("FLOWOPS_AI_ALLOW_SENSITIVE", "false")
 	base, _ := knowledge.Load(t.TempDir())
-	a := New(base)
+	a := newLegacyAnalyzer(base)
 	a.Analyze(context.Background(), "Не работает VPN")
 	if calls != 0 {
 		t.Fatal("API key enabled network without approval")
@@ -72,7 +72,7 @@ func TestFallbackRequiresSeparateApproval(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "synthetic")
 	t.Setenv("AI_GOOGLE_BASE_URL", secondary.URL)
 	base, _ := knowledge.Load(t.TempDir())
-	New(base).Analyze(context.Background(), "VPN")
+	newLegacyAnalyzer(base).Analyze(context.Background(), "VPN")
 	if calls != 0 {
 		t.Fatal("unapproved fallback exported data")
 	}
@@ -81,7 +81,7 @@ func TestFallbackRequiresSeparateApproval(t *testing.T) {
 func TestLocalAnalysisUnaffectedByModelBudget(t *testing.T) {
 	t.Setenv("FLOWOPS_AI_PROVIDERS", "")
 	base, _ := knowledge.Load(t.TempDir())
-	a := New(base)
+	a := newLegacyAnalyzer(base)
 	for i := 0; i < 100; i++ {
 		if result := a.Analyze(context.Background(), "Не работает VPN"); result.Department != "IT" {
 			t.Fatalf("local analysis lost at %d", i)

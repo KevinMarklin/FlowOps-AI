@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"time"
 
 	"flowops-ai/internal/models"
 	"flowops-ai/internal/security"
@@ -22,6 +23,7 @@ type rowQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 type creationGate struct {
+	release                     func()
 	query                       rowQuerier
 	tx                          pgx.Tx
 	tenant, scope, key, payload string
@@ -32,7 +34,27 @@ func requestHash(value []byte) string { sum := sha256.Sum256(value); return hex.
 
 // The namespace is stable for a source bot, even if the chat later changes its
 // website binding. A replay then fails closed on identity/payload mismatch.
+// Leave database connections for tenant policy and governed knowledge reads while
+// an idempotent creation owns its transaction. Otherwise parallel distinct keys
+// can occupy the entire pool before analysis can finish.
 func (h *TicketsHandler) beginCreation(ctx context.Context, namespace, scope, key string, payload any) (*creationGate, error) {
+	if h.creationSlots == nil {
+		return h.beginCreationTransaction(ctx, namespace, scope, key, payload)
+	}
+	select {
+	case h.creationSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	g, err := h.beginCreationTransaction(ctx, namespace, scope, key, payload)
+	if err != nil {
+		<-h.creationSlots
+		return nil, err
+	}
+	g.release = func() { <-h.creationSlots }
+	return g, nil
+}
+func (h *TicketsHandler) beginCreationTransaction(ctx context.Context, namespace, scope, key string, payload any) (*creationGate, error) {
 	g := &creationGate{query: h.db}
 	if key == "" {
 		return g, nil
@@ -48,14 +70,30 @@ func (h *TicketsHandler) beginCreation(ctx context.Context, namespace, scope, ke
 		return nil, err
 	}
 	g.tenant, g.scope, g.key, g.payload = namespace, requestHash([]byte(scope)), requestHash([]byte(key)), requestHash(encoded)
-	g.tx, err = h.db.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	g.query = g.tx
-	if _, err = g.tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, g.tenant+":"+g.scope+":"+g.key); err != nil {
-		g.close(ctx)
-		return nil, err
+	for {
+		g.tx, err = h.db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var acquired bool
+		err = g.tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))`, g.tenant+":"+g.scope+":"+g.key).Scan(&acquired)
+		if err != nil {
+			g.close(ctx)
+			return nil, err
+		}
+		if acquired {
+			g.query = g.tx
+			break
+		}
+		_ = g.tx.Rollback(ctx)
+		g.tx = nil
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	var previous string
 	var id int
@@ -82,8 +120,14 @@ func (h *TicketsHandler) beginCreation(ctx context.Context, namespace, scope, ke
 }
 
 func (g *creationGate) close(ctx context.Context) {
-	if g != nil && g.tx != nil {
-		_ = g.tx.Rollback(ctx)
+	if g != nil {
+		if g.tx != nil {
+			_ = g.tx.Rollback(ctx)
+		}
+		if g.release != nil {
+			g.release()
+			g.release = nil
+		}
 	}
 }
 func (g *creationGate) finish(ctx context.Context, id int) error {

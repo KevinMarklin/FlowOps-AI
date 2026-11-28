@@ -176,16 +176,41 @@ func reviewResult(reason string) Result {
 
 // Attach only a server-selected, validated document. Never return model prose,
 // model citations or PII from the knowledge base to a different employee.
-func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText string) Result {
+func (a *Analyzer) attachSafeAnswer(ctx context.Context, result Result, rawText string, configs ...settings.BuilderConfig) Result {
 	result.RAGAnswer = nil
 	if security.CheckPromptInput(rawText, security.MaxTicketBytes) != "" {
 		return reviewResult("unsafe_ticket")
 	}
-	base, err := a.base.TenantBase(security.TenantID(ctx))
+	// A full regulation is not an adapted next step. When the employee reports
+	// failed attempts, leave resolution to a specialist rather than replaying
+	// instructions already tried or claiming that a matching topic solved it.
+	if reportsFailedAttempts(rawText) {
+		result.AutoResolve = false
+		return result
+	}
+	base, err := a.TenantKnowledge(ctx)
 	if err != nil {
 		return result
 	}
 	doc := base.FindRelevant(rawText, result.Department)
+	// Preserve a matching source in the classified current department. Search
+	// across departments only when it has no source, avoiding historical-topic overrides.
+	if candidate := base.FindRelevant(rawText, "Unassigned"); doc == nil && candidate != nil {
+		allowed := candidate.Department == "General" || len(configs) == 0 || configs[0].Departments == nil
+		if len(configs) > 0 {
+			for _, department := range configs[0].Departments {
+				if department.Name == candidate.Department {
+					allowed = true
+				}
+			}
+		}
+		if allowed {
+			doc = candidate
+			if doc.Department != "General" {
+				result.Department = doc.Department
+			}
+		}
+	}
 	if doc == nil {
 		slog.Info("[RAG] Knowledge base MISS -> escalating to operator")
 		return result
@@ -242,4 +267,19 @@ func (a *Analyzer) acquireModelSlot() bool {
 	}
 	a.budgetCount++
 	return true
+}
+
+func reportsFailedAttempts(text string) bool {
+	text = strings.ToLower(strings.ReplaceAll(text, "ё", "е"))
+	for _, failure := range []string{"не помог", "безрезультат", "не дало результата", "did not help", "didn't help", "no improvement"} {
+		if !strings.Contains(text, failure) {
+			continue
+		}
+		for _, attempt := range []string{"пробовал", "пытал", "проверил", "перезапуск", "перезагруз", "перезапустил", "выполнил", "tried", "restarted", "checked", "rebooted"} {
+			if strings.Contains(text, attempt) {
+				return true
+			}
+		}
+	}
+	return false
 }

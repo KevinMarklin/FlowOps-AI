@@ -41,6 +41,7 @@ func TestUniversityDemoScenariosReturnCorrectBundledGuide(t *testing.T) {
 		{"Как заказать справку для военкомата в МФЦ Финуниверситета?", "HR", "fa_military_certificate.md"},
 		{"Как подключиться к сети кампуса FA-WiFi?", "IT", "fa_wifi.md"},
 		{"Как восстановить пароль от ЛК или Образовательного портала Финуниверситета?", "IT", "fa_portal_password.md"},
+		{"Не могу войти в личный кабинет Финуниверситета", "IT", "fa_portal_password.md"},
 		{"Как оформить командировку сотруднику Финуниверситета?", "Accounting", "fa_business_trip.md"},
 		{"Как оформить авансовый отчёт после командировки в Финуниверситете?", "Accounting", "fa_advance_report.md"},
 	} {
